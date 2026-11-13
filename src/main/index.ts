@@ -1,5 +1,6 @@
 import { join } from 'node:path';
 import { app, BrowserWindow, ipcMain, screen } from 'electron';
+import { startAgentServer, type AgentServerHandle } from './agent';
 import { registerWorldIpc } from './ipc';
 import { registerAtlasSchemes, setupProtocolHandlers } from './protocol';
 import { clampBoundsToDisplays } from './windowBounds';
@@ -93,8 +94,17 @@ function createMainWindow(): BrowserWindow {
   return win;
 }
 
-void app.whenReady().then(() => {
+let agentServer: AgentServerHandle | null = null;
+
+void app.whenReady().then(async () => {
   const worldIpc = registerWorldIpc(() => mainWindow);
+
+  agentServer = await startAgentServer({
+    userDataDir: app.getPath('userData'),
+    getMainWindow: () => mainWindow,
+    createWorld: worldIpc.createWorld,
+    openWorld: worldIpc.openWorld,
+  });
 
   setupProtocolHandlers({
     rendererDir: join(__dirname, '../renderer'),
@@ -122,6 +132,13 @@ void app.whenReady().then(() => {
       createMainWindow();
     }
   });
+});
+
+app.on('before-quit', () => {
+  if (agentServer) {
+    void agentServer.close();
+    agentServer = null;
+  }
 });
 
 app.on('window-all-closed', () => {

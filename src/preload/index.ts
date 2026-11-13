@@ -19,6 +19,12 @@ export type OpenWorldResult =
   | ({ ok: true } & WorldActionResult)
   | { ok: false; error: string; filePath?: string; backups: string[] };
 
+export interface AgentServerInfo {
+  enabled: boolean;
+  url: string;
+  token: string;
+}
+
 export interface AtlasApi {
   platform: NodeJS.Platform;
   closePopout: (frameName: string) => Promise<void>;
@@ -41,6 +47,19 @@ export interface AtlasApi {
     filePath: string,
   ) => Promise<{ assetId: string; index: AssetsIndex }>;
   listWorldAssets: (worldDir: string) => Promise<AssetsIndex>;
+  getAgentInfo: () => Promise<AgentServerInfo>;
+  setAgentEnabled: (enabled: boolean) => Promise<AgentServerInfo>;
+  onAgentCall: (
+    handler: (
+      reqId: string,
+      method: string,
+      params: Record<string, unknown>,
+    ) => void,
+  ) => () => void;
+  sendAgentReply: (
+    reqId: string,
+    payload: { ok: boolean; result?: unknown; error?: string },
+  ) => void;
 }
 
 const api: AtlasApi = {
@@ -66,6 +85,24 @@ const api: AtlasApi = {
     ipcRenderer.invoke('atlas:asset-import-image', worldDir, filePath),
   listWorldAssets: (worldDir: string) =>
     ipcRenderer.invoke('atlas:asset-list', worldDir),
+  getAgentInfo: () => ipcRenderer.invoke('atlas:agent-info'),
+  setAgentEnabled: (enabled: boolean) =>
+    ipcRenderer.invoke('atlas:agent-set-enabled', enabled),
+  onAgentCall: (handler) => {
+    const listener = (
+      _event: Electron.IpcRendererEvent,
+      reqId: string,
+      method: string,
+      params: Record<string, unknown>,
+    ) => {
+      handler(reqId, method, params);
+    };
+    ipcRenderer.on('atlas:agent-call', listener);
+    return () => ipcRenderer.removeListener('atlas:agent-call', listener);
+  },
+  sendAgentReply: (reqId, payload) => {
+    ipcRenderer.send('atlas:agent-reply', reqId, payload);
+  },
 };
 
 contextBridge.exposeInMainWorld('atlasApi', api);

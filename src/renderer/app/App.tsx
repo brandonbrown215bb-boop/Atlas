@@ -10,6 +10,7 @@ import {
 import { useStore } from 'zustand';
 import 'dockview-react/dist/styles/dockview.css';
 import './theme.css';
+import { startAgentBridge } from '../model/agentBridge';
 import { flushDirtyWorld, startWorldPersistence } from '../model/persistence';
 import { worldStore } from '../model/store';
 import { viewStore } from '../model/viewStore';
@@ -69,7 +70,12 @@ export function App() {
   useEffect(() => {
     (window as unknown as { __atlasWorldStore?: typeof worldStore }).__atlasWorldStore =
       worldStore;
-    return startWorldPersistence();
+    const stopPersist = startWorldPersistence();
+    const stopAgent = startAgentBridge();
+    return () => {
+      stopPersist();
+      stopAgent();
+    };
   }, []);
 
   useEffect(() => {
@@ -332,6 +338,13 @@ export function App() {
           onClick={() => openOrFocusPanel('places', 'Places')}
         >
           + Places
+        </button>
+        <button
+          type="button"
+          data-testid="btn-settings"
+          onClick={() => openOrFocusPanel('settings', 'Settings')}
+        >
+          Settings
         </button>
         <span
           data-testid="save-status"

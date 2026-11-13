@@ -21,6 +21,8 @@ import {
 
 export interface WorldIpcState {
   getCurrentWorldDir: () => string | null;
+  createWorld: (worldDir: string, name: string) => unknown;
+  openWorld: (worldDir: string) => unknown;
 }
 
 export function registerWorldIpc(getMainWindow: () => BrowserWindow | null): WorldIpcState {
@@ -53,24 +55,22 @@ export function registerWorldIpc(getMainWindow: () => BrowserWindow | null): Wor
     return res.filePaths[0] ?? null;
   });
 
-  ipcMain.handle(
-    'atlas:world-create',
-    (_event, worldDir: string, name: string) => {
-      const resolved = resolve(worldDir);
-      const loaded = createWorldFolder(resolved, name);
-      currentWorldDir = resolved;
-      const recent = recordRecent(loaded, resolved);
-      return { worldDir: resolved, ...loaded, recent };
-    },
-  );
+  const doCreateWorld = (worldDir: string, name: string) => {
+    const resolved = resolve(worldDir);
+    const loaded = createWorldFolder(resolved, name);
+    currentWorldDir = resolved;
+    const recent = recordRecent(loaded, resolved);
+    return { worldDir: resolved, ...loaded, recent, assetsIndex: {} };
+  };
 
-  ipcMain.handle('atlas:world-open', (_event, worldDir: string) => {
+  const doOpenWorld = (worldDir: string) => {
     const resolved = resolve(worldDir);
     try {
       const loaded = openWorldFolder(resolved);
       currentWorldDir = resolved;
       const recent = recordRecent(loaded, resolved);
-      return { ok: true as const, worldDir: resolved, ...loaded, recent };
+      const assetsIndex = readAssetsIndex(resolved);
+      return { ok: true as const, worldDir: resolved, ...loaded, recent, assetsIndex };
     } catch (err) {
       if (err instanceof WorldParseError) {
         return {
@@ -86,7 +86,16 @@ export function registerWorldIpc(getMainWindow: () => BrowserWindow | null): Wor
         backups: listBackups(resolved),
       };
     }
-  });
+  };
+
+  ipcMain.handle(
+    'atlas:world-create',
+    (_event, worldDir: string, name: string) => doCreateWorld(worldDir, name),
+  );
+
+  ipcMain.handle('atlas:world-open', (_event, worldDir: string) =>
+    doOpenWorld(worldDir),
+  );
 
   ipcMain.handle(
     'atlas:world-save-dirty',
@@ -193,5 +202,7 @@ export function registerWorldIpc(getMainWindow: () => BrowserWindow | null): Wor
 
   return {
     getCurrentWorldDir: () => currentWorldDir,
+    createWorld: doCreateWorld,
+    openWorld: doOpenWorld,
   };
 }

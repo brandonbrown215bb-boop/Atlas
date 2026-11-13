@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react';
 import type { DockviewApi, IDockviewPanelProps } from 'dockview-react';
 import { MapsPanel } from '../panels/MapsPanel';
+import { SettingsPanel } from '../panels/SettingsPanel';
 import { MapView } from '../render/MapView';
 
 export interface MapPanelParams {
@@ -103,6 +104,7 @@ export const panelComponents = {
   layers: StubPanel('Layers'),
   inspector: StubPanel('Inspector'),
   places: StubPanel('Places'),
+  settings: SettingsPanel,
 };
 
 export type PanelComponentKey = keyof typeof panelComponents;
