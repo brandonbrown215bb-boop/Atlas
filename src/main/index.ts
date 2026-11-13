@@ -1,7 +1,8 @@
 import { join } from 'node:path';
-import { app, BrowserWindow, ipcMain } from 'electron';
+import { app, BrowserWindow, ipcMain, screen } from 'electron';
 import { registerWorldIpc } from './ipc';
 import { registerAtlasSchemes, setupProtocolHandlers } from './protocol';
+import { clampBoundsToDisplays } from './windowBounds';
 
 registerAtlasSchemes();
 
@@ -68,6 +69,13 @@ function createMainWindow(): BrowserWindow {
   });
 
   win.webContents.on('did-create-window', (childWindow, details) => {
+    const clamped = clampBoundsToDisplays(
+      childWindow.getBounds(),
+      screen.getAllDisplays(),
+      screen.getPrimaryDisplay().workArea,
+    );
+    childWindow.setBounds(clamped);
+
     if (details.frameName) {
       popoutWindows.set(details.frameName, childWindow);
       childWindow.on('closed', () => {

@@ -33,6 +33,8 @@ export interface AtlasApi {
   listBackups: (worldDir: string) => Promise<string[]>;
   restoreBackup: (worldDir: string, backupName: string) => Promise<WorldActionResult>;
   listRecentWorlds: () => Promise<RecentWorldInfo[]>;
+  loadLayout: (worldId: string) => Promise<unknown | null>;
+  saveLayout: (worldId: string, layout: unknown) => Promise<{ ok: boolean }>;
 }
 
 const api: AtlasApi = {
@@ -50,6 +52,9 @@ const api: AtlasApi = {
   restoreBackup: (worldDir: string, backupName: string) =>
     ipcRenderer.invoke('atlas:world-restore-backup', worldDir, backupName),
   listRecentWorlds: () => ipcRenderer.invoke('atlas:world-recent-list'),
+  loadLayout: (worldId: string) => ipcRenderer.invoke('atlas:layout-load', worldId),
+  saveLayout: (worldId: string, layout: unknown) =>
+    ipcRenderer.invoke('atlas:layout-save', worldId, layout),
 };
 
 contextBridge.exposeInMainWorld('atlasApi', api);

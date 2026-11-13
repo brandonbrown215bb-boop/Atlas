@@ -1,0 +1,47 @@
+:root,
+:root[data-theme='dark'] {
+  --atlas-bg: #0d1117;
+  --atlas-surface: #161b22;
+  --atlas-surface-alt: #21262d;
+  --atlas-border: #30363d;
+  --atlas-text: #e6edf3;
+  --atlas-text-muted: #8b949e;
+  --atlas-accent: #58a6ff;
+  --atlas-danger: #f85149;
+}
+
+:root[data-theme='light'] {
+  --atlas-bg: #f6f8fa;
+  --atlas-surface: #ffffff;
+  --atlas-surface-alt: #eaeef2;
+  --atlas-border: #d0d7de;
+  --atlas-text: #1f2328;
+  --atlas-text-muted: #656d76;
+  --atlas-accent: #0969da;
+  --atlas-danger: #cf222e;
+}
+
+body {
+  background: var(--atlas-bg);
+  color: var(--atlas-text);
+  font-family: system-ui, -apple-system, Segoe UI, Roboto, sans-serif;
+}
+
+button {
+  background: var(--atlas-surface-alt);
+  color: var(--atlas-text);
+  border: 1px solid var(--atlas-border);
+  border-radius: 4px;
+  padding: 4px 10px;
+  font-size: 12px;
+  cursor: pointer;
+}
+
+button:hover:not(:disabled) {
+  border-color: var(--atlas-accent);
+}
+
+button:disabled {
+  opacity: 0.45;
+  cursor: default;
+}

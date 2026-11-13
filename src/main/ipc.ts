@@ -1,8 +1,10 @@
-import { resolve } from 'node:path';
+import { existsSync, mkdirSync, readFileSync } from 'node:fs';
+import { join, resolve } from 'node:path';
 import { app, dialog, ipcMain, type BrowserWindow } from 'electron';
 import type { MapDoc, WorldMeta } from '../renderer/model/schema';
 import {
   addRecentWorld,
+  atomicWriteFile,
   createBackup,
   createWorldFolder,
   listBackups,
@@ -126,6 +128,27 @@ export function registerWorldIpc(getMainWindow: () => BrowserWindow | null): Wor
 
   ipcMain.handle('atlas:world-recent-list', () => {
     return readRecentWorlds(userDataDir());
+  });
+
+  ipcMain.handle('atlas:layout-load', (_event, worldId: string) => {
+    const safeId = worldId.replace(/[^a-zA-Z0-9_-]/g, '_');
+    const filePath = join(userDataDir(), 'layouts', `${safeId}.json`);
+    if (!existsSync(filePath)) {
+      return null;
+    }
+    try {
+      return JSON.parse(readFileSync(filePath, 'utf-8')) as unknown;
+    } catch {
+      return null;
+    }
+  });
+
+  ipcMain.handle('atlas:layout-save', (_event, worldId: string, layout: unknown) => {
+    const safeId = worldId.replace(/[^a-zA-Z0-9_-]/g, '_');
+    const dir = join(userDataDir(), 'layouts');
+    mkdirSync(dir, { recursive: true });
+    atomicWriteFile(join(dir, `${safeId}.json`), JSON.stringify(layout, null, 2));
+    return { ok: true };
   });
 
   return {
