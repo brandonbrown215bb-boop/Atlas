@@ -260,6 +260,33 @@ registerCommand({
   },
 });
 
+const LayerReorderInputSchema = z.object({
+  mapId: z.string().min(1),
+  layerId: z.string().min(1),
+  toIndex: z.number().int().nonnegative(),
+});
+
+registerCommand({
+  name: 'layer.reorder',
+  description: 'Move a layer to a new draw-order index on a map.',
+  input: LayerReorderInputSchema,
+  run(draft, input) {
+    const map = getMapOrThrow(draft, input.mapId);
+    const fromIndex = map.layers.findIndex((l) => l.id === input.layerId);
+    if (fromIndex === -1) {
+      throw new Error(`Layer not found: ${input.layerId}`);
+    }
+    const clamped = Math.min(input.toIndex, map.layers.length - 1);
+    if (fromIndex === clamped) {
+      return { id: input.layerId, index: clamped };
+    }
+    map.revision += 1;
+    const [layer] = map.layers.splice(fromIndex, 1);
+    map.layers.splice(clamped, 0, layer!);
+    return { id: input.layerId, index: clamped };
+  },
+});
+
 // --- Map Commands ---
 
 const MapCreateInputSchema = z.object({

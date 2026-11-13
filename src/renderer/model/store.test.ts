@@ -177,4 +177,63 @@ describe('P1.1 schema, store, commands, history, and migrate', () => {
       migrateMapData({ ...sampleMap, formatVersion: 999 }),
     ).toThrow(/Unsupported formatVersion/);
   });
+
+  it('adds, updates, reorders, and deletes layers with undo', () => {
+    const store = createWorldStore();
+    const { meta, maps } = createFixtureWorld();
+    store.getState().loadWorld(meta, maps);
+
+    store.getState().execute('layer.add', {
+      mapId: 'map-1',
+      layer: {
+        id: 'layer-top',
+        name: 'Props',
+        visible: true,
+        locked: false,
+        gmOnly: false,
+      },
+    });
+    expect(store.getState().world?.maps['map-1']?.layers.map((l) => l.id)).toEqual([
+      'layer-base',
+      'layer-top',
+    ]);
+
+    store.getState().execute('layer.update', {
+      mapId: 'map-1',
+      layerId: 'layer-top',
+      patch: { name: 'GM Props', visible: false, locked: true, gmOnly: true },
+    });
+    const updated = store.getState().world?.maps['map-1']?.layers[1]!;
+    expect(updated).toEqual({
+      id: 'layer-top',
+      name: 'GM Props',
+      visible: false,
+      locked: true,
+      gmOnly: true,
+    });
+
+    store.getState().execute('layer.reorder', {
+      mapId: 'map-1',
+      layerId: 'layer-top',
+      toIndex: 0,
+    });
+    expect(store.getState().world?.maps['map-1']?.layers.map((l) => l.id)).toEqual([
+      'layer-top',
+      'layer-base',
+    ]);
+
+    store.getState().undo();
+    expect(store.getState().world?.maps['map-1']?.layers.map((l) => l.id)).toEqual([
+      'layer-base',
+      'layer-top',
+    ]);
+
+    store.getState().execute('layer.delete', {
+      mapId: 'map-1',
+      layerId: 'layer-top',
+    });
+    expect(store.getState().world?.maps['map-1']?.layers.map((l) => l.id)).toEqual([
+      'layer-base',
+    ]);
+  });
 });
