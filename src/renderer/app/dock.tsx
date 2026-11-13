@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react';
 import type { DockviewApi, IDockviewPanelProps } from 'dockview-react';
 import { useStore } from 'zustand';
 import { worldStore } from '../model/store';
+import { MapView } from '../render/MapView';
 
 export interface MapPanelParams {
   mapId?: string;
@@ -174,7 +175,7 @@ function StubPanel(title: string) {
 }
 
 export const panelComponents = {
-  map: MapPlaceholderPanel,
+  map: MapView,
   maps: MapsPanel,
   layers: StubPanel('Layers'),
   inspector: StubPanel('Inspector'),

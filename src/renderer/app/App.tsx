@@ -64,6 +64,8 @@ export function App() {
   const isDirty = dirtyWorld || Object.keys(dirtyMapIds).length > 0;
 
   useEffect(() => {
+    (window as unknown as { __atlasWorldStore?: typeof worldStore }).__atlasWorldStore =
+      worldStore;
     return startWorldPersistence();
   }, []);
 
@@ -222,13 +224,25 @@ export function App() {
     if (!api) {
       return;
     }
+    if (component === 'map') {
+      const existingMap = api.panels.find((p) => p.id.startsWith('map-'));
+      api.addPanel({
+        id: `map-${crypto.randomUUID().slice(0, 6)}`,
+        component: 'map',
+        title,
+        position: existingMap
+          ? { referencePanel: existingMap, direction: 'right' }
+          : undefined,
+      });
+      return;
+    }
     const existing = api.panels.find((p) => p.id === component);
     if (existing) {
       existing.api.setActive();
       return;
     }
     api.addPanel({
-      id: component === 'map' ? `map-${crypto.randomUUID().slice(0, 6)}` : component,
+      id: component,
       component,
       title,
     });
@@ -297,6 +311,13 @@ export function App() {
           onClick={() => setTheme((t) => (t === 'dark' ? 'light' : 'dark'))}
         >
           Theme: {theme === 'dark' ? 'Dark' : 'Light'}
+        </button>
+        <button
+          type="button"
+          data-testid="btn-add-map"
+          onClick={() => openOrFocusPanel('map', 'Map')}
+        >
+          + Map
         </button>
         <button
           type="button"
