@@ -3,7 +3,7 @@ import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { test, expect, _electron as electron } from '@playwright/test';
 
-const REF_MAPS_DIR = 'C:\\Users\\jbrow263\\Documents\\campaign-atlas-bundle\\reference-maps';
+const REF_MAPS_DIR = resolve(__dirname, '../docs/bundle/reference-maps');
 
 test('imports reference maps 02, 03, 04 as world, settlement, and interior and survives restart', async () => {
   const tempBase = mkdtempSync(join(tmpdir(), 'atlas-e2e-backdrop-'));

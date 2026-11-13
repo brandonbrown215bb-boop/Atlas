@@ -24,25 +24,38 @@ test('creates a world, adds an entity, restarts the app, and finds the entity', 
       const win1 = await app1.firstWindow();
       await win1.waitForLoadState('domcontentloaded');
 
-      await win1.evaluate(async (dir) => {
-        const res = await window.atlasApi.createWorld(dir, 'Persistence World');
-        const map = res.maps['map-1']!;
-        map.entities['ent-persist-1'] = {
-          id: 'ent-persist-1',
-          type: 'label',
-          layerId: 'layer-base',
-          origin: 'manual',
-          rev: 2,
-          text: 'Khartoum',
-          x: 200,
-          y: 300,
-          size: 18,
-        };
-        map.revision = 2;
-        await window.atlasApi.saveDirtyWorld(res.worldDir, {
-          maps: { 'map-1': map },
-        });
+      await app1.evaluate(({ dialog }, dir) => {
+        dialog.showOpenDialog = async () => ({ canceled: false, filePaths: [dir] });
       }, worldDir);
+      await win1.getByTestId('btn-new-world').click();
+      await expect(win1.getByTestId('save-status')).toContainText('Saved');
+
+      // Add through the store, then let autosave (2 s debounce) write it: no manual save
+      await win1.evaluate(() => {
+        const store = (
+          window as unknown as {
+            __atlasWorldStore: {
+              getState: () => { execute: (name: string, input: unknown) => unknown };
+            };
+          }
+        ).__atlasWorldStore;
+        store.getState().execute('entity.add', {
+          mapId: 'map-1',
+          entity: {
+            id: 'ent-persist-1',
+            type: 'label',
+            layerId: 'layer-base',
+            origin: 'manual',
+            rev: 0,
+            text: 'Khartoum',
+            x: 200,
+            y: 300,
+            size: 18,
+          },
+        });
+      });
+      await expect(win1.getByTestId('save-status')).toContainText('Unsaved');
+      await expect(win1.getByTestId('save-status')).toContainText('— Saved', { timeout: 10_000 });
     } finally {
       await app1.close();
     }
