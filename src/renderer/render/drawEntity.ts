@@ -61,7 +61,12 @@ function drawPolyline(
 
 export function buildEntityDisplay(
   entity: Entity,
-  options: { selected: boolean; zoom: number; texture?: Texture },
+  options: {
+    selected: boolean;
+    zoom: number;
+    texture?: Texture;
+    layerGmOnly?: boolean;
+  },
 ): Container {
   const container = new Container();
   container.eventMode = 'none';
@@ -156,11 +161,13 @@ export function buildEntityDisplay(
 
     case 'door': {
       container.position.set(entity.a.x, entity.a.y);
+      const dx = entity.b.x - entity.a.x;
+      const dy = entity.b.y - entity.a.y;
       const gfx = new Graphics();
       gfx.eventMode = 'none';
       gfx
         .moveTo(0, 0)
-        .lineTo(entity.b.x - entity.a.x, entity.b.y - entity.a.y)
+        .lineTo(dx, dy)
         .stroke({
           width: Math.max(0.25, strokeUnit * 2.5),
           color: options.selected
@@ -169,6 +176,19 @@ export function buildEntityDisplay(
               ? 0xc084fc
               : 0xd97706,
         });
+      if (entity.kind === 'secret') {
+        const mx = dx / 2;
+        const my = dy / 2;
+        const r = Math.max(0.3, strokeUnit * 4.5);
+        gfx
+          .moveTo(mx, my - r)
+          .lineTo(mx + r, my)
+          .lineTo(mx, my + r)
+          .lineTo(mx - r, my)
+          .closePath()
+          .fill({ color: 0xc084fc })
+          .stroke({ width: strokeUnit, color: 0x111827 });
+      }
       container.addChild(gfx);
       break;
     }
@@ -243,6 +263,22 @@ export function buildEntityDisplay(
       // Places group other entities and carry notes; no standalone geometry.
       break;
     }
+  }
+
+  const isGmOnly = Boolean(entity.gmOnly || options.layerGmOnly);
+  if (isGmOnly && entity.type !== 'place' && !(entity.type === 'door' && entity.kind === 'secret')) {
+    const gmBadge = new Graphics();
+    gmBadge.eventMode = 'none';
+    const r = Math.max(0.25, strokeUnit * 4);
+    gmBadge
+      .moveTo(0, -r)
+      .lineTo(r, 0)
+      .lineTo(0, r)
+      .lineTo(-r, 0)
+      .closePath()
+      .fill({ color: 0xc084fc, alpha: 0.95 })
+      .stroke({ width: strokeUnit, color: 0x111827 });
+    container.addChild(gmBadge);
   }
 
   return container;

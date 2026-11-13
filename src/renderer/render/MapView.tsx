@@ -18,9 +18,13 @@ import {
   resolveWorldAssetUrl,
 } from './textures';
 import { createAreaTool } from '../tools/areaTool';
+import { createDoorTool } from '../tools/doorTool';
+import { createLabelTool } from '../tools/labelTool';
+import { createLightTool } from '../tools/lightTool';
 import { createPathTool } from '../tools/pathTool';
 import { createPointEditTool } from '../tools/pointEditTool';
 import { createSelectTool } from '../tools/selectTool';
+import { createWallTool } from '../tools/wallTool';
 import type { MapTool, ToolContext } from '../tools/types';
 
 export interface MapPanelParams {
@@ -31,6 +35,7 @@ interface CachedEntityDisplay {
   rev: number;
   selected: boolean;
   layerId: string;
+  layerGmOnly: boolean;
   hasTexture: boolean;
   wasPreview: boolean;
   container: Container;
@@ -127,6 +132,10 @@ export function MapView(props: IDockviewPanelProps<MapPanelParams>) {
     const areaTool = createAreaTool();
     const pathTool = createPathTool();
     const pointEditTool = createPointEditTool();
+    const wallTool = createWallTool();
+    const doorTool = createDoorTool();
+    const lightTool = createLightTool();
+    const labelTool = createLabelTool();
     const getActiveTool = (): MapTool => {
       switch (activeToolIdRef.current) {
         case 'area':
@@ -135,6 +144,14 @@ export function MapView(props: IDockviewPanelProps<MapPanelParams>) {
           return pathTool;
         case 'pointEdit':
           return pointEditTool;
+        case 'wall':
+          return wallTool;
+        case 'door':
+          return doorTool;
+        case 'light':
+          return lightTool;
+        case 'label':
+          return labelTool;
         default:
           return selectTool;
       }
@@ -252,6 +269,7 @@ export function MapView(props: IDockviewPanelProps<MapPanelParams>) {
 
       // Add or update changed entities only
       const selectedSet = selectedSetRef.current;
+      const layerGmMap = new Map(m.layers.map((l) => [l.id, l.gmOnly]));
       const activeTool = getActiveTool();
       const previewMap = activeTool.getPreviewEntities?.() ?? null;
       for (const rawEntity of Object.values(m.entities) as Entity[]) {
@@ -278,6 +296,7 @@ export function MapView(props: IDockviewPanelProps<MapPanelParams>) {
 
         const hasTexture = Boolean(texture);
         const isSelected = selectedSet.has(entity.id);
+        const layerGmOnly = Boolean(layerGmMap.get(entity.layerId));
         const cached = entityCache.get(entity.id);
         const needsRebuild =
           !cached ||
@@ -286,6 +305,7 @@ export function MapView(props: IDockviewPanelProps<MapPanelParams>) {
           cached.rev !== entity.rev ||
           cached.selected !== isSelected ||
           cached.layerId !== entity.layerId ||
+          cached.layerGmOnly !== layerGmOnly ||
           cached.hasTexture !== hasTexture ||
           zoomChangedSignificantly;
 
@@ -297,6 +317,7 @@ export function MapView(props: IDockviewPanelProps<MapPanelParams>) {
             selected: isSelected,
             zoom: cam.zoom,
             texture,
+            layerGmOnly,
           });
           const targetLayer = layerContainers.get(entity.layerId);
           if (targetLayer) {
@@ -306,6 +327,7 @@ export function MapView(props: IDockviewPanelProps<MapPanelParams>) {
             rev: entity.rev,
             selected: isSelected,
             layerId: entity.layerId,
+            layerGmOnly,
             hasTexture,
             wasPreview: isPreview,
             container: display,

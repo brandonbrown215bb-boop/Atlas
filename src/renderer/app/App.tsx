@@ -16,6 +16,7 @@ import type { AreaRole, PathRole } from '../model/schema';
 import { worldStore } from '../model/store';
 import {
   viewStore,
+  type DoorKind,
   type DrawMode,
   type PointEditMode,
   type ToolId,
@@ -81,6 +82,14 @@ export function App() {
   const pathRole = useStore(viewStore, (s) => s.pathRole);
   const pathWidth = useStore(viewStore, (s) => s.pathWidth);
   const pathClosed = useStore(viewStore, (s) => s.pathClosed);
+  const wallSnapToGrid = useStore(viewStore, (s) => s.wallSnapToGrid);
+  const wallBlocksMove = useStore(viewStore, (s) => s.wallBlocksMove);
+  const wallBlocksSight = useStore(viewStore, (s) => s.wallBlocksSight);
+  const doorKind = useStore(viewStore, (s) => s.doorKind);
+  const lightRadius = useStore(viewStore, (s) => s.lightRadius);
+  const lightColor = useStore(viewStore, (s) => s.lightColor);
+  const labelText = useStore(viewStore, (s) => s.labelText);
+  const labelSize = useStore(viewStore, (s) => s.labelSize);
 
   useEffect(() => {
     (window as unknown as { __atlasWorldStore?: typeof worldStore }).__atlasWorldStore =
@@ -382,7 +391,7 @@ export function App() {
         }}
       >
         <span style={{ color: 'var(--atlas-text-muted)' }}>Tool:</span>
-        {(['select', 'area', 'path', 'pointEdit'] as ToolId[]).map((tool) => (
+        {(['select', 'area', 'path', 'pointEdit', 'wall', 'door', 'light', 'label'] as ToolId[]).map((tool) => (
           <button
             key={tool}
             type="button"
@@ -527,6 +536,127 @@ export function App() {
                 }
               />
               <span>Snap to grid</span>
+            </label>
+          </>
+        )}
+
+        {activeTool === 'wall' && (
+          <>
+            <span style={{ opacity: 0.3 }}>|</span>
+            <label style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
+              <input
+                type="checkbox"
+                data-testid="checkbox-wall-snap"
+                checked={wallSnapToGrid}
+                onChange={(e) =>
+                  viewStore.getState().setWallSnapToGrid(e.target.checked)
+                }
+              />
+              <span>Snap to grid</span>
+            </label>
+            <label style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
+              <input
+                type="checkbox"
+                checked={wallBlocksMove}
+                onChange={(e) =>
+                  viewStore.getState().setWallBlocksMove(e.target.checked)
+                }
+              />
+              <span>Blocks move</span>
+            </label>
+            <label style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
+              <input
+                type="checkbox"
+                checked={wallBlocksSight}
+                onChange={(e) =>
+                  viewStore.getState().setWallBlocksSight(e.target.checked)
+                }
+              />
+              <span>Blocks sight</span>
+            </label>
+          </>
+        )}
+
+        {activeTool === 'door' && (
+          <>
+            <span style={{ opacity: 0.3 }}>|</span>
+            <label style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
+              <span>Kind:</span>
+              <select
+                data-testid="select-door-kind"
+                value={doorKind}
+                onChange={(e) =>
+                  viewStore.getState().setDoorKind(e.target.value as DoorKind)
+                }
+              >
+                <option value="door">door</option>
+                <option value="secret">secret</option>
+              </select>
+            </label>
+          </>
+        )}
+
+        {activeTool === 'light' && (
+          <>
+            <span style={{ opacity: 0.3 }}>|</span>
+            <label style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
+              <span>Radius (m):</span>
+              <input
+                type="number"
+                min={0.5}
+                step={1}
+                value={lightRadius}
+                onChange={(e) => {
+                  const val = Number.parseFloat(e.target.value);
+                  if (Number.isFinite(val) && val > 0) {
+                    viewStore.getState().setLightRadius(val);
+                  }
+                }}
+                style={{ width: 56 }}
+              />
+            </label>
+            <label style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
+              <span>Color:</span>
+              <input
+                type="color"
+                value={lightColor}
+                onChange={(e) =>
+                  viewStore.getState().setLightColor(e.target.value)
+                }
+              />
+            </label>
+          </>
+        )}
+
+        {activeTool === 'label' && (
+          <>
+            <span style={{ opacity: 0.3 }}>|</span>
+            <label style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
+              <span>Text:</span>
+              <input
+                type="text"
+                value={labelText}
+                onChange={(e) =>
+                  viewStore.getState().setLabelText(e.target.value)
+                }
+                style={{ width: 110 }}
+              />
+            </label>
+            <label style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
+              <span>Size:</span>
+              <input
+                type="number"
+                min={6}
+                step={2}
+                value={labelSize}
+                onChange={(e) => {
+                  const val = Number.parseFloat(e.target.value);
+                  if (Number.isFinite(val) && val >= 1) {
+                    viewStore.getState().setLabelSize(val);
+                  }
+                }}
+                style={{ width: 56 }}
+              />
             </label>
           </>
         )}

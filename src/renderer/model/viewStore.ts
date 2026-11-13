@@ -2,9 +2,18 @@ import { createStore } from 'zustand/vanilla';
 import type { AreaRole, AssetsIndex, PathRole } from './schema';
 import type { CameraState } from '../render/camera';
 
-export type ToolId = 'select' | 'area' | 'path' | 'pointEdit';
+export type ToolId =
+  | 'select'
+  | 'area'
+  | 'path'
+  | 'pointEdit'
+  | 'wall'
+  | 'door'
+  | 'light'
+  | 'label';
 export type DrawMode = 'click' | 'freehand';
 export type PointEditMode = 'edit' | 'add' | 'subtract';
+export type DoorKind = 'door' | 'secret';
 
 export interface PanelViewState {
   mapId: string | null;
@@ -22,6 +31,14 @@ export interface ViewStoreState {
   pathRole: PathRole;
   pathWidth: number;
   pathClosed: boolean;
+  wallSnapToGrid: boolean;
+  wallBlocksMove: boolean;
+  wallBlocksSight: boolean;
+  doorKind: DoorKind;
+  lightRadius: number;
+  lightColor: string;
+  labelText: string;
+  labelSize: number;
   selectedEntityIds: string[];
   assetsIndex: AssetsIndex;
   calibratingImageId: string | null;
@@ -38,6 +55,14 @@ export interface ViewStoreState {
   setPathRole: (role: PathRole) => void;
   setPathWidth: (width: number) => void;
   setPathClosed: (closed: boolean) => void;
+  setWallSnapToGrid: (snap: boolean) => void;
+  setWallBlocksMove: (blocks: boolean) => void;
+  setWallBlocksSight: (blocks: boolean) => void;
+  setDoorKind: (kind: DoorKind) => void;
+  setLightRadius: (radius: number) => void;
+  setLightColor: (color: string) => void;
+  setLabelText: (text: string) => void;
+  setLabelSize: (size: number) => void;
   setSelection: (entityIds: string[]) => void;
   setAssetsIndex: (index: AssetsIndex) => void;
   setCalibratingImageId: (entityId: string | null) => void;
@@ -54,6 +79,14 @@ export const viewStore = createStore<ViewStoreState>((set) => ({
   pathRole: 'road',
   pathWidth: 2,
   pathClosed: false,
+  wallSnapToGrid: true,
+  wallBlocksMove: true,
+  wallBlocksSight: true,
+  doorKind: 'door',
+  lightRadius: 10,
+  lightColor: '#fde047',
+  labelText: 'Label',
+  labelSize: 16,
   selectedEntityIds: [],
   assetsIndex: {},
   calibratingImageId: null,
@@ -124,6 +157,38 @@ export const viewStore = createStore<ViewStoreState>((set) => ({
 
   setPathClosed(pathClosed) {
     set({ pathClosed });
+  },
+
+  setWallSnapToGrid(wallSnapToGrid) {
+    set({ wallSnapToGrid });
+  },
+
+  setWallBlocksMove(wallBlocksMove) {
+    set({ wallBlocksMove });
+  },
+
+  setWallBlocksSight(wallBlocksSight) {
+    set({ wallBlocksSight });
+  },
+
+  setDoorKind(doorKind) {
+    set({ doorKind });
+  },
+
+  setLightRadius(lightRadius) {
+    set({ lightRadius });
+  },
+
+  setLightColor(lightColor) {
+    set({ lightColor });
+  },
+
+  setLabelText(labelText) {
+    set({ labelText });
+  },
+
+  setLabelSize(labelSize) {
+    set({ labelSize });
   },
 
   setSelection(entityIds) {

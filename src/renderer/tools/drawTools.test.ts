@@ -3,8 +3,12 @@ import { createWorldStore } from '../model/store';
 import type { MapDoc, WorldMeta } from '../model/schema';
 import { viewStore } from '../model/viewStore';
 import { createAreaTool } from './areaTool';
+import { createDoorTool } from './doorTool';
+import { createLabelTool } from './labelTool';
+import { createLightTool } from './lightTool';
 import { createPathTool } from './pathTool';
 import { createPointEditTool } from './pointEditTool';
+import { createWallTool } from './wallTool';
 import type { ToolContext, ToolPointerEvent } from './types';
 
 function makePointer(overrides: Partial<ToolPointerEvent> = {}): ToolPointerEvent {
@@ -169,5 +173,56 @@ describe('AreaTool & PathTool', () => {
     expect(ent.type === 'area' && ent.rings).toHaveLength(2);
 
     viewStore.getState().setPointEditMode('edit');
+  });
+
+  it('wallTool snaps to grid by default, doorTool places secret door on wall, lightTool and labelTool place entities', () => {
+    const { store, makeCtx } = makeFixture();
+    const wallTool = createWallTool();
+    const doorTool = createDoorTool();
+    const lightTool = createLightTool();
+    const labelTool = createLabelTool();
+
+    // Wall snaps to grid (size = 2)
+    wallTool.onPointerDown({ x: 0.3, y: 9.7 }, makePointer(), makeCtx());
+    wallTool.onPointerDown({ x: 19.6, y: 10.2 }, makePointer(), makeCtx());
+    wallTool.onPointerDown({ x: 19.6, y: 10.2 }, makePointer({ detail: 2 }), makeCtx());
+
+    const wall = Object.values(store.getState().world!.maps['m1']!.entities).find(
+      (e) => e.type === 'wall',
+    );
+    expect(wall).toBeDefined();
+    if (wall?.type === 'wall') {
+      expect(wall.points).toEqual([
+        { x: 0, y: 10 },
+        { x: 20, y: 10 },
+      ]);
+    }
+
+    // Secret door placed on the wall
+    viewStore.getState().setDoorKind('secret');
+    const placed = doorTool.onPointerDown({ x: 10, y: 10.3 }, makePointer(), makeCtx());
+    expect(placed).toBe(true);
+    const door = Object.values(store.getState().world!.maps['m1']!.entities).find(
+      (e) => e.type === 'door',
+    );
+    expect(door).toBeDefined();
+    if (door?.type === 'door') {
+      expect(door.kind).toBe('secret');
+      expect(door.gmOnly).toBe(true);
+      expect(door.a.y).toBe(10);
+      expect(door.b.y).toBe(10);
+    }
+
+    // Light and label
+    viewStore.getState().setLightRadius(12);
+    lightTool.onPointerDown({ x: 5, y: 5 }, makePointer(), makeCtx());
+    viewStore.getState().setLabelText('Crypt');
+    labelTool.onPointerDown({ x: 8, y: 8 }, makePointer(), makeCtx());
+
+    const entities = Object.values(store.getState().world!.maps['m1']!.entities);
+    expect(entities.some((e) => e.type === 'light' && e.radius === 12)).toBe(true);
+    expect(entities.some((e) => e.type === 'label' && e.text === 'Crypt')).toBe(true);
+
+    viewStore.getState().setDoorKind('door');
   });
 });
