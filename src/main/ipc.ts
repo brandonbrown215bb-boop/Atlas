@@ -1,14 +1,16 @@
 import { existsSync, mkdirSync, readFileSync } from 'node:fs';
 import { join, resolve } from 'node:path';
-import { app, dialog, ipcMain, type BrowserWindow } from 'electron';
+import { app, dialog, ipcMain, nativeImage, type BrowserWindow } from 'electron';
 import type { MapDoc, WorldMeta } from '../renderer/model/schema';
 import {
   addRecentWorld,
   atomicWriteFile,
   createBackup,
   createWorldFolder,
+  importImageAsset,
   listBackups,
   openWorldFolder,
+  readAssetsIndex,
   readRecentWorlds,
   restoreFromBackup,
   saveDirtyWorldFiles,
@@ -149,6 +151,44 @@ export function registerWorldIpc(getMainWindow: () => BrowserWindow | null): Wor
     mkdirSync(dir, { recursive: true });
     atomicWriteFile(join(dir, `${safeId}.json`), JSON.stringify(layout, null, 2));
     return { ok: true };
+  });
+
+  ipcMain.handle('atlas:pick-image', async () => {
+    const win = getMainWindow();
+    const options = {
+      title: 'Import Backdrop Image',
+      filters: [
+        { name: 'Images', extensions: ['png', 'jpg', 'jpeg', 'webp', 'bmp'] },
+      ],
+      properties: ['openFile'] as Array<'openFile'>,
+    };
+    const res = win
+      ? await dialog.showOpenDialog(win, options)
+      : await dialog.showOpenDialog(options);
+    if (res.canceled || res.filePaths.length === 0) {
+      return null;
+    }
+    return res.filePaths[0] ?? null;
+  });
+
+  ipcMain.handle(
+    'atlas:asset-import-image',
+    (_event, worldDir: string, filePath: string) => {
+      const resolvedWorld = resolve(worldDir);
+      if (currentWorldDir !== resolvedWorld) {
+        throw new Error('Cannot import asset into a world that is not open');
+      }
+      const img = nativeImage.createFromPath(filePath);
+      const size = img.getSize();
+      return importImageAsset(resolvedWorld, filePath, {
+        width: size.width || 1000,
+        height: size.height || 1000,
+      });
+    },
+  );
+
+  ipcMain.handle('atlas:asset-list', (_event, worldDir: string) => {
+    return readAssetsIndex(resolve(worldDir));
   });
 
   return {

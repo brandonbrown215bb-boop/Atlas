@@ -1,4 +1,4 @@
-import { Container, Graphics, Text } from 'pixi.js';
+import { Container, Graphics, Sprite, Text, type Texture } from 'pixi.js';
 import type { AreaRole, Entity, PathRole, Point } from '../model/schema';
 
 function areaFillColor(role: AreaRole, customFill?: string): number {
@@ -61,7 +61,7 @@ function drawPolyline(
 
 export function buildEntityDisplay(
   entity: Entity,
-  options: { selected: boolean; zoom: number },
+  options: { selected: boolean; zoom: number; texture?: Texture },
 ): Container {
   const container = new Container();
   container.eventMode = 'none';
@@ -71,14 +71,27 @@ export function buildEntityDisplay(
     case 'image': {
       container.position.set(entity.x, entity.y);
       container.rotation = entity.rotation;
-      const gfx = new Graphics();
-      gfx.eventMode = 'none';
-      gfx.rect(0, 0, entity.w, entity.h).fill({ color: 0x22272e, alpha: 0.7 });
-      gfx.rect(0, 0, entity.w, entity.h).stroke({
-        width: options.selected ? strokeUnit * 2 : strokeUnit,
-        color: options.selected ? 0xfbbf24 : 0x6e7681,
-      });
-      container.addChild(gfx);
+      if (options.texture) {
+        const sprite = new Sprite(options.texture);
+        sprite.eventMode = 'none';
+        sprite.width = entity.w;
+        sprite.height = entity.h;
+        container.addChild(sprite);
+      } else {
+        const gfx = new Graphics();
+        gfx.eventMode = 'none';
+        gfx.rect(0, 0, entity.w, entity.h).fill({ color: 0x22272e, alpha: 0.7 });
+        container.addChild(gfx);
+      }
+      if (options.selected) {
+        const outline = new Graphics();
+        outline.eventMode = 'none';
+        outline.rect(0, 0, entity.w, entity.h).stroke({
+          width: strokeUnit * 2,
+          color: 0xfbbf24,
+        });
+        container.addChild(outline);
+      }
       break;
     }
 

@@ -1,5 +1,5 @@
 import { contextBridge, ipcRenderer } from 'electron';
-import type { MapDoc, WorldMeta } from '../renderer/model/schema';
+import type { AssetsIndex, MapDoc, WorldMeta } from '../renderer/model/schema';
 
 export interface RecentWorldInfo {
   id: string;
@@ -35,6 +35,12 @@ export interface AtlasApi {
   listRecentWorlds: () => Promise<RecentWorldInfo[]>;
   loadLayout: (worldId: string) => Promise<unknown | null>;
   saveLayout: (worldId: string, layout: unknown) => Promise<{ ok: boolean }>;
+  pickImage: () => Promise<string | null>;
+  importImageAsset: (
+    worldDir: string,
+    filePath: string,
+  ) => Promise<{ assetId: string; index: AssetsIndex }>;
+  listWorldAssets: (worldDir: string) => Promise<AssetsIndex>;
 }
 
 const api: AtlasApi = {
@@ -55,6 +61,11 @@ const api: AtlasApi = {
   loadLayout: (worldId: string) => ipcRenderer.invoke('atlas:layout-load', worldId),
   saveLayout: (worldId: string, layout: unknown) =>
     ipcRenderer.invoke('atlas:layout-save', worldId, layout),
+  pickImage: () => ipcRenderer.invoke('atlas:pick-image'),
+  importImageAsset: (worldDir: string, filePath: string) =>
+    ipcRenderer.invoke('atlas:asset-import-image', worldDir, filePath),
+  listWorldAssets: (worldDir: string) =>
+    ipcRenderer.invoke('atlas:asset-list', worldDir),
 };
 
 contextBridge.exposeInMainWorld('atlasApi', api);

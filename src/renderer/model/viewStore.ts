@@ -1,4 +1,5 @@
 import { createStore } from 'zustand/vanilla';
+import type { AssetsIndex } from './schema';
 import type { CameraState } from '../render/camera';
 
 export interface PanelViewState {
@@ -9,16 +10,22 @@ export interface PanelViewState {
 export interface ViewStoreState {
   panels: Record<string, PanelViewState>;
   selectedEntityIds: string[];
+  assetsIndex: AssetsIndex;
+  calibratingImageId: string | null;
 
   setPanelMap: (panelId: string, mapId: string | null) => void;
   setPanelCamera: (panelId: string, camera: CameraState) => void;
   removePanel: (panelId: string) => void;
   setSelection: (entityIds: string[]) => void;
+  setAssetsIndex: (index: AssetsIndex) => void;
+  setCalibratingImageId: (entityId: string | null) => void;
 }
 
 export const viewStore = createStore<ViewStoreState>((set) => ({
   panels: {},
   selectedEntityIds: [],
+  assetsIndex: {},
+  calibratingImageId: null,
 
   setPanelMap(panelId, mapId) {
     set((state) => ({
@@ -54,5 +61,13 @@ export const viewStore = createStore<ViewStoreState>((set) => ({
 
   setSelection(entityIds) {
     set({ selectedEntityIds: entityIds });
+  },
+
+  setAssetsIndex(index) {
+    set({ assetsIndex: index });
+  },
+
+  setCalibratingImageId(entityId) {
+    set({ calibratingImageId: entityId });
   },
 }));

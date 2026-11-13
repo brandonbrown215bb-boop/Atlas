@@ -1,12 +1,22 @@
 import { useEffect, useRef, useState } from 'react';
-import { Application, Container, Graphics } from 'pixi.js';
+import { Application, Container, Graphics, type Texture } from 'pixi.js';
 import type { IDockviewPanelProps } from 'dockview-react';
 import { useStore } from 'zustand';
-import type { Entity, MapDoc } from '../model/schema';
+import type { Entity, MapDoc, Point } from '../model/schema';
 import { worldStore } from '../model/store';
 import { viewStore } from '../model/viewStore';
-import { fitBoundsCamera, zoomAtCursor, type CameraState } from './camera';
+import {
+  fitBoundsCamera,
+  screenToMap,
+  zoomAtCursor,
+  type CameraState,
+} from './camera';
 import { buildEntityDisplay } from './drawEntity';
+import {
+  getCachedAssetTexture,
+  loadAssetTexture,
+  resolveWorldAssetUrl,
+} from './textures';
 
 export interface MapPanelParams {
   mapId?: string;
@@ -16,6 +26,7 @@ interface CachedEntityDisplay {
   rev: number;
   selected: boolean;
   layerId: string;
+  hasTexture: boolean;
   container: Container;
 }
 
@@ -28,9 +39,21 @@ export function MapView(props: IDockviewPanelProps<MapPanelParams>) {
   const [renderCount, setRenderCount] = useState(0);
 
   const world = useStore(worldStore, (s) => s.world);
+  const worldPath = useStore(worldStore, (s) => s.worldPath);
   const activeMapId = useStore(worldStore, (s) => s.activeMapId);
   const panelState = useStore(viewStore, (s) => s.panels[props.api.id]);
   const selectedIds = useStore(viewStore, (s) => s.selectedEntityIds);
+  const assetsIndex = useStore(viewStore, (s) => s.assetsIndex);
+  const calibratingImageId = useStore(viewStore, (s) => s.calibratingImageId);
+
+  const [calibLine, setCalibLine] = useState<{
+    start: Point;
+    end: Point;
+    pendingConfirm: boolean;
+  } | null>(null);
+  const [calibLengthInput, setCalibLengthInput] = useState('100');
+  const [calibUnit, setCalibUnit] = useState<'ft' | 'mi' | 'm'>('ft');
+  const [textureVersion, setTextureVersion] = useState(0);
 
   const effectiveMapId = props.params.mapId ?? panelState?.mapId ?? activeMapId;
   const map: MapDoc | undefined =
@@ -38,6 +61,12 @@ export function MapView(props: IDockviewPanelProps<MapPanelParams>) {
 
   const mapRef = useRef<MapDoc | undefined>(map);
   mapRef.current = map;
+  const worldPathRef = useRef<string | null>(worldPath);
+  worldPathRef.current = worldPath;
+  const assetsIndexRef = useRef(assetsIndex);
+  assetsIndexRef.current = assetsIndex;
+  const calibratingIdRef = useRef<string | null>(calibratingImageId);
+  calibratingIdRef.current = calibratingImageId;
   const selectedSetRef = useRef<Set<string>>(new Set(selectedIds));
   selectedSetRef.current = new Set(selectedIds);
 
@@ -180,6 +209,26 @@ export function MapView(props: IDockviewPanelProps<MapPanelParams>) {
       // Add or update changed entities only
       const selectedSet = selectedSetRef.current;
       for (const entity of Object.values(m.entities) as Entity[]) {
+        let texture: Texture | undefined;
+        if (entity.type === 'image') {
+          const url = resolveWorldAssetUrl(
+            worldPathRef.current,
+            assetsIndexRef.current,
+            entity.assetId,
+          );
+          if (url) {
+            texture = getCachedAssetTexture(url);
+            if (!texture) {
+              void loadAssetTexture(url, () => {
+                if (!disposed) {
+                  setTextureVersion((v) => v + 1);
+                }
+              });
+            }
+          }
+        }
+
+        const hasTexture = Boolean(texture);
         const isSelected = selectedSet.has(entity.id);
         const cached = entityCache.get(entity.id);
         const needsRebuild =
@@ -187,6 +236,7 @@ export function MapView(props: IDockviewPanelProps<MapPanelParams>) {
           cached.rev !== entity.rev ||
           cached.selected !== isSelected ||
           cached.layerId !== entity.layerId ||
+          cached.hasTexture !== hasTexture ||
           zoomChangedSignificantly;
 
         if (needsRebuild) {
@@ -196,6 +246,7 @@ export function MapView(props: IDockviewPanelProps<MapPanelParams>) {
           const display = buildEntityDisplay(entity, {
             selected: isSelected,
             zoom: cam.zoom,
+            texture,
           });
           const targetLayer = layerContainers.get(entity.layerId);
           if (targetLayer) {
@@ -205,6 +256,7 @@ export function MapView(props: IDockviewPanelProps<MapPanelParams>) {
             rev: entity.rev,
             selected: isSelected,
             layerId: entity.layerId,
+            hasTexture,
             container: display,
           });
         }
@@ -264,7 +316,23 @@ export function MapView(props: IDockviewPanelProps<MapPanelParams>) {
       }
     };
 
+    let calibratingDrag = false;
+    let calibStart: Point | null = null;
+
     const onPointerDown = (e: PointerEvent) => {
+      if (e.button === 0 && calibratingIdRef.current && !spaceHeld) {
+        const rect = canvas.getBoundingClientRect();
+        const pt = screenToMap(
+          getCamera(),
+          e.clientX - rect.left,
+          e.clientY - rect.top,
+        );
+        calibratingDrag = true;
+        calibStart = pt;
+        setCalibLine({ start: pt, end: pt, pendingConfirm: false });
+        canvas.setPointerCapture(e.pointerId);
+        return;
+      }
       if (e.button === 1 || (e.button === 0 && spaceHeld)) {
         panning = true;
         lastX = e.clientX;
@@ -274,6 +342,16 @@ export function MapView(props: IDockviewPanelProps<MapPanelParams>) {
     };
 
     const onPointerMove = (e: PointerEvent) => {
+      if (calibratingDrag && calibStart) {
+        const rect = canvas.getBoundingClientRect();
+        const pt = screenToMap(
+          getCamera(),
+          e.clientX - rect.left,
+          e.clientY - rect.top,
+        );
+        setCalibLine({ start: calibStart, end: pt, pendingConfirm: false });
+        return;
+      }
       if (!panning) {
         return;
       }
@@ -289,6 +367,21 @@ export function MapView(props: IDockviewPanelProps<MapPanelParams>) {
     };
 
     const onPointerUp = (e: PointerEvent) => {
+      if (calibratingDrag && calibStart) {
+        calibratingDrag = false;
+        const rect = canvas.getBoundingClientRect();
+        const pt = screenToMap(
+          getCamera(),
+          e.clientX - rect.left,
+          e.clientY - rect.top,
+        );
+        setCalibLine({ start: calibStart, end: pt, pendingConfirm: true });
+        calibStart = null;
+        if (canvas.hasPointerCapture(e.pointerId)) {
+          canvas.releasePointerCapture(e.pointerId);
+        }
+        return;
+      }
       if (!panning) {
         return;
       }
@@ -378,7 +471,41 @@ export function MapView(props: IDockviewPanelProps<MapPanelParams>) {
 
   useEffect(() => {
     syncSceneRef.current?.();
-  }, [map, selectedIds]);
+  }, [map, selectedIds, assetsIndex, textureVersion]);
+
+  const applyCalibration = () => {
+    if (!map || !calibratingImageId || !calibLine) {
+      return;
+    }
+    const entity = map.entities[calibratingImageId];
+    if (!entity || entity.type !== 'image') {
+      return;
+    }
+    const dx = calibLine.end.x - calibLine.start.x;
+    const dy = calibLine.end.y - calibLine.start.y;
+    const drawnMetres = Math.hypot(dx, dy);
+    const val = Number.parseFloat(calibLengthInput);
+    if (!Number.isFinite(val) || val <= 0 || drawnMetres <= 0) {
+      return;
+    }
+    const knownMetres =
+      calibUnit === 'ft'
+        ? val * 0.3048
+        : calibUnit === 'mi'
+          ? val * 1609.344
+          : val;
+    const scale = knownMetres / drawnMetres;
+    worldStore.getState().execute('entity.update', {
+      mapId: map.id,
+      entityId: entity.id,
+      patch: {
+        w: entity.w * scale,
+        h: entity.h * scale,
+      },
+    });
+    setCalibLine(null);
+    viewStore.getState().setCalibratingImageId(null);
+  };
 
   const handlePopout = () => {
     const panel = props.containerApi.getPanel(props.api.id);
@@ -449,10 +576,73 @@ export function MapView(props: IDockviewPanelProps<MapPanelParams>) {
         </div>
       </div>
       <div
-        ref={hostRef}
-        data-testid={`canvas-host-${props.api.id}`}
-        style={{ flex: 1, minHeight: 0, position: 'relative' }}
-      />
+        style={{
+          flex: 1,
+          minHeight: 0,
+          position: 'relative',
+        }}
+      >
+        <div
+          ref={hostRef}
+          data-testid={`canvas-host-${props.api.id}`}
+          style={{ width: '100%', height: '100%' }}
+        />
+        {calibratingImageId && (
+          <div
+            data-testid="calibration-bar"
+            style={{
+              position: 'absolute',
+              top: 8,
+              left: 8,
+              background: 'var(--atlas-surface)',
+              border: '1px solid var(--atlas-border)',
+              borderRadius: 4,
+              padding: '6px 10px',
+              display: 'flex',
+              alignItems: 'center',
+              gap: 8,
+              fontSize: 12,
+              zIndex: 10,
+            }}
+          >
+            {!calibLine?.pendingConfirm ? (
+              <span>Drag a line across a known distance on the image…</span>
+            ) : (
+              <>
+                <span>Known distance:</span>
+                <input
+                  type="number"
+                  value={calibLengthInput}
+                  onChange={(e) => setCalibLengthInput(e.target.value)}
+                  style={{ width: 70 }}
+                />
+                <select
+                  value={calibUnit}
+                  onChange={(e) =>
+                    setCalibUnit(e.target.value as 'ft' | 'mi' | 'm')
+                  }
+                >
+                  <option value="ft">ft</option>
+                  <option value="mi">mi</option>
+                  <option value="m">m</option>
+                </select>
+                <button type="button" onClick={applyCalibration}>
+                  Apply
+                </button>
+              </>
+            )}
+            <button
+              type="button"
+              onClick={() => {
+                setCalibLine(null);
+                viewStore.getState().setCalibratingImageId(null);
+              }}
+            >
+              Cancel
+            </button>
+          </div>
+        )}
+      </div>
     </div>
   );
 }

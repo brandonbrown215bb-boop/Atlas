@@ -12,6 +12,7 @@ import 'dockview-react/dist/styles/dockview.css';
 import './theme.css';
 import { flushDirtyWorld, startWorldPersistence } from '../model/persistence';
 import { worldStore } from '../model/store';
+import { viewStore } from '../model/viewStore';
 import { buildDefaultLayout, panelComponents, type PanelComponentKey } from './dock';
 
 type ThemeMode = 'dark' | 'light';
@@ -190,6 +191,7 @@ export function App() {
     }
     setErrorBanner(null);
     const res = await window.atlasApi.createWorld(dir, 'New World');
+    viewStore.getState().setAssetsIndex({});
     worldStore.getState().loadWorld(res.meta, res.maps, res.worldDir);
   };
 
@@ -208,6 +210,8 @@ export function App() {
       return;
     }
     setErrorBanner(null);
+    const index = await window.atlasApi.listWorldAssets(res.worldDir);
+    viewStore.getState().setAssetsIndex(index);
     worldStore.getState().loadWorld(res.meta, res.maps, res.worldDir);
   };
 

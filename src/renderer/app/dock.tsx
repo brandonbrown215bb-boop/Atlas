@@ -1,7 +1,6 @@
 import { useEffect, useState } from 'react';
 import type { DockviewApi, IDockviewPanelProps } from 'dockview-react';
-import { useStore } from 'zustand';
-import { worldStore } from '../model/store';
+import { MapsPanel } from '../panels/MapsPanel';
 import { MapView } from '../render/MapView';
 
 export interface MapPanelParams {
@@ -69,82 +68,6 @@ function PanelHeaderBar(props: {
           >
             Dock back
           </button>
-        )}
-      </div>
-    </div>
-  );
-}
-
-function MapPlaceholderPanel(props: IDockviewPanelProps<MapPanelParams>) {
-  const world = useStore(worldStore, (s) => s.world);
-  const activeMapId = useStore(worldStore, (s) => s.activeMapId);
-  const mapId = props.params.mapId ?? activeMapId;
-  const map = mapId && world ? world.maps[mapId] : undefined;
-
-  return (
-    <div
-      data-testid={`panel-${props.api.id}`}
-      style={{
-        display: 'flex',
-        flexDirection: 'column',
-        width: '100%',
-        height: '100%',
-        background: 'var(--atlas-bg)',
-        color: 'var(--atlas-text)',
-      }}
-    >
-      <PanelHeaderBar title={map ? map.name : 'Map View'} panelProps={props} />
-      <div style={{ padding: 16, fontSize: 13, color: 'var(--atlas-text-muted)' }}>
-        {map ? (
-          <div>
-            <div>Kind: {map.kind}</div>
-            <div>Entities: {Object.keys(map.entities).length}</div>
-          </div>
-        ) : (
-          <div>Open or create a world to begin.</div>
-        )}
-      </div>
-    </div>
-  );
-}
-
-function MapsPanel(props: IDockviewPanelProps) {
-  const world = useStore(worldStore, (s) => s.world);
-  const activeMapId = useStore(worldStore, (s) => s.activeMapId);
-
-  return (
-    <div
-      data-testid={`panel-${props.api.id}`}
-      style={{
-        display: 'flex',
-        flexDirection: 'column',
-        width: '100%',
-        height: '100%',
-        background: 'var(--atlas-bg)',
-        color: 'var(--atlas-text)',
-      }}
-    >
-      <PanelHeaderBar title="Maps" panelProps={props} />
-      <div style={{ padding: 10, display: 'flex', flexDirection: 'column', gap: 4 }}>
-        {world ? (
-          world.meta.maps.map((m) => (
-            <button
-              key={m.id}
-              type="button"
-              onClick={() => worldStore.getState().setActiveMap(m.id)}
-              style={{
-                textAlign: 'left',
-                borderColor:
-                  m.id === activeMapId ? 'var(--atlas-accent)' : 'var(--atlas-border)',
-              }}
-            >
-              {m.name} ({m.kind})
-            </button>
-          ))
-        ) : (
-          <span style={{ fontSize: 12, color: 'var(--atlas-text-muted)' }}>
-            No world open
-          </span>
         )}
       </div>
     </div>

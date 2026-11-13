@@ -1,3 +1,4 @@
+import { createHash } from 'node:crypto';
 import {
   copyFileSync,
   existsSync,
@@ -8,11 +9,13 @@ import {
   rmSync,
   writeFileSync,
 } from 'node:fs';
-import { join, resolve } from 'node:path';
+import { basename, extname, join, resolve } from 'node:path';
 import { migrateMapData, migrateWorldData } from '../renderer/model/migrate';
 import {
+  AssetsIndexSchema,
   MapDocSchema,
   WorldMetaSchema,
+  type AssetsIndex,
   type MapDoc,
   type WorldMeta,
 } from '../renderer/model/schema';
@@ -305,4 +308,49 @@ export function addRecentWorld(
     JSON.stringify(updated, null, 2),
   );
   return updated;
+}
+
+export function readAssetsIndex(worldDir: string): AssetsIndex {
+  const indexPath = join(resolve(worldDir), 'assets', 'index.json');
+  if (!existsSync(indexPath)) {
+    return {};
+  }
+  try {
+    const raw = JSON.parse(readFileSync(indexPath, 'utf-8'));
+    return AssetsIndexSchema.parse(raw);
+  } catch {
+    return {};
+  }
+}
+
+export function importImageAsset(
+  worldDir: string,
+  sourceFilePath: string,
+  dimensions: { width: number; height: number },
+): { assetId: string; index: AssetsIndex } {
+  const resolvedWorld = resolve(worldDir);
+  const resolvedSrc = resolve(sourceFilePath);
+  const buf = readFileSync(resolvedSrc);
+  const sha1 = createHash('sha1').update(buf).digest('hex');
+  const ext = extname(resolvedSrc).replace(/^\./, '').toLowerCase() || 'png';
+
+  const assetsDir = join(resolvedWorld, 'assets');
+  mkdirSync(assetsDir, { recursive: true });
+  const targetPath = join(assetsDir, `${sha1}.${ext}`);
+  if (!existsSync(targetPath)) {
+    writeFileSync(targetPath, buf);
+  }
+
+  const index = readAssetsIndex(resolvedWorld);
+  index[sha1] = {
+    originalName: basename(resolvedSrc),
+    packName: 'imported',
+    pxPerSquare: 200,
+    width: Math.max(1, dimensions.width),
+    height: Math.max(1, dimensions.height),
+    ext,
+  };
+  atomicWriteFile(join(assetsDir, 'index.json'), JSON.stringify(index, null, 2));
+
+  return { assetId: sha1, index };
 }

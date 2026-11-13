@@ -7,8 +7,10 @@ import {
   atomicWriteFile,
   createBackup,
   createWorldFolder,
+  importImageAsset,
   listBackups,
   openWorldFolder,
+  readAssetsIndex,
   readRecentWorlds,
   restoreFromBackup,
   saveDirtyWorldFiles,
@@ -102,5 +104,23 @@ describe('P1.2 worldFs', () => {
     const recent = readRecentWorlds(userDataDir);
     expect(recent).toHaveLength(1);
     expect(recent[0]?.path).toBe(worldDir);
+  });
+
+  it('imports an image asset by sha1 hash and updates assets/index.json', () => {
+    const base = makeTempDir();
+    const worldDir = join(base, 'AssetWorld');
+    createWorldFolder(worldDir, 'AssetWorld');
+
+    const srcFile = join(base, 'test-map.jpg');
+    writeFileSync(srcFile, Buffer.from('fake-jpg-bytes'));
+
+    const { assetId, index } = importImageAsset(worldDir, srcFile, {
+      width: 1024,
+      height: 768,
+    });
+    expect(assetId).toMatch(/^[a-f0-9]{40}$/);
+    expect(existsSync(join(worldDir, 'assets', `${assetId}.jpg`))).toBe(true);
+    expect(index[assetId]?.width).toBe(1024);
+    expect(readAssetsIndex(worldDir)[assetId]?.originalName).toBe('test-map.jpg');
   });
 });
