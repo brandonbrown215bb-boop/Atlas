@@ -1,0 +1,180 @@
+import { describe, expect, it } from 'vitest';
+import { migrateMapData, migrateWorldData } from './migrate';
+import { MapDocSchema, WorldMetaSchema, type MapDoc, type WorldMeta } from './schema';
+import { createWorldStore } from './store';
+
+function createFixtureWorld(): { meta: WorldMeta; maps: Record<string, MapDoc> } {
+  const meta: WorldMeta = WorldMetaSchema.parse({
+    formatVersion: 1,
+    id: 'world-1',
+    name: 'Test World',
+    maps: [{ id: 'map-1', name: 'Overworld', kind: 'world' }],
+    themes: { default: {} },
+  });
+
+  const map: MapDoc = MapDocSchema.parse({
+    formatVersion: 1,
+    id: 'map-1',
+    name: 'Overworld',
+    kind: 'world',
+    bounds: { x: 0, y: 0, w: 5000, h: 5000 },
+    grid: { size: 100, visible: false },
+    layers: [
+      { id: 'layer-base', name: 'Base', visible: true, locked: false, gmOnly: false },
+    ],
+    entities: {},
+    generators: {},
+    revision: 1,
+    deleted: {},
+    fog: { enabled: false, revealed: [] },
+  });
+
+  return { meta, maps: { [map.id]: map } };
+}
+
+describe('P1.1 schema, store, commands, history, and migrate', () => {
+  it('adds, updates, and deletes an entity with undo/redo restoring exact state', () => {
+    const store = createWorldStore();
+    const { meta, maps } = createFixtureWorld();
+    store.getState().loadWorld(meta, maps);
+
+    const initialSnapshot = structuredClone(store.getState().world);
+
+    // Add entity
+    store.getState().execute('entity.add', {
+      mapId: 'map-1',
+      entity: {
+        id: 'ent-1',
+        type: 'area',
+        layerId: 'layer-base',
+        origin: 'generated',
+        genId: 'gen-1',
+        rev: 0,
+        role: 'land',
+        rings: [
+          [
+            { x: 0, y: 0 },
+            { x: 100, y: 0 },
+            { x: 100, y: 100 },
+          ],
+        ],
+      },
+    });
+
+    const afterAdd = structuredClone(store.getState().world);
+    expect(afterAdd?.maps['map-1']?.entities['ent-1']).toBeDefined();
+    expect(afterAdd?.maps['map-1']?.revision).toBe(2);
+    expect(store.getState().dirtyMapIds['map-1']).toBe(true);
+
+    // Update entity -> Rule A: generated becomes manual
+    store.getState().execute('entity.update', {
+      mapId: 'map-1',
+      entityId: 'ent-1',
+      patch: { name: 'Mainland' },
+    });
+
+    const afterUpdate = structuredClone(store.getState().world);
+    const updatedEnt = afterUpdate?.maps['map-1']?.entities['ent-1'];
+    expect(updatedEnt?.origin).toBe('manual');
+    expect(updatedEnt?.name).toBe('Mainland');
+
+    // Delete entity -> records deleted revision
+    store.getState().execute('entity.delete', {
+      mapId: 'map-1',
+      entityId: 'ent-1',
+    });
+
+    const afterDelete = structuredClone(store.getState().world);
+    expect(afterDelete?.maps['map-1']?.entities['ent-1']).toBeUndefined();
+    expect(afterDelete?.maps['map-1']?.deleted['ent-1']).toBe(4);
+
+    // Undo all 3 steps back to initial
+    expect(store.getState().undo()).toBe(true);
+    expect(store.getState().world).toEqual(afterUpdate);
+
+    expect(store.getState().undo()).toBe(true);
+    expect(store.getState().world).toEqual(afterAdd);
+
+    expect(store.getState().undo()).toBe(true);
+    expect(store.getState().world).toEqual(initialSnapshot);
+    expect(store.getState().undo()).toBe(false);
+
+    // Redo all 3 steps forward
+    expect(store.getState().redo()).toBe(true);
+    expect(store.getState().world).toEqual(afterAdd);
+
+    expect(store.getState().redo()).toBe(true);
+    expect(store.getState().world).toEqual(afterUpdate);
+
+    expect(store.getState().redo()).toBe(true);
+    expect(store.getState().world).toEqual(afterDelete);
+    expect(store.getState().redo()).toBe(false);
+  });
+
+  it('executes a batch as a single undo step', () => {
+    const store = createWorldStore();
+    const { meta, maps } = createFixtureWorld();
+    store.getState().loadWorld(meta, maps);
+
+    store.getState().executeBatch([
+      {
+        name: 'map.create',
+        input: { id: 'map-2', name: 'Town', kind: 'settlement', parentId: 'map-1' },
+      },
+      {
+        name: 'entity.add',
+        input: {
+          mapId: 'map-2',
+          entity: {
+            id: 'wall-1',
+            type: 'wall',
+            layerId: 'layer-base',
+            origin: 'manual',
+            rev: 0,
+            points: [
+              { x: 0, y: 0 },
+              { x: 10, y: 0 },
+            ],
+            blocksMove: true,
+            blocksSight: true,
+          },
+        },
+      },
+    ]);
+
+    expect(store.getState().world?.maps['map-2']?.entities['wall-1']).toBeDefined();
+    expect(store.getState().dirtyWorld).toBe(true);
+    expect(store.getState().dirtyMapIds['map-2']).toBe(true);
+
+    expect(store.getState().undo()).toBe(true);
+    expect(store.getState().world?.maps['map-2']).toBeUndefined();
+    expect(store.getState().world?.meta.maps).toHaveLength(1);
+  });
+
+  it('round-trips sample world and map through JSON and migrate', () => {
+    const { meta, maps } = createFixtureWorld();
+    const sampleMap = maps['map-1']!;
+    sampleMap.entities['door-1'] = {
+      id: 'door-1',
+      type: 'door',
+      layerId: 'layer-base',
+      origin: 'manual',
+      rev: 1,
+      a: { x: 1, y: 2 },
+      b: { x: 2, y: 2 },
+      kind: 'secret',
+      open: false,
+      gmOnly: true,
+    };
+
+    const roundTrippedMeta = migrateWorldData(JSON.parse(JSON.stringify(meta)));
+    const roundTrippedMap = migrateMapData(JSON.parse(JSON.stringify(sampleMap)));
+
+    expect(roundTrippedMeta).toEqual(meta);
+    expect(roundTrippedMap).toEqual(sampleMap);
+
+    expect(() =>
+      migrateMapData({ ...sampleMap, formatVersion: 999 }),
+    ).toThrow(/Unsupported formatVersion/);
+  });
+});
