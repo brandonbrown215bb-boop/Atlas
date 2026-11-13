@@ -42,6 +42,7 @@ export interface AtlasApi {
   loadLayout: (worldId: string) => Promise<unknown | null>;
   saveLayout: (worldId: string, layout: unknown) => Promise<{ ok: boolean }>;
   pickImage: () => Promise<string | null>;
+  pickSvg: () => Promise<{ name: string; text: string } | null>;
   importImageAsset: (
     worldDir: string,
     filePath: string,
@@ -81,6 +82,7 @@ const api: AtlasApi = {
   saveLayout: (worldId: string, layout: unknown) =>
     ipcRenderer.invoke('atlas:layout-save', worldId, layout),
   pickImage: () => ipcRenderer.invoke('atlas:pick-image'),
+  pickSvg: () => ipcRenderer.invoke('atlas:pick-svg'),
   importImageAsset: (worldDir: string, filePath: string) =>
     ipcRenderer.invoke('atlas:asset-import-image', worldDir, filePath),
   listWorldAssets: (worldDir: string) =>

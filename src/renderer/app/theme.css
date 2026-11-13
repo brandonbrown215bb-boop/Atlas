@@ -45,3 +45,34 @@ button:disabled {
   opacity: 0.45;
   cursor: default;
 }
+
+.svg-import-dialog {
+  width: min(680px, 85vw);
+  max-height: 85vh;
+  overflow: auto;
+  background: var(--atlas-surface);
+  color: var(--atlas-text);
+  border: 1px solid var(--atlas-border);
+  border-radius: 8px;
+  padding: 20px;
+  font-size: 13px;
+}
+.svg-import-dialog::backdrop { background: #0009; }
+.svg-import-dialog h2 { margin: 0 0 8px; font-size: 18px; }
+.svg-import-dialog p { line-height: 1.5; }
+.svg-import-options, .svg-import-actions { display: flex; flex-wrap: wrap; gap: 12px; }
+.svg-import-options label { display: flex; flex-direction: column; gap: 4px; }
+.svg-import-dialog input, .svg-import-dialog select {
+  background: var(--atlas-bg);
+  color: var(--atlas-text);
+  border: 1px solid var(--atlas-border);
+  border-radius: 4px;
+  padding: 5px;
+}
+.svg-import-preview { display: block; width: 100%; height: 150px; background: var(--atlas-bg); color: var(--atlas-accent); margin: 12px 0; }
+.svg-import-shapes { max-height: 240px; overflow: auto; margin: 12px 0; }
+.svg-import-row { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 6px 0; border-bottom: 1px solid var(--atlas-border); content-visibility: auto; }
+.svg-import-row small { color: var(--atlas-text-muted); }
+.svg-import-warning { color: var(--atlas-text-muted); }
+.svg-import-actions { justify-content: flex-end; margin-top: 16px; }
+.svg-import-dialog [role='alert'] { color: var(--atlas-danger); }

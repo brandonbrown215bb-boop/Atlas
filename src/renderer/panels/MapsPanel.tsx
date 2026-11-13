@@ -2,7 +2,9 @@ import { useState } from 'react';
 import type { IDockviewPanelProps } from 'dockview-react';
 import { useStore } from 'zustand';
 import { hasParentChanged } from '../geom/pullFromParent';
-import type { MapKind, WorldMapSummary } from '../model/schema';
+import { parseSvg, type SvgDrawing } from '../import/svg';
+import type { MapDoc, MapKind, WorldMapSummary } from '../model/schema';
+import { SvgImportDialog } from './SvgImportDialog';
 import { worldStore } from '../model/store';
 import { viewStore } from '../model/viewStore';
 
@@ -29,6 +31,9 @@ export function MapsPanel(props: IDockviewPanelProps) {
   const [newName, setNewName] = useState('');
   const [newKind, setNewKind] = useState<MapKind>('settlement');
   const [newParentId, setNewParentId] = useState<string>('');
+  const [svgImport, setSvgImport] = useState<{ drawing: SvgDrawing; fileName: string; map: MapDoc; worldId: string } | null>(null);
+  const [svgError, setSvgError] = useState('');
+  const [loadingSvg, setLoadingSvg] = useState(false);
 
   const activeMap =
     activeMapId && world ? world.maps[activeMapId] : undefined;
@@ -257,6 +262,27 @@ export function MapsPanel(props: IDockviewPanelProps) {
           </button>
           <button
             type="button"
+            data-testid="btn-import-svg"
+            disabled={!activeMap || loadingSvg}
+            onClick={async (event) => {
+              if (!activeMap || !world) return;
+              const doc = event.currentTarget.ownerDocument;
+              setSvgError('');
+              setLoadingSvg(true);
+              try {
+                const file = await window.atlasApi.pickSvg();
+                if (file && worldStore.getState().world?.meta.id === world.meta.id) {
+                  setSvgImport({ drawing: parseSvg(file.text, doc), fileName: file.name, map: activeMap, worldId: world.meta.id });
+                }
+              } catch (error) { setSvgError(error instanceof Error ? error.message : String(error)); }
+              finally { setLoadingSvg(false); }
+            }}
+          >
+            {loadingSvg ? 'Reading SVG…' : 'Import SVG'}
+          </button>
+          {svgError && <div role="alert" style={{ color: 'var(--atlas-danger)' }}>{svgError}</div>}
+          <button
+            type="button"
             data-testid="btn-calibrate-scale"
             disabled={!firstImageEntity}
             onClick={() => {
@@ -269,6 +295,7 @@ export function MapsPanel(props: IDockviewPanelProps) {
           </button>
         </div>
       )}
+      {svgImport && <SvgImportDialog {...svgImport} onClose={() => setSvgImport(null)} />}
     </div>
   );
 }

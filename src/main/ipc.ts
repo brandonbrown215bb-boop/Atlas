@@ -1,5 +1,6 @@
 import { existsSync, mkdirSync, readFileSync } from 'node:fs';
-import { join, resolve } from 'node:path';
+import { readFile, stat } from 'node:fs/promises';
+import { basename, join, resolve } from 'node:path';
 import { app, dialog, ipcMain, nativeImage, type BrowserWindow } from 'electron';
 import type { MapDoc, WorldMeta } from '../renderer/model/schema';
 import {
@@ -160,6 +161,25 @@ export function registerWorldIpc(getMainWindow: () => BrowserWindow | null): Wor
     mkdirSync(dir, { recursive: true });
     atomicWriteFile(join(dir, `${safeId}.json`), JSON.stringify(layout, null, 2));
     return { ok: true };
+  });
+
+  // Read only the file chosen by the native dialog; the renderer supplies no path.
+  ipcMain.handle('atlas:pick-svg', async () => {
+    const win = getMainWindow();
+    const options = {
+      title: 'Import SVG',
+      filters: [{ name: 'SVG drawings', extensions: ['svg'] }],
+      properties: ['openFile'] as Array<'openFile'>,
+    };
+    const result = win
+      ? await dialog.showOpenDialog(win, options)
+      : await dialog.showOpenDialog(options);
+    const filePath = result.filePaths[0];
+    if (result.canceled || !filePath) return null;
+    if ((await stat(filePath)).size > 10 * 1024 * 1024) {
+      throw new Error('SVG files must be smaller than 10 MB.');
+    }
+    return { name: basename(filePath), text: await readFile(filePath, 'utf8') };
   });
 
   ipcMain.handle('atlas:pick-image', async () => {

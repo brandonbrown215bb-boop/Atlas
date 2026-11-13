@@ -4,6 +4,8 @@ Written for an implementing agent. Read sections 1–5 fully before writing any 
 
 Source material: `MAP_EDITOR_BRIEF.md` (what the user wants), `TECH_STACK_AND_OPEN_QUESTIONS.md`, `reference-maps/`. Where this plan and the brief disagree, this plan wins: it records decisions made after the brief.
 
+Implementation progress: completed through **P2.8 SVG import**. Next slice: **P2.9 Measure tool**. Human visual/second-machine checks remain in `USER_CHECKS.md`.
+
 ---
 
 ## 1. Decisions already made (do not reopen)

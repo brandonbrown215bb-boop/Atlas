@@ -5,6 +5,8 @@ import { getChildRectInParent, listKeptEditedEntities } from '../geom/pullFromPa
 import { translateEntityPatch } from '../geom/transform';
 import {
   EntitySchema,
+  AreaEntitySchema,
+  PathEntitySchema,
   LayerSchema,
   MapDocSchema,
   MapKindSchema,
@@ -196,6 +198,34 @@ registerCommand({
 });
 
 // --- Layer Commands ---
+
+registerCommand({
+  name: 'map.importSvg',
+  description: 'Import flattened SVG area/path entities as manual geometry in one undo step. Coordinates and path widths are metres.',
+  input: z.object({
+    mapId: z.string().min(1),
+    layerId: z.string().min(1),
+    shapes: z.array(z.discriminatedUnion('type', [
+      AreaEntitySchema.omit({ id: true, layerId: true, origin: true, rev: true, genId: true, inheritedFrom: true }),
+      PathEntitySchema.omit({ id: true, layerId: true, origin: true, rev: true, genId: true, inheritedFrom: true }),
+    ])).min(1).max(10000),
+  }),
+  run(draft, input) {
+    const map = getMapOrThrow(draft, input.mapId);
+    const layer = map.layers.find((l) => l.id === input.layerId);
+    if (!layer) throw new Error('Import layer no longer exists.');
+    if (layer.locked || !layer.visible) throw new Error('Choose a visible, unlocked layer for the import.');
+    map.revision += 1;
+    const ids = input.shapes.map((shape) => {
+      const id = crypto.randomUUID();
+      map.entities[id] = {
+        ...shape, id, layerId: layer.id, origin: 'manual', rev: map.revision,
+      };
+      return id;
+    });
+    return { ids };
+  },
+});
 
 const LayerAddInputSchema = z.object({
   mapId: z.string().min(1),

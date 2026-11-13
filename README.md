@@ -4,7 +4,7 @@ Offline Windows desktop worldbuilding editor built with Electron, React, TypeScr
 
 ## Current Status
 
-- **Implemented (Phases 0–1):**
+- **Implemented (Phases 0–1 and manual editing through P2.8):**
   - Electron + `electron-vite` + React 19 + strict TypeScript shell
   - Custom `app://` (production bundle) and `atlas-file://` (allowed-root-restricted asset loading) schemes
   - Dockview workspace with real popout windows, per-world layout persistence, off-screen display recovery, and light/dark theme syncing across all windows
@@ -14,10 +14,13 @@ Offline Windows desktop worldbuilding editor built with Electron, React, TypeScr
   - Maps panel tree, map creation by kind, SHA-1 copy-on-import backdrop images, and scale calibration ("Set Real Size")
   - Localhost MCP agent server (`127.0.0.1` + bearer token) with `world_*`, `schema_get`, `command_list`, `command_run`, `undo`/`redo`, `map_list`/`map_get`, and `render_png`
   - Portable Windows build (`dist/CampaignAtlas-Portable.exe`)
+  - Manual selection and transforms, layers and inspector, area/path drawing, vertex editing and area add/subtract, walls, doors, lights and labels
+  - Places with search, category filters and notes; child maps, interiors, portals, continuous zoom-through and pull-from-parent updates
+  - SVG import with outline preview, per-shape area/path roles, real width in feet, editable-layer selection, compound-path holes and one-step undo (`map.importSvg` accepts flattened geometry through MCP)
 
-- **Not Yet Implemented (Phases 2–8):**
-  - Manual drawing/editing tools (select, area, path, vertex edit, wall, door, light, label, places, SVG import, measure)
-  - Child map zoom-through and cross-world copy/move/sync
+- **Next: P2.9 — measure tool. Remaining work (Phases 2–8):**
+  - Route measurement with distance, travel duration and arrival time
+  - Cross-world copy/move/sync
   - Asset pack indexing (Forgotten Adventures / `.dungeondraft_pack`) and theme editor
   - Player/TV window, reveal brush, player-safe PNG export, and Universal VTT (`.dd2vtt`) export
   - Procedural generators (dungeon/interior, outdoor glade, world/continent, city)
@@ -45,6 +48,12 @@ MyWorld/
 ```
 
 Window/panel layouts and the recent-worlds list are stored in Electron `userData` rather than inside the world folder so worlds stay portable across machines with different monitors.
+
+## SVG Import
+
+In **Maps**, choose **Import SVG**, set the drawing’s real width in feet, and assign each shape an area or path role (or skip it). The import starts at the map’s top-left corner and preserves the SVG proportions. Curves become editable points; holes, separate outlines and group transforms are preserved. The whole import undoes in one step.
+
+This imports plain vector geometry, including paths and basic shapes. Text, embedded images, reusable `use` elements, stylesheets, clipping and masks are not reproduced; the dialog reports skipped content. Convert these to plain paths in your SVG editor first when needed.
 
 ## Agent MCP Server
 
