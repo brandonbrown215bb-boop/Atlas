@@ -144,6 +144,12 @@ registerCommand({
     map.revision += 1;
     delete map.entities[input.entityId];
     map.deleted[input.entityId] = map.revision;
+    for (const ent of Object.values(map.entities)) {
+      if (ent.type === 'place' && ent.entityIds.includes(input.entityId)) {
+        ent.entityIds = ent.entityIds.filter((id) => id !== input.entityId);
+        ent.rev = map.revision;
+      }
+    }
     return { id: input.entityId };
   },
 });
@@ -368,5 +374,69 @@ registerCommand({
     const theme = (draft.meta.themes[input.themeName] ??= {});
     theme[input.role] = [...input.assetIds];
     return { themeName: input.themeName, role: input.role };
+  },
+});
+
+// --- Place Commands ---
+
+const PlaceCreateInputSchema = z.object({
+  mapId: z.string().min(1),
+  id: z.string().min(1).optional(),
+  layerId: z.string().min(1).optional(),
+  name: z.string().trim().min(1),
+  category: z.string().default(''),
+  notes: z.string().default(''),
+  gmNotes: z.string().default(''),
+  entityIds: z.array(z.string().min(1)).default([]),
+  gmOnly: z.boolean().optional(),
+  childMapId: z.string().min(1).optional(),
+});
+
+registerCommand({
+  name: 'place.create',
+  description: 'Create a persistent place entity from selected entity IDs on a map.',
+  input: PlaceCreateInputSchema,
+  run(draft, input) {
+    const map = getMapOrThrow(draft, input.mapId);
+    const id = input.id ?? crypto.randomUUID();
+    if (map.entities[id]) {
+      throw new Error(`Entity already exists: ${id}`);
+    }
+    const layerId = input.layerId ?? map.layers[0]?.id;
+    if (!layerId || !map.layers.some((l) => l.id === layerId)) {
+      throw new Error(`Layer not found: ${layerId ?? '(none)'}`);
+    }
+    const uniqueEntityIds: string[] = [];
+    const seen = new Set<string>();
+    for (const eid of input.entityIds) {
+      if (seen.has(eid)) continue;
+      const target = map.entities[eid];
+      if (!target) {
+        throw new Error(`Linked entity not found: ${eid}`);
+      }
+      if (target.type === 'place') {
+        throw new Error(`Cannot link a place to another place: ${eid}`);
+      }
+      seen.add(eid);
+      uniqueEntityIds.push(eid);
+    }
+    map.revision += 1;
+    const place = EntitySchema.parse({
+      id,
+      type: 'place',
+      layerId,
+      origin: 'manual',
+      rev: map.revision,
+      gmOnly: input.gmOnly,
+      name: input.name,
+      category: input.category,
+      notes: input.notes,
+      gmNotes: input.gmNotes,
+      entityIds: uniqueEntityIds,
+      childMapId: input.childMapId,
+    });
+    map.entities[id] = place;
+    delete map.deleted[id];
+    return { id };
   },
 });

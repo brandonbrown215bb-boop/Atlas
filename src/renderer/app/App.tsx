@@ -92,8 +92,17 @@ export function App() {
   const labelSize = useStore(viewStore, (s) => s.labelSize);
 
   useEffect(() => {
-    (window as unknown as { __atlasWorldStore?: typeof worldStore }).__atlasWorldStore =
-      worldStore;
+    (
+      window as unknown as {
+        __atlasWorldStore?: typeof worldStore;
+        __atlasViewStore?: typeof viewStore;
+      }
+    ).__atlasWorldStore = worldStore;
+    (
+      window as unknown as {
+        __atlasViewStore?: typeof viewStore;
+      }
+    ).__atlasViewStore = viewStore;
     const stopPersist = startWorldPersistence();
     const stopAgent = startAgentBridge();
     return () => {
@@ -359,6 +368,7 @@ export function App() {
         </button>
         <button
           type="button"
+          data-testid="btn-places"
           onClick={() => openOrFocusPanel('places', 'Places')}
         >
           + Places

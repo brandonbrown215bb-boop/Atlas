@@ -1,16 +1,18 @@
 import { useEffect, useRef, useState } from 'react';
-import { Application, Container, Graphics, type Texture } from 'pixi.js';
+import { Application, Container, Graphics, Text, type Texture } from 'pixi.js';
 import type { IDockviewPanelProps } from 'dockview-react';
 import { useStore } from 'zustand';
 import type { Entity, MapDoc, Point } from '../model/schema';
 import { worldStore } from '../model/store';
 import { viewStore } from '../model/viewStore';
 import {
+  centerCameraOnPoint,
   fitBoundsCamera,
   screenToMap,
   zoomAtCursor,
   type CameraState,
 } from './camera';
+import { getPlaceBounds, getPlaceCenter } from '../geom/places';
 import { buildEntityDisplay } from './drawEntity';
 import {
   getCachedAssetTexture,
@@ -57,6 +59,12 @@ export function MapView(props: IDockviewPanelProps<MapPanelParams>) {
   const selectedIds = useStore(viewStore, (s) => s.selectedEntityIds);
   const assetsIndex = useStore(viewStore, (s) => s.assetsIndex);
   const calibratingImageId = useStore(viewStore, (s) => s.calibratingImageId);
+  const showPlaceCategoryOverlay = useStore(
+    viewStore,
+    (s) => s.showPlaceCategoryOverlay,
+  );
+  const focusPlaceRequest = useStore(viewStore, (s) => s.focusPlaceRequest);
+  const activeMapPanelId = useStore(viewStore, (s) => s.activeMapPanelId);
 
   const [calibLine, setCalibLine] = useState<{
     start: Point;
@@ -83,16 +91,29 @@ export function MapView(props: IDockviewPanelProps<MapPanelParams>) {
   selectedSetRef.current = new Set(selectedIds);
   const activeToolIdRef = useRef(activeToolId);
   activeToolIdRef.current = activeToolId;
+  const showPlaceCategoryOverlayRef = useRef(showPlaceCategoryOverlay);
+  showPlaceCategoryOverlayRef.current = showPlaceCategoryOverlay;
 
   const scheduleRenderRef = useRef<(() => void) | null>(null);
   const syncSceneRef = useRef<(() => void) | null>(null);
 
   useEffect(() => {
-    const disposable = props.api.onDidLocationChange((event) => {
+    if (!viewStore.getState().activeMapPanelId || props.api.isActive) {
+      viewStore.getState().setActiveMapPanelId(props.api.id);
+    }
+    const locDisposable = props.api.onDidLocationChange((event) => {
       setIsPopout(event.location.type === 'popout');
       setLocationEpoch((n) => n + 1);
     });
-    return () => disposable.dispose();
+    const activeDisposable = props.api.onDidActiveChange((event) => {
+      if (event.isActive) {
+        viewStore.getState().setActiveMapPanelId(props.api.id);
+      }
+    });
+    return () => {
+      locDisposable.dispose();
+      activeDisposable.dispose();
+    };
   }, [props.api]);
 
   useEffect(() => {
@@ -125,6 +146,8 @@ export function MapView(props: IDockviewPanelProps<MapPanelParams>) {
     gridGfx.eventMode = 'none';
     const entitiesRoot = new Container();
     entitiesRoot.eventMode = 'none';
+    const placeOverlayContainer = new Container();
+    placeOverlayContainer.eventMode = 'none';
     const overlayGfx = new Graphics();
     overlayGfx.eventMode = 'none';
 
@@ -228,6 +251,7 @@ export function MapView(props: IDockviewPanelProps<MapPanelParams>) {
       const m = mapRef.current;
       if (!m) {
         entitiesRoot.removeChildren();
+        placeOverlayContainer.removeChildren().forEach((c) => c.destroy({ children: true }));
         gridGfx.clear();
         overlayGfx.clear();
         return;
@@ -339,7 +363,75 @@ export function MapView(props: IDockviewPanelProps<MapPanelParams>) {
         lastZoomForRebuild = cam.zoom;
       }
       drawGrid(m, cam);
+
+      // Rebuild optional category label overlay for places
+      placeOverlayContainer
+        .removeChildren()
+        .forEach((c) => c.destroy({ children: true }));
+      if (showPlaceCategoryOverlayRef.current) {
+        const layerVisibleMap = new Map(m.layers.map((l) => [l.id, l.visible]));
+        const invScale = 1 / Math.max(0.01, cam.zoom);
+        for (const entity of Object.values(m.entities)) {
+          if (entity.type !== 'place') continue;
+          if (layerVisibleMap.get(entity.layerId) === false) continue;
+          const center = getPlaceCenter(m, entity);
+          if (!center) continue;
+
+          const badge = new Container();
+          badge.eventMode = 'none';
+          badge.position.set(center.x, center.y);
+          badge.scale.set(invScale);
+
+          const labelText = entity.category.trim()
+            ? `${entity.name} [${entity.category.trim()}]`
+            : entity.name;
+          const text = new Text({
+            text: labelText,
+            style: {
+              fontSize: 12,
+              fill: 0xf8fafc,
+              fontFamily: 'system-ui, sans-serif',
+            },
+          });
+          text.eventMode = 'none';
+          text.anchor.set(0.5, 0.5);
+
+          const padX = 6;
+          const padY = 3;
+          const bg = new Graphics();
+          bg.eventMode = 'none';
+          const w = text.width + padX * 2;
+          const h = text.height + padY * 2;
+          bg.roundRect(-w / 2, -h / 2, w, h, 4)
+            .fill({ color: 0x0f172a, alpha: 0.85 })
+            .stroke({ width: 1, color: 0x38bdf8, alpha: 0.9 });
+
+          badge.addChild(bg);
+          badge.addChild(text);
+          placeOverlayContainer.addChild(badge);
+        }
+      }
+
       overlayGfx.clear();
+      for (const selectedId of selectedSetRef.current) {
+        const ent = m.entities[selectedId];
+        if (ent?.type === 'place') {
+          const bounds = getPlaceBounds(m, ent);
+          if (bounds) {
+            const pad = Math.max(0.5, 6 / Math.max(0.01, cam.zoom));
+            const strokeW = Math.max(0.05, 2 / Math.max(0.01, cam.zoom));
+            overlayGfx
+              .rect(
+                bounds.minX - pad,
+                bounds.minY - pad,
+                bounds.maxX - bounds.minX + pad * 2,
+                bounds.maxY - bounds.minY + pad * 2,
+              )
+              .fill({ color: 0x38bdf8, alpha: 0.12 })
+              .stroke({ width: strokeW, color: 0x38bdf8, alpha: 0.95 });
+          }
+        }
+      }
       activeTool.drawOverlay(overlayGfx, buildToolContext(m));
     };
 
@@ -411,6 +503,7 @@ export function MapView(props: IDockviewPanelProps<MapPanelParams>) {
     let toolCapture = false;
 
     const onPointerDown = (e: PointerEvent) => {
+      viewStore.getState().setActiveMapPanelId(props.api.id);
       canvas.focus({ preventScroll: true });
       if (e.button === 0 && calibratingIdRef.current && !spaceHeld) {
         const rect = canvas.getBoundingClientRect();
@@ -560,6 +653,7 @@ export function MapView(props: IDockviewPanelProps<MapPanelParams>) {
         app.stage.eventMode = 'none';
         worldLayer.addChild(gridGfx);
         worldLayer.addChild(entitiesRoot);
+        worldLayer.addChild(placeOverlayContainer);
         worldLayer.addChild(overlayGfx);
         app.stage.addChild(worldLayer);
 
@@ -607,7 +701,53 @@ export function MapView(props: IDockviewPanelProps<MapPanelParams>) {
 
   useEffect(() => {
     syncSceneRef.current?.();
-  }, [map, selectedIds, assetsIndex, textureVersion, activeToolId]);
+  }, [
+    map,
+    selectedIds,
+    assetsIndex,
+    textureVersion,
+    activeToolId,
+    showPlaceCategoryOverlay,
+    panelState?.camera,
+  ]);
+
+  useEffect(() => {
+    if (!focusPlaceRequest || !map || focusPlaceRequest.mapId !== map.id) {
+      return;
+    }
+    const isTargetPanel =
+      activeMapPanelId === props.api.id ||
+      (!activeMapPanelId && props.api.id === 'map-main');
+    if (!isTargetPanel) {
+      return;
+    }
+    const place = map.entities[focusPlaceRequest.placeId];
+    if (!place || place.type !== 'place') {
+      return;
+    }
+    const center = getPlaceCenter(map, place);
+    const host = hostRef.current;
+    if (!center || !host) {
+      return;
+    }
+    const currentCam =
+      viewStore.getState().panels[props.api.id]?.camera ??
+      fitBoundsCamera(
+        map.bounds,
+        Math.max(1, host.clientWidth),
+        Math.max(1, host.clientHeight),
+        map.kind,
+      );
+    const nextCam = centerCameraOnPoint(
+      currentCam,
+      center.x,
+      center.y,
+      Math.max(1, host.clientWidth),
+      Math.max(1, host.clientHeight),
+    );
+    viewStore.getState().setPanelCamera(props.api.id, nextCam);
+    syncSceneRef.current?.();
+  }, [focusPlaceRequest, map, activeMapPanelId, props.api.id]);
 
   const applyCalibration = () => {
     if (!map || !calibratingImageId || !calibLine) {

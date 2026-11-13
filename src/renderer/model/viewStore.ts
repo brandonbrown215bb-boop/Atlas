@@ -20,8 +20,15 @@ export interface PanelViewState {
   camera: CameraState | null;
 }
 
+export interface FocusPlaceRequest {
+  mapId: string;
+  placeId: string;
+  nonce: number;
+}
+
 export interface ViewStoreState {
   panels: Record<string, PanelViewState>;
+  activeMapPanelId: string | null;
   activeTool: ToolId;
   activeLayerId: string | null;
   drawMode: DrawMode;
@@ -42,10 +49,13 @@ export interface ViewStoreState {
   selectedEntityIds: string[];
   assetsIndex: AssetsIndex;
   calibratingImageId: string | null;
+  showPlaceCategoryOverlay: boolean;
+  focusPlaceRequest: FocusPlaceRequest | null;
 
   setPanelMap: (panelId: string, mapId: string | null) => void;
   setPanelCamera: (panelId: string, camera: CameraState) => void;
   removePanel: (panelId: string) => void;
+  setActiveMapPanelId: (panelId: string | null) => void;
   setActiveTool: (tool: ToolId) => void;
   setActiveLayerId: (layerId: string | null) => void;
   setDrawMode: (mode: DrawMode) => void;
@@ -66,10 +76,13 @@ export interface ViewStoreState {
   setSelection: (entityIds: string[]) => void;
   setAssetsIndex: (index: AssetsIndex) => void;
   setCalibratingImageId: (entityId: string | null) => void;
+  setShowPlaceCategoryOverlay: (show: boolean) => void;
+  requestFocusPlace: (mapId: string, placeId: string) => void;
 }
 
 export const viewStore = createStore<ViewStoreState>((set) => ({
   panels: {},
+  activeMapPanelId: null,
   activeTool: 'select',
   activeLayerId: null,
   drawMode: 'click',
@@ -90,6 +103,8 @@ export const viewStore = createStore<ViewStoreState>((set) => ({
   selectedEntityIds: [],
   assetsIndex: {},
   calibratingImageId: null,
+  showPlaceCategoryOverlay: false,
+  focusPlaceRequest: null,
 
   setPanelMap(panelId, mapId) {
     set((state) => ({
@@ -119,8 +134,16 @@ export const viewStore = createStore<ViewStoreState>((set) => ({
     set((state) => {
       const next = { ...state.panels };
       delete next[panelId];
-      return { panels: next };
+      return {
+        panels: next,
+        activeMapPanelId:
+          state.activeMapPanelId === panelId ? null : state.activeMapPanelId,
+      };
     });
+  },
+
+  setActiveMapPanelId(activeMapPanelId) {
+    set({ activeMapPanelId });
   },
 
   setActiveTool(tool) {
@@ -201,5 +224,19 @@ export const viewStore = createStore<ViewStoreState>((set) => ({
 
   setCalibratingImageId(entityId) {
     set({ calibratingImageId: entityId });
+  },
+
+  setShowPlaceCategoryOverlay(showPlaceCategoryOverlay) {
+    set({ showPlaceCategoryOverlay });
+  },
+
+  requestFocusPlace(mapId, placeId) {
+    set((state) => ({
+      focusPlaceRequest: {
+        mapId,
+        placeId,
+        nonce: (state.focusPlaceRequest?.nonce ?? 0) + 1,
+      },
+    }));
   },
 }));

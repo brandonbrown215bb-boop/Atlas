@@ -236,4 +236,60 @@ describe('P1.1 schema, store, commands, history, and migrate', () => {
       'layer-base',
     ]);
   });
+
+  it('creates a place from entities, cleans up deleted entity references, and supports undo', () => {
+    const store = createWorldStore();
+    const { meta, maps } = createFixtureWorld();
+    store.getState().loadWorld(meta, maps);
+
+    store.getState().execute('entity.add', {
+      mapId: 'map-1',
+      entity: {
+        id: 'label-1',
+        type: 'label',
+        layerId: 'layer-base',
+        origin: 'manual',
+        rev: 0,
+        text: 'Tavern',
+        x: 10,
+        y: 20,
+        size: 14,
+      },
+    });
+
+    const res = store.getState().execute('place.create', {
+      mapId: 'map-1',
+      id: 'place-1',
+      name: 'The Rusty Anchor',
+      category: 'Tavern',
+      notes: 'Dockside inn',
+      gmNotes: 'Secret cellar',
+      entityIds: ['label-1'],
+    }) as { id: string };
+
+    expect(res.id).toBe('place-1');
+    const created = store.getState().world?.maps['map-1']?.entities['place-1'];
+    expect(created?.type).toBe('place');
+    if (created?.type === 'place') {
+      expect(created.entityIds).toEqual(['label-1']);
+      expect(created.category).toBe('Tavern');
+    }
+
+    // Deleting the linked entity removes it from place.entityIds
+    store.getState().execute('entity.delete', {
+      mapId: 'map-1',
+      entityId: 'label-1',
+    });
+    const afterDelete = store.getState().world?.maps['map-1']?.entities['place-1'];
+    if (afterDelete?.type === 'place') {
+      expect(afterDelete.entityIds).toEqual([]);
+    }
+
+    // Undo restores the linked entity and place reference
+    expect(store.getState().undo()).toBe(true);
+    const afterUndo = store.getState().world?.maps['map-1']?.entities['place-1'];
+    if (afterUndo?.type === 'place') {
+      expect(afterUndo.entityIds).toEqual(['label-1']);
+    }
+  });
 });

@@ -167,6 +167,7 @@ export const EntitySchema = z.discriminatedUnion('type', [
   PlaceEntitySchema,
 ]);
 export type Entity = z.infer<typeof EntitySchema>;
+export type PlaceEntity = z.infer<typeof PlaceEntitySchema>;
 export type EntityType = Entity['type'];
 
 export const GeneratorRecordSchema = z.object({

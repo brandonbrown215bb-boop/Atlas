@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import {
+  centerCameraOnPoint,
   fitBoundsCamera,
   mapToScreen,
   screenToMap,
@@ -55,5 +56,14 @@ describe('P1.4 camera maths', () => {
     const centerScreen = mapToScreen(cam, 500, 500);
     expect(centerScreen.x).toBeCloseTo(400, 6);
     expect(centerScreen.y).toBeCloseTo(300, 6);
+  });
+
+  it('centers a map point in the viewport without changing zoom', () => {
+    const cam: CameraState = { x: 10, y: 20, zoom: 2.5 };
+    const centered = centerCameraOnPoint(cam, 120, 80, 800, 600);
+    expect(centered.zoom).toBe(2.5);
+    const screen = mapToScreen(centered, 120, 80);
+    expect(screen.x).toBeCloseTo(400, 6);
+    expect(screen.y).toBeCloseTo(300, 6);
   });
 });

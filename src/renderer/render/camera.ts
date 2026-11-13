@@ -70,3 +70,19 @@ export function fitBoundsCamera(
     y: safeH / 2 - cy * zoom,
   };
 }
+
+export function centerCameraOnPoint(
+  cam: CameraState,
+  mx: number,
+  my: number,
+  viewW: number,
+  viewH: number,
+): CameraState {
+  const safeW = Math.max(1, viewW);
+  const safeH = Math.max(1, viewH);
+  return {
+    zoom: cam.zoom,
+    x: safeW / 2 - mx * cam.zoom,
+    y: safeH / 2 - my * cam.zoom,
+  };
+}

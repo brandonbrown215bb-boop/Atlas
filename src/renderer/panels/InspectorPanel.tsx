@@ -113,6 +113,44 @@ function TextField(props: {
   );
 }
 
+function TextAreaField(props: {
+  label: string;
+  value: string;
+  placeholder?: string;
+  testId?: string;
+  onCommit: (next: string) => void;
+}) {
+  const [draft, setDraft] = useState(props.value);
+
+  useEffect(() => {
+    setDraft(props.value);
+  }, [props.value]);
+
+  const commit = () => {
+    if (draft !== props.value) {
+      props.onCommit(draft);
+    }
+  };
+
+  return (
+    <label style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
+      <span style={{ color: 'var(--atlas-text-muted)' }}>{props.label}</span>
+      <textarea
+        rows={3}
+        data-testid={props.testId}
+        placeholder={props.placeholder}
+        value={draft}
+        onChange={(e) => setDraft(e.target.value)}
+        onBlur={commit}
+        onKeyDown={(e) => {
+          if (e.key === 'Enter' && (e.ctrlKey || e.metaKey)) commit();
+        }}
+        style={{ resize: 'vertical', fontFamily: 'inherit', fontSize: 12 }}
+      />
+    </label>
+  );
+}
+
 export function InspectorPanel(props: IDockviewPanelProps) {
   const world = useStore(worldStore, (s) => s.world);
   const activeMapId = useStore(worldStore, (s) => s.activeMapId);
@@ -600,12 +638,12 @@ export function InspectorPanel(props: IDockviewPanelProps) {
                     updateEntity(single.id, { category })
                   }
                 />
-                <TextField
+                <TextAreaField
                   label="Notes"
                   value={single.notes}
                   onCommit={(notes) => updateEntity(single.id, { notes })}
                 />
-                <TextField
+                <TextAreaField
                   label="GM Notes"
                   value={single.gmNotes}
                   onCommit={(gmNotes) => updateEntity(single.id, { gmNotes })}
