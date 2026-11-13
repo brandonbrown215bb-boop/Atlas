@@ -4,6 +4,7 @@ import type { MapDoc, WorldMeta } from '../model/schema';
 import { viewStore } from '../model/viewStore';
 import { createAreaTool } from './areaTool';
 import { createPathTool } from './pathTool';
+import { createPointEditTool } from './pointEditTool';
 import type { ToolContext, ToolPointerEvent } from './types';
 
 function makePointer(overrides: Partial<ToolPointerEvent> = {}): ToolPointerEvent {
@@ -118,5 +119,55 @@ describe('AreaTool & PathTool', () => {
     // Reset viewStore defaults
     viewStore.getState().setDrawMode('click');
     viewStore.getState().setSnapToGrid(false);
+  });
+
+  it('pointEditTool drags vertex, inserts on segment, deletes vertex, and carves a hole', () => {
+    viewStore.getState().setSnapToGrid(false);
+    viewStore.getState().setPointEditMode('edit');
+
+    const { store, makeCtx } = makeFixture();
+    const areaTool = createAreaTool();
+    viewStore.getState().setDrawMode('click');
+    areaTool.onPointerDown({ x: 0, y: 0 }, makePointer(), makeCtx());
+    areaTool.onPointerDown({ x: 20, y: 0 }, makePointer(), makeCtx());
+    areaTool.onPointerDown({ x: 20, y: 20 }, makePointer(), makeCtx());
+    areaTool.onPointerDown({ x: 0, y: 20 }, makePointer(), makeCtx());
+    areaTool.onPointerDown({ x: 0, y: 20 }, makePointer({ detail: 2 }), makeCtx());
+
+    const areaId = Object.keys(store.getState().world!.maps['m1']!.entities)[0]!;
+    const pointEdit = createPointEditTool();
+
+    // Drag vertex (20,0) -> (25,0)
+    pointEdit.onPointerDown({ x: 20, y: 0 }, makePointer(), makeCtx());
+    pointEdit.onPointerMove({ x: 25, y: 0 }, makePointer(), makeCtx());
+    pointEdit.onPointerUp({ x: 25, y: 0 }, makePointer(), makeCtx());
+    let ent = store.getState().world!.maps['m1']!.entities[areaId]!;
+    expect(ent.type === 'area' && ent.rings[0]![1]).toEqual({ x: 25, y: 0 });
+
+    // Click segment (0,0)-(25,0) at (12,0) to insert vertex, then delete it
+    pointEdit.onPointerDown({ x: 12, y: 0 }, makePointer(), makeCtx());
+    pointEdit.onPointerUp({ x: 12, y: 0 }, makePointer(), makeCtx());
+    ent = store.getState().world!.maps['m1']!.entities[areaId]!;
+    expect(ent.type === 'area' && ent.rings[0]).toHaveLength(5);
+
+    pointEdit.onKey(
+      { key: 'Delete', preventDefault() {} } as unknown as KeyboardEvent,
+      makeCtx(),
+    );
+    ent = store.getState().world!.maps['m1']!.entities[areaId]!;
+    expect(ent.type === 'area' && ent.rings[0]).toHaveLength(4);
+
+    // Subtract mode: carve a hole
+    viewStore.getState().setPointEditMode('subtract');
+    pointEdit.onPointerDown({ x: 5, y: 5 }, makePointer(), makeCtx());
+    pointEdit.onPointerDown({ x: 15, y: 5 }, makePointer(), makeCtx());
+    pointEdit.onPointerDown({ x: 15, y: 15 }, makePointer(), makeCtx());
+    pointEdit.onPointerDown({ x: 5, y: 15 }, makePointer(), makeCtx());
+    pointEdit.onPointerDown({ x: 5, y: 15 }, makePointer({ detail: 2 }), makeCtx());
+
+    ent = store.getState().world!.maps['m1']!.entities[areaId]!;
+    expect(ent.type === 'area' && ent.rings).toHaveLength(2);
+
+    viewStore.getState().setPointEditMode('edit');
   });
 });

@@ -19,6 +19,7 @@ import {
 } from './textures';
 import { createAreaTool } from '../tools/areaTool';
 import { createPathTool } from '../tools/pathTool';
+import { createPointEditTool } from '../tools/pointEditTool';
 import { createSelectTool } from '../tools/selectTool';
 import type { MapTool, ToolContext } from '../tools/types';
 
@@ -125,12 +126,15 @@ export function MapView(props: IDockviewPanelProps<MapPanelParams>) {
     const selectTool = createSelectTool();
     const areaTool = createAreaTool();
     const pathTool = createPathTool();
+    const pointEditTool = createPointEditTool();
     const getActiveTool = (): MapTool => {
       switch (activeToolIdRef.current) {
         case 'area':
           return areaTool;
         case 'path':
           return pathTool;
+        case 'pointEdit':
+          return pointEditTool;
         default:
           return selectTool;
       }

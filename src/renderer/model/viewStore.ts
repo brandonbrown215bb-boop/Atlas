@@ -2,8 +2,9 @@ import { createStore } from 'zustand/vanilla';
 import type { AreaRole, AssetsIndex, PathRole } from './schema';
 import type { CameraState } from '../render/camera';
 
-export type ToolId = 'select' | 'area' | 'path';
+export type ToolId = 'select' | 'area' | 'path' | 'pointEdit';
 export type DrawMode = 'click' | 'freehand';
+export type PointEditMode = 'edit' | 'add' | 'subtract';
 
 export interface PanelViewState {
   mapId: string | null;
@@ -15,6 +16,7 @@ export interface ViewStoreState {
   activeTool: ToolId;
   activeLayerId: string | null;
   drawMode: DrawMode;
+  pointEditMode: PointEditMode;
   snapToGrid: boolean;
   areaRole: AreaRole;
   pathRole: PathRole;
@@ -30,6 +32,7 @@ export interface ViewStoreState {
   setActiveTool: (tool: ToolId) => void;
   setActiveLayerId: (layerId: string | null) => void;
   setDrawMode: (mode: DrawMode) => void;
+  setPointEditMode: (mode: PointEditMode) => void;
   setSnapToGrid: (snap: boolean) => void;
   setAreaRole: (role: AreaRole) => void;
   setPathRole: (role: PathRole) => void;
@@ -45,6 +48,7 @@ export const viewStore = createStore<ViewStoreState>((set) => ({
   activeTool: 'select',
   activeLayerId: null,
   drawMode: 'click',
+  pointEditMode: 'edit',
   snapToGrid: false,
   areaRole: 'land',
   pathRole: 'road',
@@ -96,6 +100,10 @@ export const viewStore = createStore<ViewStoreState>((set) => ({
 
   setDrawMode(drawMode) {
     set({ drawMode });
+  },
+
+  setPointEditMode(pointEditMode) {
+    set({ pointEditMode });
   },
 
   setSnapToGrid(snapToGrid) {

@@ -14,7 +14,12 @@ import { startAgentBridge } from '../model/agentBridge';
 import { flushDirtyWorld, startWorldPersistence } from '../model/persistence';
 import type { AreaRole, PathRole } from '../model/schema';
 import { worldStore } from '../model/store';
-import { viewStore, type DrawMode, type ToolId } from '../model/viewStore';
+import {
+  viewStore,
+  type DrawMode,
+  type PointEditMode,
+  type ToolId,
+} from '../model/viewStore';
 import { buildDefaultLayout, panelComponents, type PanelComponentKey } from './dock';
 
 type ThemeMode = 'dark' | 'light';
@@ -70,6 +75,7 @@ export function App() {
 
   const activeTool = useStore(viewStore, (s) => s.activeTool);
   const drawMode = useStore(viewStore, (s) => s.drawMode);
+  const pointEditMode = useStore(viewStore, (s) => s.pointEditMode);
   const snapToGrid = useStore(viewStore, (s) => s.snapToGrid);
   const areaRole = useStore(viewStore, (s) => s.areaRole);
   const pathRole = useStore(viewStore, (s) => s.pathRole);
@@ -376,7 +382,7 @@ export function App() {
         }}
       >
         <span style={{ color: 'var(--atlas-text-muted)' }}>Tool:</span>
-        {(['select', 'area', 'path'] as ToolId[]).map((tool) => (
+        {(['select', 'area', 'path', 'pointEdit'] as ToolId[]).map((tool) => (
           <button
             key={tool}
             type="button"
@@ -387,9 +393,44 @@ export function App() {
               outline: activeTool === tool ? '1px solid var(--atlas-accent)' : undefined,
             }}
           >
-            {tool[0]!.toUpperCase() + tool.slice(1)}
+            {tool === 'pointEdit'
+              ? 'Point Edit'
+              : tool[0]!.toUpperCase() + tool.slice(1)}
           </button>
         ))}
+
+        {activeTool === 'pointEdit' && (
+          <>
+            <span style={{ opacity: 0.3 }}>|</span>
+            <label style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
+              <span>Mode:</span>
+              <select
+                data-testid="select-point-edit-mode"
+                value={pointEditMode}
+                onChange={(e) =>
+                  viewStore
+                    .getState()
+                    .setPointEditMode(e.target.value as PointEditMode)
+                }
+              >
+                <option value="edit">Edit vertices</option>
+                <option value="add">Add to area</option>
+                <option value="subtract">Subtract (carve hole)</option>
+              </select>
+            </label>
+            <label style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
+              <input
+                type="checkbox"
+                data-testid="checkbox-snap-grid"
+                checked={snapToGrid}
+                onChange={(e) =>
+                  viewStore.getState().setSnapToGrid(e.target.checked)
+                }
+              />
+              <span>Snap to grid</span>
+            </label>
+          </>
+        )}
 
         {(activeTool === 'area' || activeTool === 'path') && (
           <>
