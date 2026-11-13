@@ -18,6 +18,10 @@ test('opens two map panels and an edit made through the store appears in both', 
 
     try {
       const win = await app.firstWindow();
+      win.on('pageerror', (err) => console.error('PAGEERROR:', err));
+      win.on('console', (msg) => {
+        if (msg.type() === 'error') console.error('CONSOLE ERROR:', msg.text());
+      });
       await win.waitForLoadState('domcontentloaded');
 
       await app.evaluate(({ dialog }, dir) => {
@@ -29,6 +33,11 @@ test('opens two map panels and an edit made through the store appears in both', 
 
       await win.getByTestId('btn-new-world').click();
       await expect(win.getByTestId('save-status')).toContainText('New World');
+      await expect
+        .poll(async () =>
+          Number(await win.getByTestId('panel-map-main').getAttribute('data-render-count')),
+        )
+        .toBeGreaterThan(0);
 
       // Open a second map panel
       await win.getByTestId('btn-add-map').click();

@@ -49,6 +49,8 @@ export function App() {
   const layoutSaveTimerRef = useRef<number | null>(null);
 
   const [theme, setTheme] = useState<ThemeMode>(getInitialTheme);
+  const themeRef = useRef<ThemeMode>(theme);
+  themeRef.current = theme;
   const [errorBanner, setErrorBanner] = useState<{
     message: string;
     worldDir?: string;
@@ -122,13 +124,15 @@ export function App() {
         try {
           api.fromJSON(saved);
           // Re-apply theme to any restored popout windows once they settle
-          window.setTimeout(() => applyThemeToAllWindows(theme, api), 150);
+          window.setTimeout(() => applyThemeToAllWindows(themeRef.current, api), 150);
           return;
         } catch {
           // Fall back to default layout if saved layout is incompatible
         }
       }
-      buildDefaultLayout(api);
+      if (api.panels.length === 0) {
+        buildDefaultLayout(api);
+      }
     } finally {
       window.setTimeout(() => {
         restoringLayoutRef.current = false;
@@ -152,7 +156,7 @@ export function App() {
     });
 
     event.api.onDidLayoutChange(() => {
-      applyThemeToAllWindows(theme, event.api);
+      applyThemeToAllWindows(themeRef.current, event.api);
       if (restoringLayoutRef.current) {
         return;
       }
