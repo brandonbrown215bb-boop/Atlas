@@ -12,7 +12,12 @@ import 'dockview-react/dist/styles/dockview.css';
 import './theme.css';
 import { startAgentBridge } from '../model/agentBridge';
 import { flushDirtyWorld, startWorldPersistence } from '../model/persistence';
-import type { AreaRole, PathRole } from '../model/schema';
+import {
+  MapKindSchema,
+  type AreaRole,
+  type MapKind,
+  type PathRole,
+} from '../model/schema';
 import { worldStore } from '../model/store';
 import {
   viewStore,
@@ -90,6 +95,10 @@ export function App() {
   const lightColor = useStore(viewStore, (s) => s.lightColor);
   const labelText = useStore(viewStore, (s) => s.labelText);
   const labelSize = useStore(viewStore, (s) => s.labelSize);
+  const portalTargetMapId = useStore(viewStore, (s) => s.portalTargetMapId);
+  const developAreaKind = useStore(viewStore, (s) => s.developAreaKind);
+  const pendingDevelopRect = useStore(viewStore, (s) => s.pendingDevelopRect);
+  const [developName, setDevelopName] = useState('Developed Area');
 
   useEffect(() => {
     (
@@ -401,7 +410,7 @@ export function App() {
         }}
       >
         <span style={{ color: 'var(--atlas-text-muted)' }}>Tool:</span>
-        {(['select', 'area', 'path', 'pointEdit', 'wall', 'door', 'light', 'label'] as ToolId[]).map((tool) => (
+        {(['select', 'area', 'path', 'pointEdit', 'wall', 'door', 'light', 'label', 'portal', 'developArea'] as ToolId[]).map((tool) => (
           <button
             key={tool}
             type="button"
@@ -414,7 +423,9 @@ export function App() {
           >
             {tool === 'pointEdit'
               ? 'Point Edit'
-              : tool[0]!.toUpperCase() + tool.slice(1)}
+              : tool === 'developArea'
+                ? 'Develop Area'
+                : tool[0]!.toUpperCase() + tool.slice(1)}
           </button>
         ))}
 
@@ -668,6 +679,93 @@ export function App() {
                 style={{ width: 56 }}
               />
             </label>
+          </>
+        )}
+
+        {activeTool === 'portal' && world && (
+          <>
+            <span style={{ opacity: 0.3 }}>|</span>
+            <label style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
+              <span>Target map:</span>
+              <select
+                data-testid="select-portal-target"
+                value={portalTargetMapId ?? world.meta.maps[0]?.id ?? ''}
+                onChange={(e) =>
+                  viewStore.getState().setPortalTargetMapId(e.target.value)
+                }
+              >
+                {world.meta.maps.map((m) => (
+                  <option key={m.id} value={m.id}>
+                    {m.name} ({m.kind})
+                  </option>
+                ))}
+              </select>
+            </label>
+          </>
+        )}
+
+        {activeTool === 'developArea' && (
+          <>
+            <span style={{ opacity: 0.3 }}>|</span>
+            {pendingDevelopRect ? (
+              <>
+                <input
+                  type="text"
+                  data-testid="develop-area-name"
+                  placeholder="Child map name..."
+                  value={developName}
+                  onChange={(e) => setDevelopName(e.target.value)}
+                  style={{ width: 130 }}
+                />
+                <select
+                  data-testid="select-develop-kind"
+                  value={developAreaKind}
+                  onChange={(e) =>
+                    viewStore.getState().setDevelopAreaKind(e.target.value as MapKind)
+                  }
+                >
+                  {MapKindSchema.options
+                    .filter((k) => k !== 'interior')
+                    .map((k) => (
+                      <option key={k} value={k}>
+                        {k}
+                      </option>
+                    ))}
+                </select>
+                <button
+                  type="button"
+                  data-testid="btn-confirm-develop"
+                  disabled={developName.trim().length === 0}
+                  onClick={() => {
+                    const res = worldStore.getState().execute('map.developArea', {
+                      parentMapId: pendingDevelopRect.mapId,
+                      name: developName.trim(),
+                      kind: developAreaKind,
+                      rect: pendingDevelopRect.rect,
+                    }) as { id: string };
+                    const vs = viewStore.getState();
+                    vs.setPendingDevelopRect(null);
+                    vs.setActiveTool('select');
+                    const targetPanelId = vs.activeMapPanelId ?? 'map-main';
+                    vs.setPanelMap(targetPanelId, res.id);
+                    worldStore.getState().setActiveMap(res.id);
+                  }}
+                >
+                  Create Child Map
+                </button>
+                <button
+                  type="button"
+                  data-testid="btn-cancel-develop"
+                  onClick={() => viewStore.getState().setPendingDevelopRect(null)}
+                >
+                  Cancel
+                </button>
+              </>
+            ) : (
+              <span style={{ color: 'var(--atlas-text-muted)' }}>
+                Drag a rectangle on the map to develop a child area
+              </span>
+            )}
           </>
         )}
       </div>

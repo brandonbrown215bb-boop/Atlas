@@ -12,6 +12,14 @@ import {
   zoomAtCursor,
   type CameraState,
 } from './camera';
+import {
+  childMapParentRect,
+  childToParentCamera,
+  findZoomInChild,
+  parentToChildCamera,
+  shouldDrawChildInline,
+  shouldZoomOutToParent,
+} from '../geom/childMaps';
 import { getPlaceBounds, getPlaceCenter } from '../geom/places';
 import { buildEntityDisplay } from './drawEntity';
 import {
@@ -20,11 +28,13 @@ import {
   resolveWorldAssetUrl,
 } from './textures';
 import { createAreaTool } from '../tools/areaTool';
+import { createDevelopAreaTool } from '../tools/developAreaTool';
 import { createDoorTool } from '../tools/doorTool';
 import { createLabelTool } from '../tools/labelTool';
 import { createLightTool } from '../tools/lightTool';
 import { createPathTool } from '../tools/pathTool';
 import { createPointEditTool } from '../tools/pointEditTool';
+import { createPortalTool } from '../tools/portalTool';
 import { createSelectTool } from '../tools/selectTool';
 import { createWallTool } from '../tools/wallTool';
 import type { MapTool, ToolContext } from '../tools/types';
@@ -65,6 +75,7 @@ export function MapView(props: IDockviewPanelProps<MapPanelParams>) {
   );
   const focusPlaceRequest = useStore(viewStore, (s) => s.focusPlaceRequest);
   const activeMapPanelId = useStore(viewStore, (s) => s.activeMapPanelId);
+  const pendingDevelopRect = useStore(viewStore, (s) => s.pendingDevelopRect);
 
   const [calibLine, setCalibLine] = useState<{
     start: Point;
@@ -75,12 +86,14 @@ export function MapView(props: IDockviewPanelProps<MapPanelParams>) {
   const [calibUnit, setCalibUnit] = useState<'ft' | 'mi' | 'm'>('ft');
   const [textureVersion, setTextureVersion] = useState(0);
 
-  const effectiveMapId = props.params.mapId ?? panelState?.mapId ?? activeMapId;
+  const effectiveMapId = panelState?.mapId ?? props.params.mapId ?? activeMapId;
   const map: MapDoc | undefined =
     effectiveMapId && world ? world.maps[effectiveMapId] : undefined;
 
   const mapRef = useRef<MapDoc | undefined>(map);
   mapRef.current = map;
+  const worldRef = useRef(world);
+  worldRef.current = world;
   const worldPathRef = useRef<string | null>(worldPath);
   worldPathRef.current = worldPath;
   const assetsIndexRef = useRef(assetsIndex);
@@ -146,6 +159,8 @@ export function MapView(props: IDockviewPanelProps<MapPanelParams>) {
     gridGfx.eventMode = 'none';
     const entitiesRoot = new Container();
     entitiesRoot.eventMode = 'none';
+    const childMapsContainer = new Container();
+    childMapsContainer.eventMode = 'none';
     const placeOverlayContainer = new Container();
     placeOverlayContainer.eventMode = 'none';
     const overlayGfx = new Graphics();
@@ -159,6 +174,8 @@ export function MapView(props: IDockviewPanelProps<MapPanelParams>) {
     const doorTool = createDoorTool();
     const lightTool = createLightTool();
     const labelTool = createLabelTool();
+    const portalTool = createPortalTool();
+    const developAreaTool = createDevelopAreaTool();
     const getActiveTool = (): MapTool => {
       switch (activeToolIdRef.current) {
         case 'area':
@@ -175,6 +192,10 @@ export function MapView(props: IDockviewPanelProps<MapPanelParams>) {
           return lightTool;
         case 'label':
           return labelTool;
+        case 'portal':
+          return portalTool;
+        case 'developArea':
+          return developAreaTool;
         default:
           return selectTool;
       }
@@ -251,6 +272,7 @@ export function MapView(props: IDockviewPanelProps<MapPanelParams>) {
       const m = mapRef.current;
       if (!m) {
         entitiesRoot.removeChildren();
+        childMapsContainer.removeChildren().forEach((c) => c.destroy({ children: true }));
         placeOverlayContainer.removeChildren().forEach((c) => c.destroy({ children: true }));
         gridGfx.clear();
         overlayGfx.clear();
@@ -363,6 +385,48 @@ export function MapView(props: IDockviewPanelProps<MapPanelParams>) {
         lastZoomForRebuild = cam.zoom;
       }
       drawGrid(m, cam);
+
+      // Draw inline child maps whose rectangle is on-screen and > 64px (interiors excluded)
+      childMapsContainer
+        .removeChildren()
+        .forEach((c) => c.destroy({ children: true }));
+      const currentWorld = worldRef.current;
+      if (currentWorld) {
+        const viewW = Math.max(1, host.clientWidth);
+        const viewH = Math.max(1, host.clientHeight);
+        for (const childMap of Object.values(currentWorld.maps)) {
+          if (childMap.parent?.mapId !== m.id) continue;
+          const rect = childMapParentRect(childMap);
+          if (!rect || !shouldDrawChildInline(cam, rect, viewW, viewH)) continue;
+
+          const childContainer = new Container();
+          childContainer.eventMode = 'none';
+          childContainer.position.set(rect.x, rect.y);
+
+          const frame = new Graphics();
+          frame.eventMode = 'none';
+          frame
+            .rect(0, 0, rect.w, rect.h)
+            .stroke({ width: Math.max(0.1, 1.5 / Math.max(0.01, cam.zoom)), color: 0x38bdf8, alpha: 0.7 });
+          childContainer.addChild(frame);
+
+          const childLayerGmMap = new Map(childMap.layers.map((l) => [l.id, l.gmOnly]));
+          const childLayerVisMap = new Map(childMap.layers.map((l) => [l.id, l.visible]));
+          for (const layer of childMap.layers) {
+            if (!childLayerVisMap.get(layer.id)) continue;
+            for (const ent of Object.values(childMap.entities)) {
+              if (ent.layerId !== layer.id) continue;
+              const disp = buildEntityDisplay(ent, {
+                selected: false,
+                zoom: cam.zoom,
+                layerGmOnly: Boolean(childLayerGmMap.get(layer.id)),
+              });
+              childContainer.addChild(disp);
+            }
+          }
+          childMapsContainer.addChild(childContainer);
+        }
+      }
 
       // Rebuild optional category label overlay for places
       placeOverlayContainer
@@ -627,6 +691,53 @@ export function MapView(props: IDockviewPanelProps<MapPanelParams>) {
       const sy = e.clientY - rect.top;
       const factor = e.deltaY < 0 ? 1.15 : 1 / 1.15;
       const nextCam = zoomAtCursor(getCamera(), sx, sy, factor, m.kind);
+
+      const currentWorld = worldRef.current;
+      const viewW = Math.max(1, host.clientWidth);
+      const viewH = Math.max(1, host.clientHeight);
+      if (currentWorld && e.deltaY < 0) {
+        const children = Object.values(currentWorld.maps).filter(
+          (c) => c.parent?.mapId === m.id && c.kind !== 'interior',
+        );
+        const zoomTarget = findZoomInChild(nextCam, m.kind, children, viewW, viewH);
+        if (zoomTarget && zoomTarget.parent) {
+          const childCam = parentToChildCamera(
+            nextCam,
+            { x: zoomTarget.parent.x, y: zoomTarget.parent.y },
+            zoomTarget.kind,
+          );
+          viewStore.getState().setSelection([]);
+          viewStore.getState().setPanelMap(props.api.id, zoomTarget.id);
+          viewStore.getState().setPanelCamera(props.api.id, childCam);
+          worldStore.getState().setActiveMap(zoomTarget.id);
+          syncScene();
+          scheduleRender();
+          return;
+        }
+      } else if (
+        currentWorld &&
+        e.deltaY > 0 &&
+        m.parent &&
+        m.kind !== 'interior' &&
+        shouldZoomOutToParent(nextCam, m, viewW, viewH)
+      ) {
+        const parentMap = currentWorld.maps[m.parent.mapId];
+        if (parentMap) {
+          const parentCam = childToParentCamera(
+            nextCam,
+            { x: m.parent.x, y: m.parent.y },
+            parentMap.kind,
+          );
+          viewStore.getState().setSelection([]);
+          viewStore.getState().setPanelMap(props.api.id, parentMap.id);
+          viewStore.getState().setPanelCamera(props.api.id, parentCam);
+          worldStore.getState().setActiveMap(parentMap.id);
+          syncScene();
+          scheduleRender();
+          return;
+        }
+      }
+
       viewStore.getState().setPanelCamera(props.api.id, nextCam);
       syncScene();
       scheduleRender();
@@ -653,6 +764,7 @@ export function MapView(props: IDockviewPanelProps<MapPanelParams>) {
         app.stage.eventMode = 'none';
         worldLayer.addChild(gridGfx);
         worldLayer.addChild(entitiesRoot);
+        worldLayer.addChild(childMapsContainer);
         worldLayer.addChild(placeOverlayContainer);
         worldLayer.addChild(overlayGfx);
         app.stage.addChild(worldLayer);
@@ -702,12 +814,14 @@ export function MapView(props: IDockviewPanelProps<MapPanelParams>) {
   useEffect(() => {
     syncSceneRef.current?.();
   }, [
+    world,
     map,
     selectedIds,
     assetsIndex,
     textureVersion,
     activeToolId,
     showPlaceCategoryOverlay,
+    pendingDevelopRect,
     panelState?.camera,
   ]);
 

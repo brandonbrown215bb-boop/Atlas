@@ -1,5 +1,5 @@
 import { createStore } from 'zustand/vanilla';
-import type { AreaRole, AssetsIndex, PathRole } from './schema';
+import type { AreaRole, AssetsIndex, MapKind, PathRole } from './schema';
 import type { CameraState } from '../render/camera';
 
 export type ToolId =
@@ -10,7 +10,9 @@ export type ToolId =
   | 'wall'
   | 'door'
   | 'light'
-  | 'label';
+  | 'label'
+  | 'portal'
+  | 'developArea';
 export type DrawMode = 'click' | 'freehand';
 export type PointEditMode = 'edit' | 'add' | 'subtract';
 export type DoorKind = 'door' | 'secret';
@@ -46,6 +48,12 @@ export interface ViewStoreState {
   lightColor: string;
   labelText: string;
   labelSize: number;
+  portalTargetMapId: string | null;
+  developAreaKind: MapKind;
+  pendingDevelopRect: {
+    mapId: string;
+    rect: { x: number; y: number; w: number; h: number };
+  } | null;
   selectedEntityIds: string[];
   assetsIndex: AssetsIndex;
   calibratingImageId: string | null;
@@ -73,6 +81,14 @@ export interface ViewStoreState {
   setLightColor: (color: string) => void;
   setLabelText: (text: string) => void;
   setLabelSize: (size: number) => void;
+  setPortalTargetMapId: (mapId: string | null) => void;
+  setDevelopAreaKind: (kind: MapKind) => void;
+  setPendingDevelopRect: (
+    pending: {
+      mapId: string;
+      rect: { x: number; y: number; w: number; h: number };
+    } | null,
+  ) => void;
   setSelection: (entityIds: string[]) => void;
   setAssetsIndex: (index: AssetsIndex) => void;
   setCalibratingImageId: (entityId: string | null) => void;
@@ -100,6 +116,9 @@ export const viewStore = createStore<ViewStoreState>((set) => ({
   lightColor: '#fde047',
   labelText: 'Label',
   labelSize: 16,
+  portalTargetMapId: null,
+  developAreaKind: 'settlement',
+  pendingDevelopRect: null,
   selectedEntityIds: [],
   assetsIndex: {},
   calibratingImageId: null,
@@ -107,15 +126,19 @@ export const viewStore = createStore<ViewStoreState>((set) => ({
   focusPlaceRequest: null,
 
   setPanelMap(panelId, mapId) {
-    set((state) => ({
-      panels: {
-        ...state.panels,
-        [panelId]: {
-          mapId,
-          camera: state.panels[panelId]?.camera ?? null,
+    set((state) => {
+      const prev = state.panels[panelId];
+      const changed = prev?.mapId !== mapId;
+      return {
+        panels: {
+          ...state.panels,
+          [panelId]: {
+            mapId,
+            camera: changed ? null : (prev?.camera ?? null),
+          },
         },
-      },
-    }));
+      };
+    });
   },
 
   setPanelCamera(panelId, camera) {
@@ -212,6 +235,18 @@ export const viewStore = createStore<ViewStoreState>((set) => ({
 
   setLabelSize(labelSize) {
     set({ labelSize });
+  },
+
+  setPortalTargetMapId(portalTargetMapId) {
+    set({ portalTargetMapId });
+  },
+
+  setDevelopAreaKind(developAreaKind) {
+    set({ developAreaKind });
+  },
+
+  setPendingDevelopRect(pendingDevelopRect) {
+    set({ pendingDevelopRect });
   },
 
   setSelection(entityIds) {

@@ -1,4 +1,6 @@
 import { z } from 'zod';
+import { clipAndInheritEntities } from '../geom/clipInherit';
+import { getPlaceBounds } from '../geom/places';
 import { translateEntityPatch } from '../geom/transform';
 import {
   EntitySchema,
@@ -438,5 +440,161 @@ registerCommand({
     map.entities[id] = place;
     delete map.deleted[id];
     return { id };
+  },
+});
+
+const MapDevelopAreaInputSchema = z.object({
+  parentMapId: z.string().min(1),
+  childMapId: z.string().min(1).optional(),
+  name: z.string().trim().min(1),
+  kind: MapKindSchema,
+  rect: z.object({
+    x: z.number().finite(),
+    y: z.number().finite(),
+    w: z.number().positive().finite(),
+    h: z.number().positive().finite(),
+  }),
+});
+
+function buildChildMapDoc(
+  id: string,
+  name: string,
+  kind: z.infer<typeof MapKindSchema>,
+  parentMap: MapDoc,
+  rect: { x: number; y: number; w: number; h: number },
+): MapDoc {
+  const defaultGrid =
+    kind === 'interior' || kind === 'site'
+      ? 1.524
+      : kind === 'settlement'
+        ? 10
+        : 100;
+  const inherited = clipAndInheritEntities(parentMap, rect, 'layer-base');
+  const entities: Record<string, Entity> = {};
+  for (const ent of inherited) {
+    entities[ent.id] = ent;
+  }
+  return MapDocSchema.parse({
+    formatVersion: 1,
+    id,
+    name,
+    kind,
+    parent: {
+      mapId: parentMap.id,
+      x: rect.x,
+      y: rect.y,
+      rotation: 0,
+    },
+    bounds: { x: 0, y: 0, w: rect.w, h: rect.h },
+    grid: {
+      size: defaultGrid,
+      visible: kind === 'interior' || kind === 'site',
+    },
+    layers: [
+      {
+        id: 'layer-base',
+        name: 'Base',
+        visible: true,
+        locked: false,
+        gmOnly: false,
+      },
+    ],
+    entities,
+    generators: {},
+    revision: 1,
+    deleted: {},
+    fog: { enabled: false, revealed: [] },
+  });
+}
+
+registerCommand({
+  name: 'map.developArea',
+  description: 'Create a child map from a rectangular area of a parent map, clipping and inheriting parent geometry.',
+  input: MapDevelopAreaInputSchema,
+  run(draft, input) {
+    const parentMap = getMapOrThrow(draft, input.parentMapId);
+    const id = input.childMapId ?? crypto.randomUUID();
+    if (draft.maps[id]) {
+      throw new Error(`Map already exists: ${id}`);
+    }
+    const childMap = buildChildMapDoc(
+      id,
+      input.name,
+      input.kind,
+      parentMap,
+      input.rect,
+    );
+    draft.maps[childMap.id] = childMap;
+    draft.meta.maps.push({
+      id: childMap.id,
+      name: childMap.name,
+      kind: childMap.kind,
+      parentId: parentMap.id,
+    });
+    return {
+      id: childMap.id,
+      inheritedCount: Object.keys(childMap.entities).length,
+    };
+  },
+});
+
+const MapOpenInteriorInputSchema = z.object({
+  parentMapId: z.string().min(1),
+  placeId: z.string().min(1),
+  childMapId: z.string().min(1).optional(),
+  name: z.string().trim().min(1).optional(),
+  w: z.number().positive().finite().optional(),
+  h: z.number().positive().finite().optional(),
+});
+
+registerCommand({
+  name: 'map.openInterior',
+  description: 'Open or create an interior child map linked to a place entity.',
+  input: MapOpenInteriorInputSchema,
+  run(draft, input) {
+    const parentMap = getMapOrThrow(draft, input.parentMapId);
+    const place = parentMap.entities[input.placeId];
+    if (!place || place.type !== 'place') {
+      throw new Error(`Place not found: ${input.placeId}`);
+    }
+    if (place.childMapId && draft.maps[place.childMapId]) {
+      return { id: place.childMapId, created: false };
+    }
+    const id = input.childMapId ?? crypto.randomUUID();
+    if (draft.maps[id]) {
+      throw new Error(`Map already exists: ${id}`);
+    }
+    const bounds = getPlaceBounds(parentMap, place);
+    const rect = bounds
+      ? {
+          x: bounds.minX,
+          y: bounds.minY,
+          w: Math.max(5, bounds.maxX - bounds.minX),
+          h: Math.max(5, bounds.maxY - bounds.minY),
+        }
+      : {
+          x: 0,
+          y: 0,
+          w: input.w ?? 30,
+          h: input.h ?? 30,
+        };
+    const childMap = buildChildMapDoc(
+      id,
+      input.name ?? `${place.name} Interior`,
+      'interior',
+      parentMap,
+      rect,
+    );
+    draft.maps[childMap.id] = childMap;
+    draft.meta.maps.push({
+      id: childMap.id,
+      name: childMap.name,
+      kind: 'interior',
+      parentId: parentMap.id,
+    });
+    parentMap.revision += 1;
+    place.childMapId = childMap.id;
+    place.rev = parentMap.revision;
+    return { id: childMap.id, created: true };
   },
 });

@@ -292,4 +292,79 @@ describe('P1.1 schema, store, commands, history, and migrate', () => {
       expect(afterUndo.entityIds).toEqual(['label-1']);
     }
   });
+
+  it('develops a child area with clipped inherited entities and opens a place interior with undo', () => {
+    const store = createWorldStore();
+    const { meta, maps } = createFixtureWorld();
+    store.getState().loadWorld(meta, maps);
+
+    store.getState().execute('entity.add', {
+      mapId: 'map-1',
+      entity: {
+        id: 'bldg-1',
+        type: 'area',
+        layerId: 'layer-base',
+        origin: 'manual',
+        rev: 0,
+        role: 'building',
+        rings: [
+          [
+            { x: 100, y: 100 },
+            { x: 130, y: 100 },
+            { x: 130, y: 120 },
+            { x: 100, y: 120 },
+          ],
+        ],
+      },
+    });
+
+    const devRes = store.getState().execute('map.developArea', {
+      parentMapId: 'map-1',
+      childMapId: 'town-1',
+      name: 'Market District',
+      kind: 'settlement',
+      rect: { x: 90, y: 90, w: 60, h: 60 },
+    }) as { id: string; inheritedCount: number };
+
+    expect(devRes.id).toBe('town-1');
+    expect(devRes.inheritedCount).toBe(1);
+    const childMap = store.getState().world?.maps['town-1'];
+    expect(childMap?.parent).toEqual({
+      mapId: 'map-1',
+      x: 90,
+      y: 90,
+      rotation: 0,
+    });
+
+    store.getState().execute('place.create', {
+      mapId: 'map-1',
+      id: 'place-bldg',
+      name: 'Guildhall',
+      entityIds: ['bldg-1'],
+    });
+
+    const intRes = store.getState().execute('map.openInterior', {
+      parentMapId: 'map-1',
+      placeId: 'place-bldg',
+      childMapId: 'int-1',
+    }) as { id: string; created: boolean };
+    expect(intRes).toEqual({ id: 'int-1', created: true });
+    expect(store.getState().world?.maps['int-1']?.kind).toBe('interior');
+
+    const place = store.getState().world?.maps['map-1']?.entities['place-bldg'];
+    if (place?.type === 'place') {
+      expect(place.childMapId).toBe('int-1');
+    }
+
+    // Re-opening returns existing interior
+    const intRes2 = store.getState().execute('map.openInterior', {
+      parentMapId: 'map-1',
+      placeId: 'place-bldg',
+    }) as { id: string; created: boolean };
+    expect(intRes2).toEqual({ id: 'int-1', created: false });
+
+    // Undo removes the interior and clears childMapId
+    expect(store.getState().undo()).toBe(true);
+    expect(store.getState().world?.maps['int-1']).toBeUndefined();
+  });
 });

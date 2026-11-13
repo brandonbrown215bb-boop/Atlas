@@ -394,6 +394,23 @@ export function PlacesPanel(props: IDockviewPanelProps) {
                   />
                   <span>GM Only</span>
                 </label>
+                <button
+                  type="button"
+                  data-testid="btn-open-interior"
+                  onClick={() => {
+                    const res = worldStore.getState().execute('map.openInterior', {
+                      parentMapId: map.id,
+                      placeId: selectedPlace.id,
+                    }) as { id: string };
+                    const vs = viewStore.getState();
+                    const targetPanelId = vs.activeMapPanelId ?? 'map-main';
+                    vs.setPanelMap(targetPanelId, res.id);
+                    vs.setSelection([]);
+                    worldStore.getState().setActiveMap(res.id);
+                  }}
+                >
+                  {selectedPlace.childMapId ? 'Open Interior' : 'Create & Open Interior'}
+                </button>
               </div>
             )}
           </>

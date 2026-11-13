@@ -626,6 +626,19 @@ export function InspectorPanel(props: IDockviewPanelProps) {
                     ))}
                   </select>
                 </label>
+                <button
+                  type="button"
+                  data-testid="btn-follow-portal"
+                  onClick={() => {
+                    const vs = viewStore.getState();
+                    const targetPanelId = vs.activeMapPanelId ?? 'map-main';
+                    vs.setPanelMap(targetPanelId, single.targetMapId);
+                    vs.setSelection([]);
+                    worldStore.getState().setActiveMap(single.targetMapId);
+                  }}
+                >
+                  Follow Portal
+                </button>
               </>
             )}
 
@@ -648,6 +661,23 @@ export function InspectorPanel(props: IDockviewPanelProps) {
                   value={single.gmNotes}
                   onCommit={(gmNotes) => updateEntity(single.id, { gmNotes })}
                 />
+                <button
+                  type="button"
+                  data-testid="btn-inspector-open-interior"
+                  onClick={() => {
+                    const res = worldStore.getState().execute('map.openInterior', {
+                      parentMapId: map.id,
+                      placeId: single.id,
+                    }) as { id: string };
+                    const vs = viewStore.getState();
+                    const targetPanelId = vs.activeMapPanelId ?? 'map-main';
+                    vs.setPanelMap(targetPanelId, res.id);
+                    vs.setSelection([]);
+                    worldStore.getState().setActiveMap(res.id);
+                  }}
+                >
+                  {single.childMapId ? 'Open Interior' : 'Create & Open Interior'}
+                </button>
               </>
             )}
           </>
