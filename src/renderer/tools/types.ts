@@ -5,10 +5,25 @@ import type { CameraState } from '../render/camera';
 
 export interface ToolPointerEvent {
   button: number;
+  detail?: number;
   shiftKey: boolean;
   ctrlKey: boolean;
   metaKey: boolean;
   altKey: boolean;
+}
+
+export function resolveTargetLayerId(
+  map: MapDoc,
+  preferredLayerId: string | null,
+): string | null {
+  if (preferredLayerId) {
+    const preferred = map.layers.find((l) => l.id === preferredLayerId);
+    if (preferred && preferred.visible && !preferred.locked) {
+      return preferred.id;
+    }
+  }
+  const firstUnlocked = map.layers.find((l) => l.visible && !l.locked);
+  return firstUnlocked?.id ?? null;
 }
 
 export interface ToolContext {

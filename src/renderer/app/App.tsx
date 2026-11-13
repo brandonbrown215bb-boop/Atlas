@@ -12,8 +12,9 @@ import 'dockview-react/dist/styles/dockview.css';
 import './theme.css';
 import { startAgentBridge } from '../model/agentBridge';
 import { flushDirtyWorld, startWorldPersistence } from '../model/persistence';
+import type { AreaRole, PathRole } from '../model/schema';
 import { worldStore } from '../model/store';
-import { viewStore } from '../model/viewStore';
+import { viewStore, type DrawMode, type ToolId } from '../model/viewStore';
 import { buildDefaultLayout, panelComponents, type PanelComponentKey } from './dock';
 
 type ThemeMode = 'dark' | 'light';
@@ -66,6 +67,14 @@ export function App() {
   const dirtyWorld = useStore(worldStore, (s) => s.dirtyWorld);
   const dirtyMapIds = useStore(worldStore, (s) => s.dirtyMapIds);
   const isDirty = dirtyWorld || Object.keys(dirtyMapIds).length > 0;
+
+  const activeTool = useStore(viewStore, (s) => s.activeTool);
+  const drawMode = useStore(viewStore, (s) => s.drawMode);
+  const snapToGrid = useStore(viewStore, (s) => s.snapToGrid);
+  const areaRole = useStore(viewStore, (s) => s.areaRole);
+  const pathRole = useStore(viewStore, (s) => s.pathRole);
+  const pathWidth = useStore(viewStore, (s) => s.pathWidth);
+  const pathClosed = useStore(viewStore, (s) => s.pathClosed);
 
   useEffect(() => {
     (window as unknown as { __atlasWorldStore?: typeof worldStore }).__atlasWorldStore =
@@ -353,6 +362,134 @@ export function App() {
           {world ? `${world.meta.name} — ${isDirty ? 'Unsaved' : 'Saved'}` : 'No world open'}
         </span>
       </header>
+
+      <div
+        data-testid="tool-bar"
+        style={{
+          display: 'flex',
+          alignItems: 'center',
+          gap: 8,
+          padding: '4px 10px',
+          background: 'var(--atlas-surface)',
+          borderBottom: '1px solid var(--atlas-border)',
+          fontSize: 12,
+        }}
+      >
+        <span style={{ color: 'var(--atlas-text-muted)' }}>Tool:</span>
+        {(['select', 'area', 'path'] as ToolId[]).map((tool) => (
+          <button
+            key={tool}
+            type="button"
+            data-testid={`tool-btn-${tool}`}
+            onClick={() => viewStore.getState().setActiveTool(tool)}
+            style={{
+              fontWeight: activeTool === tool ? 700 : 400,
+              outline: activeTool === tool ? '1px solid var(--atlas-accent)' : undefined,
+            }}
+          >
+            {tool[0]!.toUpperCase() + tool.slice(1)}
+          </button>
+        ))}
+
+        {(activeTool === 'area' || activeTool === 'path') && (
+          <>
+            <span style={{ opacity: 0.3 }}>|</span>
+            <label style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
+              <span>Mode:</span>
+              <select
+                data-testid="select-draw-mode"
+                value={drawMode}
+                onChange={(e) =>
+                  viewStore.getState().setDrawMode(e.target.value as DrawMode)
+                }
+              >
+                <option value="click">Click points</option>
+                <option value="freehand">Freehand</option>
+              </select>
+            </label>
+
+            {activeTool === 'area' && (
+              <label style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
+                <span>Role:</span>
+                <select
+                  data-testid="select-area-role"
+                  value={areaRole}
+                  onChange={(e) =>
+                    viewStore.getState().setAreaRole(e.target.value as AreaRole)
+                  }
+                >
+                  <option value="land">land</option>
+                  <option value="water">water</option>
+                  <option value="plateau">plateau</option>
+                  <option value="district">district</option>
+                  <option value="building">building</option>
+                  <option value="floor">floor</option>
+                  <option value="biome:forest">biome:forest</option>
+                </select>
+              </label>
+            )}
+
+            {activeTool === 'path' && (
+              <>
+                <label style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
+                  <span>Role:</span>
+                  <select
+                    data-testid="select-path-role"
+                    value={pathRole}
+                    onChange={(e) =>
+                      viewStore.getState().setPathRole(e.target.value as PathRole)
+                    }
+                  >
+                    <option value="road">road</option>
+                    <option value="river">river</option>
+                    <option value="cliff">cliff</option>
+                    <option value="cityWall">cityWall</option>
+                    <option value="trail">trail</option>
+                  </select>
+                </label>
+                <label style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
+                  <span>Width (m):</span>
+                  <input
+                    type="number"
+                    min={0.1}
+                    step={0.5}
+                    value={pathWidth}
+                    onChange={(e) => {
+                      const val = Number.parseFloat(e.target.value);
+                      if (Number.isFinite(val) && val > 0) {
+                        viewStore.getState().setPathWidth(val);
+                      }
+                    }}
+                    style={{ width: 56 }}
+                  />
+                </label>
+                <label style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
+                  <input
+                    type="checkbox"
+                    checked={pathClosed}
+                    onChange={(e) =>
+                      viewStore.getState().setPathClosed(e.target.checked)
+                    }
+                  />
+                  <span>Closed</span>
+                </label>
+              </>
+            )}
+
+            <label style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
+              <input
+                type="checkbox"
+                data-testid="checkbox-snap-grid"
+                checked={snapToGrid}
+                onChange={(e) =>
+                  viewStore.getState().setSnapToGrid(e.target.checked)
+                }
+              />
+              <span>Snap to grid</span>
+            </label>
+          </>
+        )}
+      </div>
 
       {errorBanner && (
         <div

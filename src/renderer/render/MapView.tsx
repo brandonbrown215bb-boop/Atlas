@@ -17,8 +17,10 @@ import {
   loadAssetTexture,
   resolveWorldAssetUrl,
 } from './textures';
+import { createAreaTool } from '../tools/areaTool';
+import { createPathTool } from '../tools/pathTool';
 import { createSelectTool } from '../tools/selectTool';
-import type { ToolContext } from '../tools/types';
+import type { MapTool, ToolContext } from '../tools/types';
 
 export interface MapPanelParams {
   mapId?: string;
@@ -45,6 +47,7 @@ export function MapView(props: IDockviewPanelProps<MapPanelParams>) {
   const worldPath = useStore(worldStore, (s) => s.worldPath);
   const activeMapId = useStore(worldStore, (s) => s.activeMapId);
   const panelState = useStore(viewStore, (s) => s.panels[props.api.id]);
+  const activeToolId = useStore(viewStore, (s) => s.activeTool);
   const selectedIds = useStore(viewStore, (s) => s.selectedEntityIds);
   const assetsIndex = useStore(viewStore, (s) => s.assetsIndex);
   const calibratingImageId = useStore(viewStore, (s) => s.calibratingImageId);
@@ -72,6 +75,8 @@ export function MapView(props: IDockviewPanelProps<MapPanelParams>) {
   calibratingIdRef.current = calibratingImageId;
   const selectedSetRef = useRef<Set<string>>(new Set(selectedIds));
   selectedSetRef.current = new Set(selectedIds);
+  const activeToolIdRef = useRef(activeToolId);
+  activeToolIdRef.current = activeToolId;
 
   const scheduleRenderRef = useRef<(() => void) | null>(null);
   const syncSceneRef = useRef<(() => void) | null>(null);
@@ -118,6 +123,18 @@ export function MapView(props: IDockviewPanelProps<MapPanelParams>) {
     overlayGfx.eventMode = 'none';
 
     const selectTool = createSelectTool();
+    const areaTool = createAreaTool();
+    const pathTool = createPathTool();
+    const getActiveTool = (): MapTool => {
+      switch (activeToolIdRef.current) {
+        case 'area':
+          return areaTool;
+        case 'path':
+          return pathTool;
+        default:
+          return selectTool;
+      }
+    };
 
     const layerContainers = new Map<string, Container>();
     const entityCache = new Map<string, CachedEntityDisplay>();
@@ -231,7 +248,8 @@ export function MapView(props: IDockviewPanelProps<MapPanelParams>) {
 
       // Add or update changed entities only
       const selectedSet = selectedSetRef.current;
-      const previewMap = selectTool.getPreviewEntities?.() ?? null;
+      const activeTool = getActiveTool();
+      const previewMap = activeTool.getPreviewEntities?.() ?? null;
       for (const rawEntity of Object.values(m.entities) as Entity[]) {
         const isPreview = Boolean(previewMap?.has(rawEntity.id));
         const entity = previewMap?.get(rawEntity.id) ?? rawEntity;
@@ -296,7 +314,7 @@ export function MapView(props: IDockviewPanelProps<MapPanelParams>) {
       }
       drawGrid(m, cam);
       overlayGfx.clear();
-      selectTool.drawOverlay(overlayGfx, buildToolContext(m));
+      activeTool.drawOverlay(overlayGfx, buildToolContext(m));
     };
 
     const scheduleRender = () => {
@@ -353,7 +371,7 @@ export function MapView(props: IDockviewPanelProps<MapPanelParams>) {
       }
       const m = mapRef.current;
       if (m && !calibratingIdRef.current) {
-        selectTool.onKey(e, buildToolContext(m));
+        getActiveTool().onKey(e, buildToolContext(m));
       }
     };
     const onKeyUp = (e: KeyboardEvent) => {
@@ -396,7 +414,7 @@ export function MapView(props: IDockviewPanelProps<MapPanelParams>) {
           e.clientX - rect.left,
           e.clientY - rect.top,
         );
-        if (selectTool.onPointerDown(pt, e, buildToolContext(m))) {
+        if (getActiveTool().onPointerDown(pt, e, buildToolContext(m))) {
           toolCapture = true;
           canvas.setPointerCapture(e.pointerId);
         }
@@ -427,14 +445,14 @@ export function MapView(props: IDockviewPanelProps<MapPanelParams>) {
         return;
       }
       const m = mapRef.current;
-      if (m && toolCapture) {
+      if (m && !calibratingIdRef.current) {
         const rect = canvas.getBoundingClientRect();
         const pt = screenToMap(
           getCamera(),
           e.clientX - rect.left,
           e.clientY - rect.top,
         );
-        selectTool.onPointerMove(pt, e, buildToolContext(m));
+        getActiveTool().onPointerMove(pt, e, buildToolContext(m));
       }
     };
 
@@ -471,7 +489,7 @@ export function MapView(props: IDockviewPanelProps<MapPanelParams>) {
             e.clientX - rect.left,
             e.clientY - rect.top,
           );
-          selectTool.onPointerUp(pt, e, buildToolContext(m));
+          getActiveTool().onPointerUp(pt, e, buildToolContext(m));
         }
         if (canvas.hasPointerCapture(e.pointerId)) {
           canvas.releasePointerCapture(e.pointerId);
@@ -563,7 +581,7 @@ export function MapView(props: IDockviewPanelProps<MapPanelParams>) {
 
   useEffect(() => {
     syncSceneRef.current?.();
-  }, [map, selectedIds, assetsIndex, textureVersion]);
+  }, [map, selectedIds, assetsIndex, textureVersion, activeToolId]);
 
   const applyCalibration = () => {
     if (!map || !calibratingImageId || !calibLine) {

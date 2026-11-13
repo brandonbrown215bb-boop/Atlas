@@ -1,8 +1,9 @@
 import { createStore } from 'zustand/vanilla';
-import type { AssetsIndex } from './schema';
+import type { AreaRole, AssetsIndex, PathRole } from './schema';
 import type { CameraState } from '../render/camera';
 
-export type ToolId = 'select';
+export type ToolId = 'select' | 'area' | 'path';
+export type DrawMode = 'click' | 'freehand';
 
 export interface PanelViewState {
   mapId: string | null;
@@ -12,6 +13,13 @@ export interface PanelViewState {
 export interface ViewStoreState {
   panels: Record<string, PanelViewState>;
   activeTool: ToolId;
+  activeLayerId: string | null;
+  drawMode: DrawMode;
+  snapToGrid: boolean;
+  areaRole: AreaRole;
+  pathRole: PathRole;
+  pathWidth: number;
+  pathClosed: boolean;
   selectedEntityIds: string[];
   assetsIndex: AssetsIndex;
   calibratingImageId: string | null;
@@ -20,6 +28,13 @@ export interface ViewStoreState {
   setPanelCamera: (panelId: string, camera: CameraState) => void;
   removePanel: (panelId: string) => void;
   setActiveTool: (tool: ToolId) => void;
+  setActiveLayerId: (layerId: string | null) => void;
+  setDrawMode: (mode: DrawMode) => void;
+  setSnapToGrid: (snap: boolean) => void;
+  setAreaRole: (role: AreaRole) => void;
+  setPathRole: (role: PathRole) => void;
+  setPathWidth: (width: number) => void;
+  setPathClosed: (closed: boolean) => void;
   setSelection: (entityIds: string[]) => void;
   setAssetsIndex: (index: AssetsIndex) => void;
   setCalibratingImageId: (entityId: string | null) => void;
@@ -28,6 +43,13 @@ export interface ViewStoreState {
 export const viewStore = createStore<ViewStoreState>((set) => ({
   panels: {},
   activeTool: 'select',
+  activeLayerId: null,
+  drawMode: 'click',
+  snapToGrid: false,
+  areaRole: 'land',
+  pathRole: 'road',
+  pathWidth: 2,
+  pathClosed: false,
   selectedEntityIds: [],
   assetsIndex: {},
   calibratingImageId: null,
@@ -66,6 +88,34 @@ export const viewStore = createStore<ViewStoreState>((set) => ({
 
   setActiveTool(tool) {
     set({ activeTool: tool });
+  },
+
+  setActiveLayerId(layerId) {
+    set({ activeLayerId: layerId });
+  },
+
+  setDrawMode(drawMode) {
+    set({ drawMode });
+  },
+
+  setSnapToGrid(snapToGrid) {
+    set({ snapToGrid });
+  },
+
+  setAreaRole(areaRole) {
+    set({ areaRole });
+  },
+
+  setPathRole(pathRole) {
+    set({ pathRole });
+  },
+
+  setPathWidth(pathWidth) {
+    set({ pathWidth });
+  },
+
+  setPathClosed(pathClosed) {
+    set({ pathClosed });
   },
 
   setSelection(entityIds) {
