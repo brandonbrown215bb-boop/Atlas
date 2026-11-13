@@ -17,6 +17,8 @@ import {
   loadAssetTexture,
   resolveWorldAssetUrl,
 } from './textures';
+import { createSelectTool } from '../tools/selectTool';
+import type { ToolContext } from '../tools/types';
 
 export interface MapPanelParams {
   mapId?: string;
@@ -27,6 +29,7 @@ interface CachedEntityDisplay {
   selected: boolean;
   layerId: string;
   hasTexture: boolean;
+  wasPreview: boolean;
   container: Container;
 }
 
@@ -111,6 +114,10 @@ export function MapView(props: IDockviewPanelProps<MapPanelParams>) {
     gridGfx.eventMode = 'none';
     const entitiesRoot = new Container();
     entitiesRoot.eventMode = 'none';
+    const overlayGfx = new Graphics();
+    overlayGfx.eventMode = 'none';
+
+    const selectTool = createSelectTool();
 
     const layerContainers = new Map<string, Container>();
     const entityCache = new Map<string, CachedEntityDisplay>();
@@ -161,6 +168,21 @@ export function MapView(props: IDockviewPanelProps<MapPanelParams>) {
       gridGfx.stroke({ width: strokeW, color: 0x4b5563, alpha: 0.4 });
     };
 
+    const buildToolContext = (m: MapDoc): ToolContext => ({
+      panelId: props.api.id,
+      map: m,
+      camera: getCamera(),
+      getSelectedIds: () => viewStore.getState().selectedEntityIds,
+      setSelectedIds: (ids) => viewStore.getState().setSelection(ids),
+      execute: (name, input) => worldStore.getState().execute(name, input),
+      executeBatch: (calls, label) =>
+        worldStore.getState().executeBatch(calls, label),
+      requestRedraw: () => {
+        syncScene();
+        scheduleRender();
+      },
+    });
+
     const syncScene = () => {
       if (disposed || !app.renderer) {
         return;
@@ -169,6 +191,7 @@ export function MapView(props: IDockviewPanelProps<MapPanelParams>) {
       if (!m) {
         entitiesRoot.removeChildren();
         gridGfx.clear();
+        overlayGfx.clear();
         return;
       }
 
@@ -208,7 +231,10 @@ export function MapView(props: IDockviewPanelProps<MapPanelParams>) {
 
       // Add or update changed entities only
       const selectedSet = selectedSetRef.current;
-      for (const entity of Object.values(m.entities) as Entity[]) {
+      const previewMap = selectTool.getPreviewEntities?.() ?? null;
+      for (const rawEntity of Object.values(m.entities) as Entity[]) {
+        const isPreview = Boolean(previewMap?.has(rawEntity.id));
+        const entity = previewMap?.get(rawEntity.id) ?? rawEntity;
         let texture: Texture | undefined;
         if (entity.type === 'image') {
           const url = resolveWorldAssetUrl(
@@ -233,6 +259,8 @@ export function MapView(props: IDockviewPanelProps<MapPanelParams>) {
         const cached = entityCache.get(entity.id);
         const needsRebuild =
           !cached ||
+          isPreview ||
+          cached.wasPreview !== isPreview ||
           cached.rev !== entity.rev ||
           cached.selected !== isSelected ||
           cached.layerId !== entity.layerId ||
@@ -257,6 +285,7 @@ export function MapView(props: IDockviewPanelProps<MapPanelParams>) {
             selected: isSelected,
             layerId: entity.layerId,
             hasTexture,
+            wasPreview: isPreview,
             container: display,
           });
         }
@@ -266,6 +295,8 @@ export function MapView(props: IDockviewPanelProps<MapPanelParams>) {
         lastZoomForRebuild = cam.zoom;
       }
       drawGrid(m, cam);
+      overlayGfx.clear();
+      selectTool.drawOverlay(overlayGfx, buildToolContext(m));
     };
 
     const scheduleRender = () => {
@@ -275,10 +306,10 @@ export function MapView(props: IDockviewPanelProps<MapPanelParams>) {
       dirty = true;
       rafId = ownerWin.requestAnimationFrame(() => {
         rafId = null;
+        dirty = false;
         if (disposed || !app.renderer) {
           return;
         }
-        dirty = false;
         const cam = getCamera();
         worldLayer.position.set(cam.x, cam.y);
         worldLayer.scale.set(cam.zoom);
@@ -309,6 +340,21 @@ export function MapView(props: IDockviewPanelProps<MapPanelParams>) {
       if (e.code === 'Space') {
         spaceHeld = true;
       }
+      const active = ownerDoc.activeElement;
+      if (
+        active instanceof HTMLInputElement ||
+        active instanceof HTMLTextAreaElement ||
+        active instanceof HTMLSelectElement
+      ) {
+        return;
+      }
+      if (active !== canvas) {
+        return;
+      }
+      const m = mapRef.current;
+      if (m && !calibratingIdRef.current) {
+        selectTool.onKey(e, buildToolContext(m));
+      }
     };
     const onKeyUp = (e: KeyboardEvent) => {
       if (e.code === 'Space') {
@@ -318,8 +364,10 @@ export function MapView(props: IDockviewPanelProps<MapPanelParams>) {
 
     let calibratingDrag = false;
     let calibStart: Point | null = null;
+    let toolCapture = false;
 
     const onPointerDown = (e: PointerEvent) => {
+      canvas.focus({ preventScroll: true });
       if (e.button === 0 && calibratingIdRef.current && !spaceHeld) {
         const rect = canvas.getBoundingClientRect();
         const pt = screenToMap(
@@ -338,6 +386,20 @@ export function MapView(props: IDockviewPanelProps<MapPanelParams>) {
         lastX = e.clientX;
         lastY = e.clientY;
         canvas.setPointerCapture(e.pointerId);
+        return;
+      }
+      const m = mapRef.current;
+      if (m && e.button === 0) {
+        const rect = canvas.getBoundingClientRect();
+        const pt = screenToMap(
+          getCamera(),
+          e.clientX - rect.left,
+          e.clientY - rect.top,
+        );
+        if (selectTool.onPointerDown(pt, e, buildToolContext(m))) {
+          toolCapture = true;
+          canvas.setPointerCapture(e.pointerId);
+        }
       }
     };
 
@@ -352,18 +414,28 @@ export function MapView(props: IDockviewPanelProps<MapPanelParams>) {
         setCalibLine({ start: calibStart, end: pt, pendingConfirm: false });
         return;
       }
-      if (!panning) {
+      if (panning) {
+        const cam = getCamera();
+        viewStore.getState().setPanelCamera(props.api.id, {
+          ...cam,
+          x: cam.x + (e.clientX - lastX),
+          y: cam.y + (e.clientY - lastY),
+        });
+        lastX = e.clientX;
+        lastY = e.clientY;
+        scheduleRender();
         return;
       }
-      const cam = getCamera();
-      viewStore.getState().setPanelCamera(props.api.id, {
-        ...cam,
-        x: cam.x + (e.clientX - lastX),
-        y: cam.y + (e.clientY - lastY),
-      });
-      lastX = e.clientX;
-      lastY = e.clientY;
-      scheduleRender();
+      const m = mapRef.current;
+      if (m && toolCapture) {
+        const rect = canvas.getBoundingClientRect();
+        const pt = screenToMap(
+          getCamera(),
+          e.clientX - rect.left,
+          e.clientY - rect.top,
+        );
+        selectTool.onPointerMove(pt, e, buildToolContext(m));
+      }
     };
 
     const onPointerUp = (e: PointerEvent) => {
@@ -382,12 +454,28 @@ export function MapView(props: IDockviewPanelProps<MapPanelParams>) {
         }
         return;
       }
-      if (!panning) {
+      if (panning) {
+        panning = false;
+        if (canvas.hasPointerCapture(e.pointerId)) {
+          canvas.releasePointerCapture(e.pointerId);
+        }
         return;
       }
-      panning = false;
-      if (canvas.hasPointerCapture(e.pointerId)) {
-        canvas.releasePointerCapture(e.pointerId);
+      if (toolCapture) {
+        toolCapture = false;
+        const m = mapRef.current;
+        if (m) {
+          const rect = canvas.getBoundingClientRect();
+          const pt = screenToMap(
+            getCamera(),
+            e.clientX - rect.left,
+            e.clientY - rect.top,
+          );
+          selectTool.onPointerUp(pt, e, buildToolContext(m));
+        }
+        if (canvas.hasPointerCapture(e.pointerId)) {
+          canvas.releasePointerCapture(e.pointerId);
+        }
       }
     };
 
@@ -428,6 +516,7 @@ export function MapView(props: IDockviewPanelProps<MapPanelParams>) {
         app.stage.eventMode = 'none';
         worldLayer.addChild(gridGfx);
         worldLayer.addChild(entitiesRoot);
+        worldLayer.addChild(overlayGfx);
         app.stage.addChild(worldLayer);
 
         canvas.addEventListener('pointerdown', onPointerDown);
@@ -445,6 +534,9 @@ export function MapView(props: IDockviewPanelProps<MapPanelParams>) {
 
         syncScene();
         resizeToHost();
+      })
+      .catch((err) => {
+        console.error('MapView Pixi init failed:', err);
       });
 
     return () => {

@@ -2,6 +2,8 @@ import { createStore } from 'zustand/vanilla';
 import type { AssetsIndex } from './schema';
 import type { CameraState } from '../render/camera';
 
+export type ToolId = 'select';
+
 export interface PanelViewState {
   mapId: string | null;
   camera: CameraState | null;
@@ -9,6 +11,7 @@ export interface PanelViewState {
 
 export interface ViewStoreState {
   panels: Record<string, PanelViewState>;
+  activeTool: ToolId;
   selectedEntityIds: string[];
   assetsIndex: AssetsIndex;
   calibratingImageId: string | null;
@@ -16,6 +19,7 @@ export interface ViewStoreState {
   setPanelMap: (panelId: string, mapId: string | null) => void;
   setPanelCamera: (panelId: string, camera: CameraState) => void;
   removePanel: (panelId: string) => void;
+  setActiveTool: (tool: ToolId) => void;
   setSelection: (entityIds: string[]) => void;
   setAssetsIndex: (index: AssetsIndex) => void;
   setCalibratingImageId: (entityId: string | null) => void;
@@ -23,6 +27,7 @@ export interface ViewStoreState {
 
 export const viewStore = createStore<ViewStoreState>((set) => ({
   panels: {},
+  activeTool: 'select',
   selectedEntityIds: [],
   assetsIndex: {},
   calibratingImageId: null,
@@ -57,6 +62,10 @@ export const viewStore = createStore<ViewStoreState>((set) => ({
       delete next[panelId];
       return { panels: next };
     });
+  },
+
+  setActiveTool(tool) {
+    set({ activeTool: tool });
   },
 
   setSelection(entityIds) {

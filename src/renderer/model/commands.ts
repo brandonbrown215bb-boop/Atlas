@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import { translateEntityPatch } from '../geom/transform';
 import {
   EntitySchema,
   LayerSchema,
@@ -144,6 +145,44 @@ registerCommand({
     delete map.entities[input.entityId];
     map.deleted[input.entityId] = map.revision;
     return { id: input.entityId };
+  },
+});
+
+const EntityDuplicateInputSchema = z.object({
+  mapId: z.string().min(1),
+  entityIds: z.array(z.string().min(1)).min(1),
+  dx: z.number().finite().default(1),
+  dy: z.number().finite().default(1),
+});
+
+registerCommand({
+  name: 'entity.duplicate',
+  description: 'Duplicate one or more entities on a map with an optional offset.',
+  input: EntityDuplicateInputSchema,
+  run(draft, input) {
+    const map = getMapOrThrow(draft, input.mapId);
+    const createdIds: string[] = [];
+    map.revision += 1;
+    for (const sourceId of input.entityIds) {
+      const existing = map.entities[sourceId];
+      if (!existing) {
+        throw new Error(`Entity not found: ${sourceId}`);
+      }
+      const newId = crypto.randomUUID();
+      const offsetPatch = translateEntityPatch(existing, input.dx, input.dy);
+      const clone = EntitySchema.parse({
+        ...existing,
+        ...offsetPatch,
+        id: newId,
+        origin: 'manual',
+        genId: undefined,
+        inheritedFrom: undefined,
+        rev: map.revision,
+      });
+      map.entities[newId] = clone;
+      createdIds.push(newId);
+    }
+    return { ids: createdIds };
   },
 });
 
