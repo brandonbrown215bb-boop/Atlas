@@ -1,10 +1,12 @@
 import { join } from 'node:path';
 import { app, BrowserWindow, ipcMain } from 'electron';
+import { registerWorldIpc } from './ipc';
 import { registerAtlasSchemes, setupProtocolHandlers } from './protocol';
 
 registerAtlasSchemes();
 
 const popoutWindows = new Map<string, BrowserWindow>();
+let mainWindow: BrowserWindow | null = null;
 
 function isAllowedPopoutUrl(url: string): boolean {
   const devUrl = process.env['ELECTRON_RENDERER_URL'];
@@ -35,6 +37,13 @@ function createMainWindow(): BrowserWindow {
       sandbox: true,
       backgroundThrottling: false,
     },
+  });
+
+  mainWindow = win;
+  win.on('closed', () => {
+    if (mainWindow === win) {
+      mainWindow = null;
+    }
   });
 
   win.webContents.setWindowOpenHandler(({ url }) => {
@@ -77,9 +86,18 @@ function createMainWindow(): BrowserWindow {
 }
 
 void app.whenReady().then(() => {
+  const worldIpc = registerWorldIpc(() => mainWindow);
+
   setupProtocolHandlers({
     rendererDir: join(__dirname, '../renderer'),
-    getAllowedRoots: () => [app.getPath('userData')],
+    getAllowedRoots: () => {
+      const roots = [app.getPath('userData')];
+      const worldDir = worldIpc.getCurrentWorldDir();
+      if (worldDir) {
+        roots.push(worldDir);
+      }
+      return roots;
+    },
   });
 
   ipcMain.handle('atlas:close-popout', (_event, frameName: string) => {

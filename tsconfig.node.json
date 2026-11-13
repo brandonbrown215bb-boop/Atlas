@@ -18,6 +18,8 @@
     "playwright.config.*",
     "src/main/**/*",
     "src/preload/**/*",
+    "src/renderer/model/schema.ts",
+    "src/renderer/model/migrate.ts",
     "e2e/**/*"
   ]
 }
