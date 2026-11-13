@@ -21,6 +21,10 @@ import {
   shouldZoomOutToParent,
 } from '../geom/childMaps';
 import { getPlaceBounds, getPlaceCenter } from '../geom/places';
+import {
+  hasParentChanged,
+  type KeptEditedEntityInfo,
+} from '../geom/pullFromParent';
 import { buildEntityDisplay } from './drawEntity';
 import {
   getCachedAssetTexture,
@@ -85,6 +89,9 @@ export function MapView(props: IDockviewPanelProps<MapPanelParams>) {
   const [calibLengthInput, setCalibLengthInput] = useState('100');
   const [calibUnit, setCalibUnit] = useState<'ft' | 'mi' | 'm'>('ft');
   const [textureVersion, setTextureVersion] = useState(0);
+  const [pullReport, setPullReport] = useState<KeptEditedEntityInfo[] | null>(
+    null,
+  );
 
   const effectiveMapId = panelState?.mapId ?? props.params.mapId ?? activeMapId;
   const map: MapDoc | undefined =
@@ -914,6 +921,18 @@ export function MapView(props: IDockviewPanelProps<MapPanelParams>) {
   };
 
   const entityCount = map ? Object.keys(map.entities).length : 0;
+  const parentMap =
+    map?.parent && world ? world.maps[map.parent.mapId] : undefined;
+  const parentChanged =
+    Boolean(map && parentMap && hasParentChanged(map, parentMap));
+
+  const handlePullFromParent = () => {
+    if (!map) return;
+    const res = worldStore.getState().execute('map.pullFromParent', {
+      mapId: map.id,
+    }) as { keptEdited?: KeptEditedEntityInfo[] };
+    setPullReport(res.keptEdited ?? []);
+  };
 
   return (
     <div
@@ -945,6 +964,40 @@ export function MapView(props: IDockviewPanelProps<MapPanelParams>) {
         <span style={{ color: 'var(--atlas-text-muted)' }}>
           {entityCount} entities
         </span>
+        {parentChanged && (
+          <button
+            type="button"
+            data-testid="btn-pull-from-parent"
+            onClick={handlePullFromParent}
+            style={{
+              background: '#f59e0b',
+              color: '#111827',
+              fontWeight: 600,
+              borderRadius: 4,
+              padding: '2px 8px',
+            }}
+          >
+            Parent changed — Pull from parent
+          </button>
+        )}
+        {pullReport && pullReport.length > 0 && (
+          <span
+            data-testid="pull-kept-report"
+            style={{
+              display: 'inline-flex',
+              alignItems: 'center',
+              gap: 6,
+              fontSize: 11,
+              color: '#fbbf24',
+            }}
+          >
+            Kept {pullReport.length} edited:{' '}
+            {pullReport.map((k) => k.name || `${k.type} (${k.id.slice(0, 6)})`).join(', ')}
+            <button type="button" onClick={() => setPullReport(null)}>
+              ×
+            </button>
+          </span>
+        )}
         <div style={{ marginLeft: 'auto', display: 'flex', gap: 6 }}>
           {!isPopout ? (
             <button

@@ -1,6 +1,7 @@
 import { z } from 'zod';
 import { clipAndInheritEntities } from '../geom/clipInherit';
 import { getPlaceBounds } from '../geom/places';
+import { getChildRectInParent, listKeptEditedEntities } from '../geom/pullFromParent';
 import { translateEntityPatch } from '../geom/transform';
 import {
   EntitySchema,
@@ -596,5 +597,62 @@ registerCommand({
     place.childMapId = childMap.id;
     place.rev = parentMap.revision;
     return { id: childMap.id, created: true };
+  },
+});
+
+const MapPullFromParentInputSchema = z.object({
+  mapId: z.string().min(1),
+});
+
+registerCommand({
+  name: 'map.pullFromParent',
+  description: 'Re-clip parent geometry into a child map, replacing unedited inherited entities while keeping manual edits.',
+  input: MapPullFromParentInputSchema,
+  run(draft, input) {
+    const childMap = getMapOrThrow(draft, input.mapId);
+    if (!childMap.parent) {
+      throw new Error(`Map has no parent: ${input.mapId}`);
+    }
+    const parentMap = getMapOrThrow(draft, childMap.parent.mapId);
+    const rect = getChildRectInParent(childMap);
+    if (!rect) {
+      throw new Error(`Invalid parent rect for map: ${input.mapId}`);
+    }
+    const targetLayerId = childMap.layers[0]?.id;
+    if (!targetLayerId) {
+      throw new Error(`Child map has no layers: ${input.mapId}`);
+    }
+
+    childMap.revision += 1;
+    let replacedCount = 0;
+    for (const [eid, ent] of Object.entries(childMap.entities)) {
+      if (ent.origin === 'inherited') {
+        delete childMap.entities[eid];
+        childMap.deleted[eid] = childMap.revision;
+        replacedCount += 1;
+      }
+    }
+
+    const keptEdited = listKeptEditedEntities(childMap);
+    const editedParentIds = new Set(keptEdited.map((k) => k.parentEntityId));
+
+    const fresh = clipAndInheritEntities(parentMap, rect, targetLayerId);
+    let addedCount = 0;
+    for (const ent of fresh) {
+      if (ent.inheritedFrom && editedParentIds.has(ent.inheritedFrom.entityId)) {
+        continue;
+      }
+      const next = { ...ent, rev: childMap.revision };
+      childMap.entities[next.id] = next;
+      delete childMap.deleted[next.id];
+      addedCount += 1;
+    }
+
+    return {
+      mapId: childMap.id,
+      replacedCount,
+      addedCount,
+      keptEdited,
+    };
   },
 });

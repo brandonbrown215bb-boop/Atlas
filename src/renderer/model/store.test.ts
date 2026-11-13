@@ -367,4 +367,102 @@ describe('P1.1 schema, store, commands, history, and migrate', () => {
     expect(store.getState().undo()).toBe(true);
     expect(store.getState().world?.maps['int-1']).toBeUndefined();
   });
+
+  it('pulls from parent: replaces unedited inherited entities, keeps edited ones, and supports single undo', () => {
+    const store = createWorldStore();
+    const { meta, maps } = createFixtureWorld();
+    store.getState().loadWorld(meta, maps);
+
+    // Parent has two entities inside the child area
+    store.getState().execute('entity.add', {
+      mapId: 'map-1',
+      entity: {
+        id: 'road-1',
+        type: 'path',
+        layerId: 'layer-base',
+        origin: 'manual',
+        rev: 0,
+        role: 'road',
+        width: 4,
+        closed: false,
+        points: [
+          { x: 0, y: 50 },
+          { x: 200, y: 50 },
+        ],
+      },
+    });
+    store.getState().execute('entity.add', {
+      mapId: 'map-1',
+      entity: {
+        id: 'label-1',
+        type: 'label',
+        layerId: 'layer-base',
+        origin: 'manual',
+        rev: 0,
+        text: 'Old Town',
+        x: 50,
+        y: 50,
+        size: 14,
+      },
+    });
+
+    store.getState().execute('map.developArea', {
+      parentMapId: 'map-1',
+      childMapId: 'child-1',
+      name: 'District',
+      kind: 'settlement',
+      rect: { x: 0, y: 0, w: 100, h: 100 },
+    });
+
+    const childBefore = store.getState().world?.maps['child-1']!;
+    const childRoad = Object.values(childBefore.entities).find((e) => e.type === 'path')!;
+    const childLabel = Object.values(childBefore.entities).find((e) => e.type === 'label')!;
+
+    // User edits the inherited label (marks it manual)
+    store.getState().execute('entity.update', {
+      mapId: 'child-1',
+      entityId: childLabel.id,
+      patch: { text: 'Custom Edited Town' },
+    });
+
+    // Parent updates both the road and the label
+    store.getState().execute('entity.update', {
+      mapId: 'map-1',
+      entityId: 'road-1',
+      patch: { width: 12 },
+    });
+    store.getState().execute('entity.update', {
+      mapId: 'map-1',
+      entityId: 'label-1',
+      patch: { text: 'New Parent Town' },
+    });
+
+    const pullRes = store.getState().execute('map.pullFromParent', {
+      mapId: 'child-1',
+    }) as {
+      replacedCount: number;
+      addedCount: number;
+      keptEdited: Array<{ id: string; parentEntityId: string }>;
+    };
+
+    expect(pullRes.replacedCount).toBe(1);
+    expect(pullRes.addedCount).toBe(1);
+    expect(pullRes.keptEdited).toHaveLength(1);
+    expect(pullRes.keptEdited[0]!.id).toBe(childLabel.id);
+    expect(pullRes.keptEdited[0]!.parentEntityId).toBe('label-1');
+
+    const childAfter = store.getState().world?.maps['child-1']!;
+    expect(childAfter.entities[childRoad.id]).toBeUndefined();
+    const newChildRoad = Object.values(childAfter.entities).find((e) => e.type === 'path');
+    expect(newChildRoad?.type === 'path' ? newChildRoad.width : null).toBe(12);
+    const keptLabel = childAfter.entities[childLabel.id];
+    expect(keptLabel?.type === 'label' ? keptLabel.text : null).toBe('Custom Edited Town');
+
+    // One undo restores the pre-pull state
+    expect(store.getState().undo()).toBe(true);
+    const childRestored = store.getState().world?.maps['child-1']!;
+    expect(childRestored.entities[childRoad.id]).toBeDefined();
+    const restoredRoad = childRestored.entities[childRoad.id];
+    expect(restoredRoad?.type === 'path' ? restoredRoad.width : null).toBe(4);
+  });
 });

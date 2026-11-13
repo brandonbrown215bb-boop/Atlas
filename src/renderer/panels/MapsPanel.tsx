@@ -1,6 +1,7 @@
 import { useState } from 'react';
 import type { IDockviewPanelProps } from 'dockview-react';
 import { useStore } from 'zustand';
+import { hasParentChanged } from '../geom/pullFromParent';
 import type { MapKind, WorldMapSummary } from '../model/schema';
 import { worldStore } from '../model/store';
 import { viewStore } from '../model/viewStore';
@@ -129,24 +130,68 @@ export function MapsPanel(props: IDockviewPanelProps) {
         {!world ? (
           <span style={{ color: 'var(--atlas-text-muted)' }}>No world open</span>
         ) : (
-          tree.map(({ map, depth }) => (
-            <button
-              key={map.id}
-              type="button"
-              data-testid={`map-tree-item-${map.id}`}
-              onClick={() => worldStore.getState().setActiveMap(map.id)}
-              style={{
-                textAlign: 'left',
-                marginLeft: depth * 12,
-                borderColor:
-                  map.id === activeMapId
-                    ? 'var(--atlas-accent)'
-                    : 'var(--atlas-border)',
-              }}
-            >
-              {map.name} <span style={{ opacity: 0.65 }}>({map.kind})</span>
-            </button>
-          ))
+          tree.map(({ map, depth }) => {
+            const mapDoc = world.maps[map.id];
+            const parentDoc = mapDoc?.parent
+              ? world.maps[mapDoc.parent.mapId]
+              : undefined;
+            const changed = Boolean(
+              mapDoc && parentDoc && hasParentChanged(mapDoc, parentDoc),
+            );
+            return (
+              <div
+                key={map.id}
+                style={{
+                  display: 'flex',
+                  alignItems: 'center',
+                  gap: 4,
+                  marginLeft: depth * 12,
+                }}
+              >
+                <button
+                  type="button"
+                  data-testid={`map-tree-item-${map.id}`}
+                  onClick={() => worldStore.getState().setActiveMap(map.id)}
+                  style={{
+                    flex: 1,
+                    textAlign: 'left',
+                    borderColor:
+                      map.id === activeMapId
+                        ? 'var(--atlas-accent)'
+                        : 'var(--atlas-border)',
+                  }}
+                >
+                  {map.name} <span style={{ opacity: 0.65 }}>({map.kind})</span>
+                  {changed && (
+                    <span
+                      data-testid={`parent-changed-${map.id}`}
+                      style={{
+                        marginLeft: 6,
+                        color: '#f59e0b',
+                        fontSize: 10,
+                        fontWeight: 600,
+                      }}
+                    >
+                      • parent changed
+                    </span>
+                  )}
+                </button>
+                {changed && (
+                  <button
+                    type="button"
+                    data-testid={`btn-pull-parent-${map.id}`}
+                    onClick={() =>
+                      worldStore
+                        .getState()
+                        .execute('map.pullFromParent', { mapId: map.id })
+                    }
+                  >
+                    Pull
+                  </button>
+                )}
+              </div>
+            );
+          })
         )}
       </div>
 
