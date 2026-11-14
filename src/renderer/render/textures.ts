@@ -1,8 +1,32 @@
 import { Assets, type Texture } from 'pixi.js';
-import type { AssetsIndex } from '../model/schema';
+import type { AssetsIndex, Entity } from '../model/schema';
 
 const textureCache = new Map<string, Texture>();
 const inflight = new Map<string, Promise<Texture | null>>();
+const owners = new Map<object, Set<string>>();
+const unloading = new Map<string, Promise<void>>();
+let collectionTimer: ReturnType<typeof setTimeout> | null = null;
+
+export function updateTextureUsage(owner: object, urls: Set<string>): void {
+  if (urls.size) owners.set(owner, urls); else owners.delete(owner);
+  if (collectionTimer) return;
+  collectionTimer = setTimeout(() => {
+    collectionTimer = null;
+    const needed = new Set([...owners.values()].flatMap(s => [...s]));
+    for (const url of textureCache.keys()) {
+      if (needed.has(url)) continue;
+      textureCache.delete(url);
+      const job = Assets.unload(url).catch(() => {}).finally(() => unloading.delete(url));
+      unloading.set(url, job);
+    }
+  }, 0);
+}
+
+export function entityAssetId(entity: Entity): string | null {
+  if (entity.type === 'image' || entity.type === 'prop') return entity.assetId ?? null;
+  if (entity.type === 'area' || entity.type === 'path' || entity.type === 'wall') return entity.texture?.assetId ?? null;
+  return null;
+}
 
 export function buildWorldAssetUrl(
   worldPath: string,
@@ -39,14 +63,17 @@ export function loadAssetTexture(
     return pending;
   }
 
-  const promise = Assets.load<Texture>(url)
+  const promise = Promise.resolve(unloading.get(url)).then(() => Assets.load<Texture>(url))
     .then((tex) => {
       textureCache.set(url, tex);
       inflight.delete(url);
       onLoaded?.();
+      // A view can disappear while its image is still loading.
+      updateTextureUsage({}, new Set());
       return tex;
     })
-    .catch(() => {
+    .catch((error: unknown) => {
+      console.warn('Failed to load map image:', url, error);
       inflight.delete(url);
       return null;
     });

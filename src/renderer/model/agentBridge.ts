@@ -4,6 +4,7 @@ import { EntitySchema, MapDocSchema, type Entity, type MapDoc, type WorldMeta } 
 import { worldStore } from './store';
 import { viewStore } from './viewStore';
 import { renderMapToPngBase64 } from '../render/renderPng';
+import { executeAssetCommands } from '../assets/commands';
 
 function entityIntersectsBbox(
   entity: Entity,
@@ -83,6 +84,7 @@ export async function handleAgentCall(
     case 'command_list': {
       return listCommands();
     }
+    case 'asset_search': return window.atlasApi.searchAssets(params);
 
     case 'command_run': {
       const commands = params['commands'] as Array<{
@@ -91,7 +93,8 @@ export async function handleAgentCall(
       }>;
       const label =
         typeof params['label'] === 'string' ? params['label'] : undefined;
-      const results = worldStore.getState().executeBatch(commands, label);
+      const results = commands.some(c => ['prop.stamp','entity.setTexture'].includes(c.name))
+        ? await executeAssetCommands(commands, label) : worldStore.getState().executeBatch(commands, label);
       return { results };
     }
 

@@ -4,6 +4,7 @@ import type { CameraState } from '../render/camera';
 
 export type ToolId =
   | 'select'
+  | 'prop'
   | 'area'
   | 'path'
   | 'pointEdit'
@@ -65,6 +66,11 @@ export interface ViewStoreState {
   } | null;
   selectedEntityIds: string[];
   assetsIndex: AssetsIndex;
+  selectedPackAssetId: string | null;
+  propScale: number;
+  propRotation: number;
+  propFlipX: boolean;
+  assetError: string;
   calibratingImageId: string | null;
   showPlaceCategoryOverlay: boolean;
   focusPlaceRequest: FocusPlaceRequest | null;
@@ -136,6 +142,11 @@ export const viewStore = createStore<ViewStoreState>((set) => ({
   pendingDevelopRect: null,
   selectedEntityIds: [],
   assetsIndex: {},
+  selectedPackAssetId: null,
+  propScale: 1,
+  propRotation: 0,
+  propFlipX: false,
+  assetError: '',
   calibratingImageId: null,
   showPlaceCategoryOverlay: false,
   focusPlaceRequest: null,

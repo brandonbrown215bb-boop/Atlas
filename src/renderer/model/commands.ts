@@ -78,6 +78,55 @@ function getMapOrThrow(draft: WorldDocument, mapId: string): MapDoc {
 
 // --- Core Entity Commands ---
 
+const AssetReferenceShape = {
+  packAssetId: z.string().min(1).optional(),
+  assetId: z.string().min(1).optional(),
+};
+registerCommand({
+  name: 'prop.stamp',
+  description: 'Stamp a prop. Supply packAssetId to copy a library asset into the world, or assetId with w/h for an already imported asset. Sizes are metres before scale.',
+  input: z.object({ ...AssetReferenceShape, mapId: z.string().min(1), layerId: z.string().min(1), id: z.string().min(1).optional(),
+    x: z.number().finite(), y: z.number().finite(), w: z.number().positive().finite().optional(), h: z.number().positive().finite().optional(),
+    rotation: z.number().finite().default(0), scale: z.number().positive().finite().default(1), flipX: z.boolean().default(false) }),
+  run(draft, input) {
+    const map = getMapOrThrow(draft, input.mapId);
+    const layer = map.layers.find(l => l.id === input.layerId);
+    if (!layer?.visible || layer.locked) throw new Error('Choose a visible, unlocked layer.');
+    if (!input.assetId || !input.w || !input.h) throw new Error('An imported asset and its dimensions are required.');
+    const id = input.id ?? `prop-${crypto.randomUUID()}`;
+    if (map.entities[id]) throw new Error(`Entity already exists: ${id}`);
+    map.revision++;
+    map.entities[id] = { type: 'prop', id, layerId: layer.id, origin: 'manual', rev: map.revision,
+      assetId: input.assetId, w: input.w, h: input.h, x: input.x, y: input.y, rotation: input.rotation, scale: input.scale, flipX: input.flipX };
+    delete map.deleted[id];
+    return { id };
+  },
+});
+registerCommand({
+  name: 'entity.setTexture',
+  description: 'Apply a repeating texture to selected areas, paths or walls. Supply packAssetId for copy-on-use or assetId and metersPerPixel; clear:true removes texture.',
+  input: z.object({ ...AssetReferenceShape, mapId: z.string().min(1), entityIds: z.array(z.string().min(1)).min(1),
+    metersPerPixel: z.number().positive().finite().optional(), clear: z.boolean().default(false) }),
+  run(draft, input) {
+    const map = getMapOrThrow(draft, input.mapId);
+    if (!input.clear && (!input.assetId || !input.metersPerPixel)) throw new Error('An imported texture and its scale are required.');
+    const entities = input.entityIds.map(id => {
+      const e = map.entities[id];
+      if (!e || (e.type !== 'area' && e.type !== 'path' && e.type !== 'wall')) throw new Error('Textures apply to areas, paths and walls.');
+      const layer = map.layers.find(l => l.id === e.layerId);
+      if (!layer?.visible || layer.locked) throw new Error('Choose a visible, unlocked layer.');
+      return e;
+    });
+    map.revision++;
+    for (const e of entities) {
+      if (input.clear) delete e.texture;
+      else e.texture = { assetId: input.assetId!, metersPerPixel: input.metersPerPixel! };
+      e.origin = 'manual'; e.rev = map.revision;
+    }
+    return { ids: input.entityIds };
+  },
+});
+
 const EntityAddInputSchema = z.object({
   mapId: z.string().min(1),
   entity: EntitySchema,

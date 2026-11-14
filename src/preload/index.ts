@@ -27,6 +27,7 @@ export interface AgentServerInfo {
 }
 
 export interface AtlasApi {
+  usePackAsset: (worldDir: string, id: string) => Promise<{ assetId: string; index: AssetsIndex; w: number; h: number; metersPerPixel: number }>;
   searchAssets: (query: AssetQuery) => Promise<AssetPage>;
   getAssetThumbnail: (id: string) => Promise<string>;
   listPacks: () => Promise<Pack[]>;
@@ -71,6 +72,7 @@ export interface AtlasApi {
 }
 
 const api: AtlasApi = {
+  usePackAsset: (worldDir, id) => ipcRenderer.invoke('atlas:asset-use', worldDir, id),
   searchAssets: query => ipcRenderer.invoke('atlas:asset-search', query),
   getAssetThumbnail: id => ipcRenderer.invoke('atlas:asset-thumbnail', id),
   listPacks: () => ipcRenderer.invoke('atlas:packs-list'),

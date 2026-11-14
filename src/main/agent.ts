@@ -224,6 +224,13 @@ export async function startAgentServer(
       },
     );
 
+    server.registerTool('asset_search', {
+      description: 'Search registered pack assets by name/tag and folder. Returns at most 100 matches and total count; use offset to page.',
+      inputSchema: { query: z.string().optional(), tag: z.string().optional(), packId: z.string().optional(), folder: z.string().optional(), offset: z.number().int().nonnegative().optional() },
+    }, async args => {
+      try { return jsonText(await callRenderer('asset_search', args)); } catch (err) { return errorResult(err); }
+    });
+
     server.registerTool(
       'command_list',
       {

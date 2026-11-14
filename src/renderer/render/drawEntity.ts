@@ -1,4 +1,4 @@
-import { Container, Graphics, Sprite, Text, type Texture } from 'pixi.js';
+import { Container, FillPattern, Graphics, Matrix, Sprite, Text, TilingSprite, type Texture } from 'pixi.js';
 import type { AreaRole, Entity, PathRole, Point } from '../model/schema';
 
 function areaFillColor(role: AreaRole, customFill?: string): number {
@@ -59,6 +59,21 @@ function drawPolyline(
   }
 }
 
+function drawTexturedLine(container: Container, points: Point[], closed: boolean, width: number, mpp: number, texture: Texture, origin: Point) {
+  const line = closed ? [...points, points[0]!] : points;
+  let distance = 0;
+  for (let i = 1; i < line.length; i++) {
+    const a = line[i-1]!, b = line[i]!;
+    const length = Math.hypot(b.x-a.x, b.y-a.y);
+    if (length === 0) continue;
+    const strip = new TilingSprite({ texture, width: length, height: width });
+    strip.eventMode = 'none'; strip.anchor.set(0,0.5);
+    strip.position.set(a.x-origin.x, a.y-origin.y); strip.rotation = Math.atan2(b.y-a.y,b.x-a.x);
+    strip.tileScale.set(mpp); strip.tilePosition.set(-distance,0);
+    container.addChild(strip); distance += length;
+  }
+}
+
 export function buildEntityDisplay(
   entity: Entity,
   options: {
@@ -108,7 +123,12 @@ export function buildEntityDisplay(
       const outer = entity.rings[0];
       if (outer && outer.length >= 3) {
         drawPolygonPath(gfx, outer, origin.x, origin.y);
-        gfx.fill({ color: areaFillColor(entity.role, entity.fill), alpha: 0.75 });
+        if (options.texture && entity.texture) {
+          const pattern = new FillPattern({ texture: options.texture, repetition: 'repeat', textureSpace: 'global' });
+          const size = entity.texture.metersPerPixel;
+          pattern.setTransform(new Matrix().scale(size, size));
+          gfx.fill({ fill: pattern });
+        } else gfx.fill({ color: areaFillColor(entity.role, entity.fill), alpha: 0.75 });
         for (let h = 1; h < entity.rings.length; h++) {
           const hole = entity.rings[h]!;
           if (hole.length >= 3) {
@@ -140,6 +160,7 @@ export function buildEntityDisplay(
         join: 'round',
       });
       container.addChild(gfx);
+      if (options.texture && entity.texture) drawTexturedLine(container, entity.points, entity.closed, entity.width, entity.texture.metersPerPixel, options.texture, origin);
       break;
     }
 
@@ -156,6 +177,7 @@ export function buildEntityDisplay(
         join: 'miter',
       });
       container.addChild(gfx);
+      if (options.texture && entity.texture) drawTexturedLine(container, entity.points, false, Math.max(0.2, options.texture.height * entity.texture.metersPerPixel), entity.texture.metersPerPixel, options.texture, origin);
       break;
     }
 
@@ -197,6 +219,17 @@ export function buildEntityDisplay(
       container.position.set(entity.x, entity.y);
       container.rotation = entity.rotation;
       container.scale.set(entity.flipX ? -entity.scale : entity.scale, entity.scale);
+      if (options.texture && entity.w && entity.h) {
+        const sprite = new Sprite(options.texture);
+        sprite.eventMode = 'none'; sprite.anchor.set(0.5); sprite.width = entity.w; sprite.height = entity.h;
+        container.addChild(sprite);
+        if (options.selected) {
+          const outline = new Graphics().rect(-entity.w / 2, -entity.h / 2, entity.w, entity.h)
+            .stroke({ color: 0xfbbf24, width: strokeUnit / entity.scale });
+          outline.eventMode = 'none'; container.addChild(outline);
+        }
+        break;
+      }
       const gfx = new Graphics();
       gfx.eventMode = 'none';
       const r = Math.max(0.5, strokeUnit * 6);

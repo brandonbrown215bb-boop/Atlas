@@ -35,6 +35,15 @@ export function registerWorldIpc(getMainWindow: () => BrowserWindow | null): Wor
   const library = new PackLibrary(userDataDir());
   const libraryReady = library.load();
   ipcMain.handle('atlas:asset-search', async (_event, query: AssetQuery) => { await libraryReady; return library.search(query); });
+  ipcMain.handle('atlas:asset-use', async (_event, worldDir: string, id: string) => {
+    await libraryReady;
+    if (resolve(worldDir) !== currentWorldDir) throw new Error('The world is no longer open.');
+    const { pack, asset, path } = library.findAsset(id);
+    const info = await stat(path);
+    if (info.size !== asset.size || info.mtimeMs !== asset.mtimeMs) throw new Error('Asset changed on disk. Reindex its folder first.');
+    return { ...importImageAsset(worldDir, path, asset, { packName: pack.name, pxPerSquare: pack.pxPerSquare }),
+      w: asset.width / pack.pxPerSquare * 1.524, h: asset.height / pack.pxPerSquare * 1.524, metersPerPixel: 1.524 / pack.pxPerSquare };
+  });
   // Decode thumbnails one at a time, and reuse the disk cache next time.
   const thumbnailJobs = new Map<string, Promise<string>>();
   let thumbnailQueue = Promise.resolve();

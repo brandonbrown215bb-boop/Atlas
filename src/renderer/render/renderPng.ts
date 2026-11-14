@@ -2,6 +2,9 @@ import { Application, Container } from 'pixi.js';
 import type { Entity, MapDoc } from '../model/schema';
 import { fitBoundsCamera } from './camera';
 import { buildEntityDisplay } from './drawEntity';
+import { entityAssetId, loadAssetTexture, resolveWorldAssetUrl, updateTextureUsage } from './textures';
+import { worldStore } from '../model/store';
+import { viewStore } from '../model/viewStore';
 
 export interface RenderPngOptions {
   map: MapDoc;
@@ -24,6 +27,8 @@ export async function renderMapToPngBase64(
   canvas.height = height;
 
   const app = new Application();
+  const textureOwner = {};
+  const urls = new Set<string>();
   await app.init({
     canvas,
     preference: 'webgl',
@@ -59,9 +64,14 @@ export async function renderMapToPngBase64(
       if (view === 'player' && entity.gmOnly) continue;
       const lc = layerMap.get(entity.layerId);
       if (!lc) continue;
+      const id = entityAssetId(entity);
+      const url = id ? resolveWorldAssetUrl(worldStore.getState().worldPath, viewStore.getState().assetsIndex, id) : null;
+      if (url) { urls.add(url); updateTextureUsage(textureOwner, new Set(urls)); }
+      const texture = url ? await loadAssetTexture(url) : null;
       const display = buildEntityDisplay(entity, {
         selected: false,
         zoom: cam.zoom,
+        texture: texture ?? undefined,
       });
       lc.addChild(display);
     }
@@ -72,6 +82,7 @@ export async function renderMapToPngBase64(
     const dataUrl = canvas.toDataURL('image/png');
     return dataUrl.replace(/^data:image\/png;base64,/, '');
   } finally {
-    app.destroy(true, { children: true, texture: true });
+    app.destroy(true, { children: true });
+    updateTextureUsage(textureOwner, new Set());
   }
 }

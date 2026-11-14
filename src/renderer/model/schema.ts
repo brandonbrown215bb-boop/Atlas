@@ -69,6 +69,8 @@ export const ImageEntitySchema = z.object({
   rotation: z.number().finite(),
 });
 
+const TextureFillSchema = z.object({ assetId: z.string().min(1), metersPerPixel: z.number().positive().finite() });
+
 export const AreaEntitySchema = z.object({
   ...EntityBaseShape,
   type: z.literal('area'),
@@ -76,6 +78,7 @@ export const AreaEntitySchema = z.object({
   rings: z.array(z.array(PointSchema).min(3)).min(1),
   elevation: z.number().finite().optional(),
   fill: z.string().optional(),
+  texture: TextureFillSchema.optional(),
 });
 
 export const PathEntitySchema = z.object({
@@ -85,6 +88,7 @@ export const PathEntitySchema = z.object({
   points: z.array(PointSchema).min(2),
   width: z.number().positive().finite(),
   closed: z.boolean(),
+  texture: TextureFillSchema.optional(),
 });
 
 export const WallEntitySchema = z.object({
@@ -93,6 +97,7 @@ export const WallEntitySchema = z.object({
   points: z.array(PointSchema).min(2),
   blocksMove: z.boolean(),
   blocksSight: z.boolean(),
+  texture: TextureFillSchema.optional(),
 });
 
 export const DoorEntitySchema = z.object({
@@ -114,6 +119,8 @@ export const PropEntitySchema = z.object({
   rotation: z.number().finite(),
   scale: z.number().positive().finite(),
   flipX: z.boolean(),
+  w: z.number().positive().finite().optional(),
+  h: z.number().positive().finite().optional(),
 });
 
 export const LightEntitySchema = z.object({

@@ -77,12 +77,15 @@ export function getEntityBounds(entity: Entity): BBox | null {
     case 'door':
       return bboxFromPoints([entity.a, entity.b], 0.25);
     case 'prop': {
-      const r = 0.75 * entity.scale;
+      const hw = (entity.w ?? 1.5) * entity.scale / 2;
+      const hh = (entity.h ?? 1.5) * entity.scale / 2;
+      const cos = Math.abs(Math.cos(entity.rotation)), sin = Math.abs(Math.sin(entity.rotation));
+      const rx = hw*cos + hh*sin, ry = hw*sin + hh*cos;
       return {
-        minX: entity.x - r,
-        minY: entity.y - r,
-        maxX: entity.x + r,
-        maxY: entity.y + r,
+        minX: entity.x - rx,
+        minY: entity.y - ry,
+        maxX: entity.x + rx,
+        maxY: entity.y + ry,
       };
     }
     case 'light': {
@@ -240,11 +243,12 @@ export function hitTestEntity(
       return hitTestPolyline(pt, entity.points, false, tolerance);
     case 'door':
       return distanceToSegment(pt, entity.a, entity.b) <= tolerance;
-    case 'prop':
-      return (
-        Math.hypot(pt.x - entity.x, pt.y - entity.y) <=
-        Math.max(0.75 * entity.scale, tolerance)
-      );
+    case 'prop': {
+      const dx = pt.x-entity.x, dy = pt.y-entity.y;
+      const cos = Math.cos(-entity.rotation), sin = Math.sin(-entity.rotation);
+      return Math.abs(dx*cos-dy*sin) <= (entity.w ?? 1.5)*entity.scale/2+tolerance
+        && Math.abs(dx*sin+dy*cos) <= (entity.h ?? 1.5)*entity.scale/2+tolerance;
+    }
     case 'light':
     case 'portal':
       return Math.hypot(pt.x - entity.x, pt.y - entity.y) <= Math.max(0.75, tolerance);

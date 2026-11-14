@@ -30,7 +30,10 @@ import {
   getCachedAssetTexture,
   loadAssetTexture,
   resolveWorldAssetUrl,
+  entityAssetId,
+  updateTextureUsage,
 } from './textures';
+import { boxesIntersect, getEntityBounds } from '../geom/hitTest';
 import { createAreaTool } from '../tools/areaTool';
 import { createDevelopAreaTool } from '../tools/developAreaTool';
 import { createDoorTool } from '../tools/doorTool';
@@ -42,6 +45,7 @@ import { createPointEditTool } from '../tools/pointEditTool';
 import { createPortalTool } from '../tools/portalTool';
 import { createSelectTool } from '../tools/selectTool';
 import { createWallTool } from '../tools/wallTool';
+import { createPropTool } from '../tools/propTool';
 import type { MapTool, ToolContext } from '../tools/types';
 import { MeasureBar } from '../panels/MeasureBar';
 
@@ -179,6 +183,7 @@ export function MapView(props: IDockviewPanelProps<MapPanelParams>) {
     measureGfx.eventMode = 'none';
 
     const selectTool = createSelectTool();
+    const propTool = createPropTool();
     const areaTool = createAreaTool();
     const pathTool = createPathTool();
     const pointEditTool = createPointEditTool();
@@ -191,6 +196,7 @@ export function MapView(props: IDockviewPanelProps<MapPanelParams>) {
     const measureTool = createMeasureTool();
     const getActiveTool = (): MapTool => {
       switch (activeToolIdRef.current) {
+        case 'prop': return propTool;
         case 'area':
           return areaTool;
         case 'path':
@@ -218,6 +224,7 @@ export function MapView(props: IDockviewPanelProps<MapPanelParams>) {
 
     const layerContainers = new Map<string, Container>();
     const entityCache = new Map<string, CachedEntityDisplay>();
+    const textureOwner = {};
 
     let panning = false;
     let spaceHeld = false;
@@ -293,10 +300,26 @@ export function MapView(props: IDockviewPanelProps<MapPanelParams>) {
         gridGfx.clear();
         overlayGfx.clear();
         measureGfx.clear();
+        for (const cached of entityCache.values()) cached.container.destroy({ children: true });
+        entityCache.clear();
+        updateTextureUsage(textureOwner, new Set());
         return;
       }
 
       const cam = getCamera();
+      const usedTextures = new Set<string>();
+      const textureFor = (entity: Entity): Texture | undefined => {
+        const id = entityAssetId(entity);
+        if (!id) return undefined;
+        const url = resolveWorldAssetUrl(worldPathRef.current, assetsIndexRef.current, id);
+        if (!url) return undefined;
+        usedTextures.add(url);
+        const texture = getCachedAssetTexture(url);
+        if (!texture) void loadAssetTexture(url, () => { if (!disposed) setTextureVersion(v => v + 1); });
+        return texture;
+      };
+      const viewBounds = { minX: -cam.x/cam.zoom, minY: -cam.y/cam.zoom,
+        maxX: (host.clientWidth-cam.x)/cam.zoom, maxY: (host.clientHeight-cam.y)/cam.zoom };
       const zoomChangedSignificantly =
         lastZoomForRebuild === 0 ||
         Math.abs(cam.zoom - lastZoomForRebuild) / lastZoomForRebuild > 0.25;
@@ -338,24 +361,13 @@ export function MapView(props: IDockviewPanelProps<MapPanelParams>) {
       for (const rawEntity of Object.values(m.entities) as Entity[]) {
         const isPreview = Boolean(previewMap?.has(rawEntity.id));
         const entity = previewMap?.get(rawEntity.id) ?? rawEntity;
-        let texture: Texture | undefined;
-        if (entity.type === 'image') {
-          const url = resolveWorldAssetUrl(
-            worldPathRef.current,
-            assetsIndexRef.current,
-            entity.assetId,
-          );
-          if (url) {
-            texture = getCachedAssetTexture(url);
-            if (!texture) {
-              void loadAssetTexture(url, () => {
-                if (!disposed) {
-                  setTextureVersion((v) => v + 1);
-                }
-              });
-            }
-          }
+        const bounds = getEntityBounds(entity);
+        if (!m.layers.some(l => l.id === entity.layerId && l.visible) || (bounds && !boxesIntersect(bounds, viewBounds))) {
+          const hidden = entityCache.get(entity.id);
+          if (hidden) { hidden.container.destroy({ children: true }); entityCache.delete(entity.id); }
+          continue;
         }
+        const texture = textureFor(entity);
 
         const hasTexture = Boolean(texture);
         const isSelected = selectedSet.has(entity.id);
@@ -437,6 +449,7 @@ export function MapView(props: IDockviewPanelProps<MapPanelParams>) {
                 selected: false,
                 zoom: cam.zoom,
                 layerGmOnly: Boolean(childLayerGmMap.get(layer.id)),
+                texture: textureFor(ent),
               });
               childContainer.addChild(disp);
             }
@@ -444,6 +457,7 @@ export function MapView(props: IDockviewPanelProps<MapPanelParams>) {
           childMapsContainer.addChild(childContainer);
         }
       }
+      updateTextureUsage(textureOwner, usedTextures);
 
       // Rebuild optional category label overlay for places
       placeOverlayContainer
@@ -776,7 +790,7 @@ export function MapView(props: IDockviewPanelProps<MapPanelParams>) {
       })
       .then(() => {
         if (disposed) {
-          app.destroy(true, { children: true, texture: true });
+          app.destroy(true, { children: true });
           return;
         }
         app.stage.eventMode = 'none';
@@ -824,8 +838,9 @@ export function MapView(props: IDockviewPanelProps<MapPanelParams>) {
       ownerWin.removeEventListener('keydown', onKeyDown);
       ownerWin.removeEventListener('keyup', onKeyUp);
       if (app.renderer) {
-        app.destroy(true, { children: true, texture: true });
+        app.destroy(true, { children: true });
       }
+      updateTextureUsage(textureOwner, new Set());
       host.replaceChildren();
     };
   }, [locationEpoch, props.api.id]);

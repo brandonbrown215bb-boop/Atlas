@@ -1,6 +1,10 @@
 import { useEffect, useRef, useState } from 'react';
 import type { IDockviewPanelProps } from 'dockview-react';
 import type { AssetPage, AssetResult } from '../model/packs';
+import { useStore } from 'zustand';
+import { viewStore } from '../model/viewStore';
+import { worldStore } from '../model/store';
+import { executeAssetCommands } from '../assets/commands';
 
 function Thumbnail({ asset, onSelect }: { asset: AssetResult; onSelect: () => void }) {
   const ref = useRef<HTMLButtonElement>(null);
@@ -34,6 +38,18 @@ export function AssetsPanel(_props: IDockviewPanelProps) {
   const [error, setError] = useState('');
   const [selected, setSelected] = useState<AssetResult | null>(null);
   const [refresh, setRefresh] = useState(0);
+  const assetError = useStore(viewStore, s => s.assetError);
+  const propScale = useStore(viewStore, s => s.propScale);
+  const propRotation = useStore(viewStore, s => s.propRotation);
+  const propFlipX = useStore(viewStore, s => s.propFlipX);
+  const applyTexture = async (clear = false) => {
+    try {
+      const vs = viewStore.getState();
+      const mapId = (vs.activeMapPanelId && vs.panels[vs.activeMapPanelId]?.mapId) || worldStore.getState().activeMapId;
+      await executeAssetCommands([{ name: 'entity.setTexture', input: { mapId, entityIds: vs.selectedEntityIds, packAssetId: vs.selectedPackAssetId, clear } }]);
+      viewStore.setState({ assetError: '' });
+    } catch (e) { viewStore.setState({ assetError: String(e) }); }
+  };
   useEffect(() => {
     let alive = true;
     const timer = setTimeout(() => {
@@ -59,11 +75,20 @@ export function AssetsPanel(_props: IDockviewPanelProps) {
       {page?.folders.map(f => <button key={f} onClick={() => { setFolder(f); setOffset(0); }}>▸ {f.split('/').at(-1)}</button>)}
     </nav>
     <div>{page?.total.toLocaleString() ?? '…'} assets</div>
-    <div className="asset-grid">{page?.assets.map(a => <Thumbnail key={a.id} asset={a} onSelect={() => setSelected(a)} />)}</div>
+    <div className="asset-grid">{page?.assets.map(a => <Thumbnail key={a.id} asset={a} onSelect={() => { setSelected(a); viewStore.setState({ selectedPackAssetId: a.id }); }} />)}</div>
     {page?.total === 0 && <p>Register an image folder in Settings, then refresh here.</p>}
     <div><button disabled={offset === 0} onClick={() => setOffset(n => Math.max(0,n-100))}>Previous</button>{' '}
       {page && page.total > 0 && `${offset + 1}–${Math.min(offset + 100,page.total)}`}{' '}
       <button disabled={!page || offset + 100 >= page.total} onClick={() => setOffset(n => n+100)}>Next</button></div>
     {selected && <div>{selected.name} · {selected.width} × {selected.height} px · {selected.pxPerSquare} px/square</div>}
+    {selected && <div className="asset-actions">
+      <button onClick={() => viewStore.getState().setActiveTool('prop')}>Stamp on map</button>
+      <label>Scale <input aria-label="Prop scale" type="number" min="0.01" step="0.1" value={propScale} onChange={e => { const v = Number(e.target.value); if (v > 0) viewStore.setState({ propScale: v }); }} /></label>
+      <label>Rotation ° <input aria-label="Prop rotation" type="number" value={propRotation} onChange={e => viewStore.setState({ propRotation: Number(e.target.value) })} /></label>
+      <label><input type="checkbox" checked={propFlipX} onChange={e => viewStore.setState({ propFlipX: e.target.checked })} />Flip</label>
+      <button onClick={() => void applyTexture()}>Texture selection</button>
+      <button onClick={() => void applyTexture(true)}>Clear texture</button>
+    </div>}
+    {assetError && <div role="alert">{assetError}</div>}
   </div>;
 }

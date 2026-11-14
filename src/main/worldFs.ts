@@ -327,6 +327,7 @@ export function importImageAsset(
   worldDir: string,
   sourceFilePath: string,
   dimensions: { width: number; height: number },
+  packMetadata?: { packName: string; pxPerSquare: number },
 ): { assetId: string; index: AssetsIndex } {
   const resolvedWorld = resolve(worldDir);
   const resolvedSrc = resolve(sourceFilePath);
@@ -344,8 +345,8 @@ export function importImageAsset(
   const index = readAssetsIndex(resolvedWorld);
   index[sha1] = {
     originalName: basename(resolvedSrc),
-    packName: 'imported',
-    pxPerSquare: 200,
+    packName: packMetadata?.packName ?? 'imported',
+    pxPerSquare: packMetadata?.pxPerSquare ?? 200,
     width: Math.max(1, dimensions.width),
     height: Math.max(1, dimensions.height),
     ext,

@@ -94,3 +94,5 @@ button:disabled {
 .asset-card img { object-fit: contain; }
 .asset-card span:last-child { overflow: hidden; text-overflow: ellipsis; width: 100%; white-space: nowrap; }
 .asset-thumbnail-placeholder { width: 64px; height: 64px; display: grid; place-items: center; }
+.asset-actions { display: flex; flex-wrap: wrap; gap: 6px; margin: 10px 0; }
+.asset-actions input[type=number] { width: 60px; }
