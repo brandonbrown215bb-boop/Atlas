@@ -1,6 +1,7 @@
 import { planSync } from './sync';
-import { runGenerator } from '../gen/framework';
+import { getGenerator, regionConstraints, runGenerator } from '../gen/framework';
 import '../gen/dungeon/layout';
+import { pointInPolygon } from '../geom/hitTest';
 import { validateWorld, WorldDocumentSchema } from './transfer';
 import { paintFog, rectRing } from '../geom/fog';
 import { z } from 'zod';
@@ -122,6 +123,45 @@ registerCommand({
     }
     delete map.generators[input.genId];
     return { genId: input.genId };
+  },
+});
+registerCommand({
+  name: 'generator.dressArea',
+  description: 'Thin out, add more, or reroll generated dressing inside an area. Manual props and the layout are kept.',
+  input: z.object({mapId:z.string().min(1),genId:z.string().min(1),areaEntityId:z.string().min(1),
+    action:z.enum(['thin','more','reroll']),seed:z.number().int().optional()}),
+  run(draft,input) {
+    const map=getMapOrThrow(draft,input.mapId), record=map.generators[input.genId], area=map.entities[input.areaEntityId];
+    if(!record || area?.type!=='area') throw new Error('Choose a generator run and an area.');
+    const definition=getGenerator(record.type);
+    if(!definition.dress) throw new Error('This generator has no dressing pass.');
+    const footprint=map.entities[record.regionEntityId];
+    if(footprint?.type!=='area') throw new Error('Generator footprint is missing.');
+    const layer=map.layers.find(l=>l.id===(record.layerId??map.layers[0]?.id));
+    if(!layer?.visible||layer.locked) throw new Error('Choose a visible, unlocked layer.');
+    const scoped=Object.values(map.entities).filter(e=>e.genId===input.genId&&e.origin==='generated'&&e.type==='prop'&&pointInPolygon(e,area.rings));
+    if(scoped.some(e=>map.layers.find(l=>l.id===e.layerId)?.locked)) throw new Error('Unlock the dressing layers first.');
+    const removed=input.action==='more'?[]:input.action==='thin'?scoped.filter((_,i)=>i%2===0):scoped;
+    const removeIds=new Set(removed.map(e=>e.id));
+    const seed=input.seed??((record.seed+1)>>>0);
+    const output=input.action==='thin'?[]:definition.dress({seed,params:definition.params.parse(record.params),region:footprint.rings,
+      constraints:[...regionConstraints(map,footprint.rings,footprint.id),...Object.values(map.entities).filter(e=>e.type==='prop'&&e.origin==='generated'&&!removeIds.has(e.id))],
+      theme:draft.meta.themes[record.themeName??'default']??{},grid:map.grid.size},
+      Object.values(map.entities).filter(e=>e.genId===input.genId&&e.type!=='prop'))
+      .filter(e=>e.type==='prop'&&pointInPolygon(e,area.rings));
+    if(!removed.length&&!output.length) return {ids:[],removed:[]};
+    map.revision++;
+    for(const e of removed) {delete map.entities[e.id];map.deleted[e.id]=map.revision;}
+    const ids=output.map(e=>{
+      const id=`${input.genId}:${map.revision}:${e.id}`;
+      if(map.entities[id]) throw new Error(`Generated id already exists: ${id}`);
+      map.entities[id]=EntitySchema.parse({...e,id,genId:input.genId,layerId:layer.id,rev:map.revision});
+      return id;
+    });
+    for(const e of Object.values(map.entities)) if(e.type==='place'&&e.entityIds.some(id=>removeIds.has(id))) {
+      e.entityIds=e.entityIds.filter(id=>!removeIds.has(id));e.rev=map.revision;
+    }
+    return {ids,removed:[...removeIds]};
   },
 });
 

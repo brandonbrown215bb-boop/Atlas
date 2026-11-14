@@ -3,6 +3,7 @@ import { useStore } from 'zustand';
 import type { IDockviewPanelProps } from 'dockview-react';
 import { listGenerators } from '../gen/framework';
 import { DungeonParamsSchema } from '../gen/dungeon/layout';
+import { ROOM_PURPOSES } from '../gen/dungeon/dressing';
 import { worldStore } from '../model/store';
 import { viewStore } from '../model/viewStore';
 import { PanelHeaderBar } from './PanelHeaderBar';
@@ -21,10 +22,11 @@ export function GeneratorPanel(props: IDockviewPanelProps) {
   const map = mapId ? world?.maps[mapId] : undefined;
   const record = map?.generators[runId];
   const regionId = selectedIds.find(id => map?.entities[id]?.type === 'area');
+  const selectedArea=regionId?map?.entities[regionId]:undefined;
   const call = (name: string, input: Record<string, unknown>) => {
     try {
       const result = worldStore.getState().execute(name, { mapId, ...input }) as { genId: string };
-      setRunId(result.genId); setError('');
+      if(result.genId) setRunId(result.genId); setError('');
     } catch (e) { setError(String(e)); }
   };
   const reroll = (dressingOnly: boolean) => {
@@ -45,6 +47,14 @@ export function GeneratorPanel(props: IDockviewPanelProps) {
       </select></label>
       <label>Rooms <input aria-label="Room count" type="number" min={1} max={20} value={params.rooms} onChange={e=>setParams({...params,rooms:Number(e.target.value)})} /></label>
       <label><input type="checkbox" checked={params.mirror} onChange={e=>setParams({...params,mirror:e.target.checked})} />Mirror left/right</label>
+      <label>Purpose <select aria-label="Room purpose" value={params.purpose} onChange={e=>setParams({...params,purpose:e.target.value as typeof params.purpose})}>
+        {ROOM_PURPOSES.map(p=><option key={p} value={p}>{p}</option>)}
+      </select></label>
+      <label>Dressing density <input aria-label="Dressing density" type="number" min={0} max={3} step={0.25} value={params.density} onChange={e=>setParams({...params,density:Number(e.target.value)})} /></label>
+      {selectedArea?.type==='area'&&selectedArea.role==='floor'&&selectedArea.name&&<label>{selectedArea.name} purpose <select aria-label="Selected room purpose"
+        value={params.roomPurposes[selectedArea.name]??params.purpose} onChange={e=>setParams({...params,roomPurposes:{...params.roomPurposes,[selectedArea.name!]:e.target.value as typeof params.purpose}})}>
+        {ROOM_PURPOSES.map(p=><option key={p} value={p}>{p}</option>)}
+      </select></label>}
       <button disabled={!map || !regionId || !type} onClick={() => {
         try { call('generator.run', { type, seed, params, regionEntityId: regionId, layerId: layerId ?? map?.layers[0]?.id }); }
         catch (e) { setError(String(e)); }
@@ -55,6 +65,10 @@ export function GeneratorPanel(props: IDockviewPanelProps) {
       }}><option value="">Choose a run</option>{Object.entries(map?.generators ?? {}).map(([id, r]) => <option key={id} value={id}>{r.type} · {r.seed}</option>)}</select></label>
       <button disabled={!record} onClick={() => reroll(false)}>Reroll</button>
       <button disabled={!record} onClick={() => reroll(true)}>Reroll dressing only</button>
+      <span>Selected area dressing</span>
+      <button disabled={!record||!regionId} onClick={()=>call('generator.dressArea',{genId:runId,areaEntityId:regionId,action:'thin'})}>Thin out</button>
+      <button disabled={!record||!regionId} onClick={()=>call('generator.dressArea',{genId:runId,areaEntityId:regionId,action:'more',seed:seed+1})}>Add more</button>
+      <button disabled={!record||!regionId} onClick={()=>call('generator.dressArea',{genId:runId,areaEntityId:regionId,action:'reroll',seed:seed+1})}>Reroll area dressing</button>
       <button disabled={!record} onClick={() => call('generator.accept', { genId: runId })}>Accept</button>
       <span>Accept keeps the result as manual content.</span>
       {error && <div role="alert">{error}</div>}

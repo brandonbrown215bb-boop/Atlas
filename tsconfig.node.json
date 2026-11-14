@@ -20,6 +20,7 @@
     "src/main/**/*",
     "src/preload/**/*",
     "src/renderer/model/schema.ts",
+    "src/renderer/model/themes.ts",
     "src/renderer/model/commands.ts",
     "src/renderer/model/transfer.ts",
     "src/renderer/model/sync.ts",

@@ -62,9 +62,13 @@ export function runGenerator(map: MapDoc, options: {
   if (validated.some(e => e.origin !== 'generated')) throw new Error('Generator returned non-generated output.');
   if (new Set(validated.map(e => e.id)).size !== validated.length) throw new Error('Generator returned duplicate ids.');
   map.revision++;
+  if(region.origin==='generated') {region.origin='manual';region.rev=map.revision;}
   for (const e of previous) {
     if (options.dressingOnly && e.type !== 'prop') continue;
     delete map.entities[e.id]; map.deleted[e.id] = map.revision;
+  }
+  for(const e of Object.values(map.entities)) if(e.type==='place'&&e.entityIds.some(id=>!map.entities[id])) {
+    e.entityIds=e.entityIds.filter(id=>!!map.entities[id]);e.rev=map.revision;
   }
   const ids: string[] = [];
   for (const entity of validated) {

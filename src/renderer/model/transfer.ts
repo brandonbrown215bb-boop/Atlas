@@ -143,7 +143,7 @@ export function transferMap(sourceInput:WorldDocument,targetInput:WorldDocument,
     const layers=new Map(m.layers.map(l=>[l.id,linked?l.id:createId()]));
     m.layers=m.layers.map(l=>({...l,id:layers.get(l.id)!}));
     const gens=new Map(Object.keys(m.generators).map(g=>[g,linked?g:createId()]));
-    m.generators=Object.fromEntries(Object.entries(m.generators).map(([g,value])=>[gens.get(g)!,{...value,regionEntityId:entityIds.get(id)!.get(value.regionEntityId)!}]));
+    m.generators=Object.fromEntries(Object.entries(m.generators).map(([g,value])=>[gens.get(g)!,{...value,regionEntityId:entityIds.get(id)!.get(value.regionEntityId)!,layerId:value.layerId?layers.get(value.layerId):undefined}]));
     const oldParent=m.parent?.mapId;
     if(m.parent && mapIds.has(m.parent.mapId)) m.parent={...m.parent,mapId:mapIds.get(m.parent.mapId)!,footprintEntityId:m.parent.footprintEntityId?entityIds.get(m.parent.mapId)!.get(m.parent.footprintEntityId):undefined};
     else delete m.parent;

@@ -5,11 +5,15 @@ import { fromPolygons, toPolygons } from '../../geom/fog';
 import type { Entity, Point } from '../../model/schema';
 import { registerGenerator, type GeneratorInput } from '../framework';
 import { mulberry32 } from '../rng';
+import { dressDungeon, ROOM_PURPOSES } from './dressing';
 
 export const DungeonParamsSchema = z.object({
   mode: z.enum(['building', 'dungeon', 'chamber']).default('building'),
   rooms: z.number().int().min(1).max(20).default(6),
   mirror: z.boolean().default(false),
+  purpose: z.enum(ROOM_PURPOSES).default('random'),
+  roomPurposes: z.record(z.string(),z.enum(ROOM_PURPOSES)).default({}),
+  density: z.number().min(0).max(3).default(1),
 });
 export type DungeonParams = z.infer<typeof DungeonParamsSchema>;
 type Cell = { x: number; y: number; center: Point; key: string };
@@ -220,4 +224,8 @@ export function dungeonLayout(input: GeneratorInput<DungeonParams>): Entity[] {
   return output;
 }
 
-registerGenerator({type:'dungeon',title:'Dungeon / interior',params:DungeonParamsSchema,generate:dungeonLayout});
+export function generateDungeon(input: GeneratorInput<DungeonParams>): Entity[] {
+  const layout=dungeonLayout(input);
+  return [...layout,...dressDungeon(input,layout)];
+}
+registerGenerator({type:'dungeon',title:'Dungeon / interior',params:DungeonParamsSchema,generate:generateDungeon,dress:dressDungeon});
