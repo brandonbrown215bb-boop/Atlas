@@ -27,6 +27,8 @@ export interface AgentServerInfo {
 }
 
 export interface AtlasApi {
+  listDisplays: () => Promise<Array<{ id: number; label: string }>>;
+  playerFullscreen: (displayId: number | null) => Promise<void>;
   importDungeondraftPack: (source?: string) => Promise<Pack[] | null>;
   usePackAsset: (worldDir: string, id: string) => Promise<{ assetId: string; index: AssetsIndex; w: number; h: number; metersPerPixel: number }>;
   searchAssets: (query: AssetQuery) => Promise<AssetPage>;
@@ -73,6 +75,8 @@ export interface AtlasApi {
 }
 
 const api: AtlasApi = {
+  listDisplays: () => ipcRenderer.invoke('atlas:displays'),
+  playerFullscreen: id => ipcRenderer.invoke('atlas:player-fullscreen', id),
   importDungeondraftPack: source => ipcRenderer.invoke('atlas:pack-import', source),
   usePackAsset: (worldDir, id) => ipcRenderer.invoke('atlas:asset-use', worldDir, id),
   searchAssets: query => ipcRenderer.invoke('atlas:asset-search', query),

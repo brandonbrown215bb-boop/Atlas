@@ -24,6 +24,7 @@ export default defineConfig({
         input: {
           index: resolve('src/renderer/index.html'),
           popout: resolve('src/renderer/popout.html'),
+          player: resolve('src/renderer/player.html'),
         },
       },
     },

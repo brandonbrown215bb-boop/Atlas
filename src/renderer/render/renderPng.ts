@@ -1,6 +1,7 @@
-import { Application, Container } from 'pixi.js';
+import { Application, Container, Graphics } from 'pixi.js';
 import type { Entity, MapDoc } from '../model/schema';
-import { fitBoundsCamera } from './camera';
+import type { CameraState } from './camera';
+import { playerRenderList } from '../model/player';
 import { buildEntityDisplay } from './drawEntity';
 import { entityAssetId, loadAssetTexture, resolveWorldAssetUrl, updateTextureUsage } from './textures';
 import { worldStore } from '../model/store';
@@ -12,6 +13,10 @@ export interface RenderPngOptions {
   width?: number;
   height?: number;
   view?: 'gm' | 'player';
+  labels?: boolean;
+  grid?: boolean;
+  camera?: CameraState;
+  document?: Document;
 }
 
 export async function renderMapToPngBase64(
@@ -22,7 +27,7 @@ export async function renderMapToPngBase64(
   const view = options.view ?? 'gm';
   const targetRect = options.rect ?? options.map.bounds;
 
-  const canvas = document.createElement('canvas');
+  const canvas = (options.document ?? document).createElement('canvas');
   canvas.width = width;
   canvas.height = height;
 
@@ -46,7 +51,8 @@ export async function renderMapToPngBase64(
     const worldLayer = new Container();
     worldLayer.eventMode = 'none';
 
-    const cam = fitBoundsCamera(targetRect, width, height, options.map.kind);
+    const zoom = Math.min(width / targetRect.w, height / targetRect.h);
+    const cam = options.camera ?? { x: -targetRect.x * zoom, y: -targetRect.y * zoom, zoom };
     worldLayer.position.set(cam.x, cam.y);
     worldLayer.scale.set(cam.zoom);
 
@@ -60,7 +66,7 @@ export async function renderMapToPngBase64(
       worldLayer.addChild(lc);
     }
 
-    for (const entity of Object.values(options.map.entities) as Entity[]) {
+    for (const entity of (view === 'player' ? playerRenderList(options.map, options.labels) : Object.values(options.map.entities)) as Entity[]) {
       if (view === 'player' && entity.gmOnly) continue;
       const lc = layerMap.get(entity.layerId);
       if (!lc) continue;
@@ -76,6 +82,19 @@ export async function renderMapToPngBase64(
       lc.addChild(display);
     }
 
+    if (options.grid) {
+      const grid = new Graphics();
+      const step = options.map.grid.size;
+      if (step * cam.zoom >= 4) {
+        const x0 = -cam.x / cam.zoom, y0 = -cam.y / cam.zoom;
+        for (let x = Math.floor(x0 / step) * step; x <= x0 + width / cam.zoom; x += step)
+          grid.moveTo(x, y0).lineTo(x, y0 + height / cam.zoom);
+        for (let y = Math.floor(y0 / step) * step; y <= y0 + height / cam.zoom; y += step)
+          grid.moveTo(x0, y).lineTo(x0 + width / cam.zoom, y);
+        grid.stroke({ color: 0xffffff, alpha: 0.2, width: 1 / cam.zoom });
+      }
+      worldLayer.addChild(grid);
+    }
     app.stage.addChild(worldLayer);
     app.render();
 

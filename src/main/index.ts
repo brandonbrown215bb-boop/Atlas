@@ -125,6 +125,17 @@ void app.whenReady().then(async () => {
     }
   });
 
+  ipcMain.handle('atlas:displays', () => screen.getAllDisplays().map((d, i) => ({ id: d.id, label: d.label || `Monitor ${i + 1}` })));
+  ipcMain.handle('atlas:player-fullscreen', (_event, displayId: number | null) => {
+    const player = popoutWindows.get('atlas-player');
+    if (!player || player.isDestroyed()) throw new Error('Open the player window first.');
+    if (displayId === null) { player.setFullScreen(false); return; }
+    const display = screen.getAllDisplays().find(d => d.id === displayId);
+    if (!display) throw new Error('That monitor is no longer connected.');
+    player.setFullScreen(false);
+    player.setBounds(display.bounds);
+    player.setFullScreen(true);
+  });
   createMainWindow();
 
   app.on('activate', () => {

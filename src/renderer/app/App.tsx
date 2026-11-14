@@ -1,3 +1,4 @@
+import { PlayerControls } from '../panels/PlayerControls';
 import { useEffect, useRef, useState } from 'react';
 import {
   DockviewReact,
@@ -404,6 +405,7 @@ export function App() {
         </span>
       </header>
 
+      <PlayerControls />
       <div
         data-testid="tool-bar"
         style={{

@@ -16,3 +16,7 @@
 - On a site/interior map with a 5 ft grid, stamp a few props. Confirm the defaults (200 px/square for loose folders, 256 for Dungeondraft) match your art. Adjust the pack scale before placing more if needed.
 - Apply a texture to an area with a hole, a path and a wall. Check its appearance and scale; try hiding/showing the layer and opening a second map view/popout.
 - Assign several assets to theme roles in Assets, undo/redo a change, save, then copy the world to your other PC without registering its packs. Check that placed art and theme assignments still appear. Automated tests cover this with a fresh app profile; your real art still needs a visual check.
+
+## Phase 4 — Outputs
+
+- Open the player window on your TV/second monitor. Try map selection, Send my view, labels/grid and fullscreen. Check that private layers, notes and secret-door markers never appear.
