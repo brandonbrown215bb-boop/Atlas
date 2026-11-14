@@ -1,6 +1,7 @@
 import { planSync } from './sync';
 import { getGenerator, regionConstraints, runGenerator } from '../gen/framework';
 import '../gen/dungeon/layout';
+import { previewInterior } from '../gen/dungeon/interior';
 import { pointInPolygon } from '../geom/hitTest';
 import { validateWorld, WorldDocumentSchema } from './transfer';
 import { paintFog, rectRing } from '../geom/fog';
@@ -100,11 +101,11 @@ registerCommand({
   name: 'generator.reroll',
   description: 'Reroll untouched generated content, or dressing only, preserving all manual edits. Supply the new seed.',
   input: z.object({ mapId: z.string().min(1), genId: z.string().min(1), seed: z.number().int(),
-    params: z.record(z.string(), z.unknown()).optional(), dressingOnly: z.boolean().default(false) }),
+    params: z.record(z.string(), z.unknown()).optional(), themeName:z.string().min(1).optional(), dressingOnly: z.boolean().default(false) }),
   run(draft, input) {
     const map = getMapOrThrow(draft, input.mapId), record = map.generators[input.genId];
     if (!record) throw new Error('Generator run not found.');
-    const themeName = record.themeName ?? 'default';
+    const themeName = input.themeName ?? record.themeName ?? 'default';
     const ids = runGenerator(map, { ...record, ...input, params: input.params ?? record.params,
       layerId: record.layerId ?? map.layers[0]!.id, themeName, theme: draft.meta.themes[themeName] ?? {} });
     return { genId: input.genId, ids };
@@ -129,7 +130,8 @@ registerCommand({
   name: 'generator.dressArea',
   description: 'Thin out, add more, or reroll generated dressing inside an area. Manual props and the layout are kept.',
   input: z.object({mapId:z.string().min(1),genId:z.string().min(1),areaEntityId:z.string().min(1),
-    action:z.enum(['thin','more','reroll']),seed:z.number().int().optional()}),
+    action:z.enum(['thin','more','reroll']),seed:z.number().int().optional(),
+    params:z.record(z.string(),z.unknown()).optional(),themeName:z.string().min(1).optional()}),
   run(draft,input) {
     const map=getMapOrThrow(draft,input.mapId), record=map.generators[input.genId], area=map.entities[input.areaEntityId];
     if(!record || area?.type!=='area') throw new Error('Choose a generator run and an area.');
@@ -144,13 +146,15 @@ registerCommand({
     const removed=input.action==='more'?[]:input.action==='thin'?scoped.filter((_,i)=>i%2===0):scoped;
     const removeIds=new Set(removed.map(e=>e.id));
     const seed=input.seed??((record.seed+1)>>>0);
-    const output=input.action==='thin'?[]:definition.dress({seed,params:definition.params.parse(record.params),region:footprint.rings,
+    const params=definition.params.parse(input.params??record.params),themeName=input.themeName??record.themeName??'default';
+    const output=input.action==='thin'?[]:definition.dress({seed,params,region:footprint.rings,
       constraints:[...regionConstraints(map,footprint.rings,footprint.id),...Object.values(map.entities).filter(e=>e.type==='prop'&&e.origin==='generated'&&!removeIds.has(e.id))],
-      theme:draft.meta.themes[record.themeName??'default']??{},grid:map.grid.size},
+      theme:draft.meta.themes[themeName]??{},grid:map.grid.size},
       Object.values(map.entities).filter(e=>e.genId===input.genId&&e.type!=='prop'))
       .filter(e=>e.type==='prop'&&pointInPolygon(e,area.rings));
     if(!removed.length&&!output.length) return {ids:[],removed:[]};
     map.revision++;
+    record.params=params;record.themeName=themeName;
     for(const e of removed) {delete map.entities[e.id];map.deleted[e.id]=map.revision;}
     const ids=output.map(e=>{
       const id=`${input.genId}:${map.revision}:${e.id}`;
@@ -162,6 +166,42 @@ registerCommand({
       e.entityIds=e.entityIds.filter(id=>!removeIds.has(id));e.rev=map.revision;
     }
     return {ids,removed:[...removeIds]};
+  },
+});
+registerCommand({
+  name:'map.generateInterior',
+  description:'Generate an interior from a settlement building footprint and its doors, linking it to the existing or newly created place. One undo step.',
+  input:z.object({parentMapId:z.string().min(1),buildingId:z.string().min(1),placeId:z.string().min(1).optional(),
+    childMapId:z.string().min(1).optional(),name:z.string().trim().min(1).optional(),seed:z.number().int(),
+    params:z.record(z.string(),z.unknown()).default({}),themeName:z.string().min(1).default('default'),
+    expectedParentRevision:z.number().int().nonnegative().optional()}),
+  run(draft,input) {
+    const parent=getMapOrThrow(draft,input.parentMapId), building=parent.entities[input.buildingId];
+    if(input.expectedParentRevision!==undefined && parent.revision!==input.expectedParentRevision) throw new Error('The building map changed. Preview the interior again.');
+    if(building?.type!=='area'||building.role!=='building') throw new Error('Choose a building footprint.');
+    const layer=parent.layers.find(l=>l.id===building.layerId);
+    if(!layer?.visible||layer.locked) throw new Error('Choose a visible, unlocked building.');
+    const matches=Object.values(parent.entities).filter(e=>e.type==='place'&&e.entityIds.includes(building.id));
+    if(!input.placeId&&matches.length>1) throw new Error('This building belongs to several places. Supply placeId.');
+    const place=input.placeId?parent.entities[input.placeId]:matches[0];
+    if(place&&(place.type!=='place'||!place.entityIds.includes(building.id))) throw new Error('Place is not linked to this building.');
+    if(input.placeId&&!place) throw new Error('Place not found.');
+    if(place?.type==='place'&&place.childMapId) throw new Error('This place already has an interior. Open it instead.');
+    const id=input.childMapId??crypto.randomUUID();
+    if(draft.maps[id]) throw new Error('Interior map id already exists.');
+    const child=previewInterior(parent,{...input,childMapId:id,name:input.name??`${place?.name??building.name??'Building'} Interior`,
+      theme:draft.meta.themes[input.themeName]??{}});
+    draft.maps[id]=child;
+    draft.meta.maps.push({id,name:child.name,kind:'interior',parentId:parent.id});
+    parent.revision++;
+    if(building.origin==='generated') {building.origin='manual';building.rev=parent.revision;}
+    if(place?.type==='place') {place.childMapId=id;place.rev=parent.revision;}
+    else {
+      const placeId=crypto.randomUUID();
+      parent.entities[placeId]={id:placeId,type:'place',layerId:building.layerId,origin:'manual',rev:parent.revision,
+        name:building.name??'Building',category:String(input.params.purpose??''),notes:'',gmNotes:'',entityIds:[building.id],childMapId:id};
+    }
+    return {id,genId:'interior-generator'};
   },
 });
 

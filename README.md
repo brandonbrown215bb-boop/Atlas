@@ -4,7 +4,7 @@ Offline Windows desktop worldbuilding editor built with Electron, React, TypeScr
 
 ## Current Status
 
-- **Implemented (Phases 0–4 / v1):**
+- **Implemented (Phases 0–5):**
   - Electron + `electron-vite` + React 19 + strict TypeScript shell
   - Custom `app://` (production bundle) and `atlas-file://` (allowed-root-restricted asset loading) schemes
   - Dockview workspace with real popout windows, per-world layout persistence, off-screen display recovery, and light/dark theme syncing across all windows
@@ -30,7 +30,11 @@ Offline Windows desktop worldbuilding editor built with Electron, React, TypeScr
   - Whole-world forks, portable map-tree copies/moves, placement transforms and replace/merge land; target verification and backups protect source maps
   - Linked copies, manual sync with per-entity Mine/Theirs conflicts, one-step undo, new asset copying and machine-local world-folder lookup
 
-- **Stopped after Phase 4, as planned.** Phase 5 generators wait for the user. Foundry import, TV appearance and second-PC checks remain in `USER_CHECKS.md`.
+  - Seeded building, dungeon/corridor and chamber/alcove generators; connected rooms, inherited entrances, manual-wall constraints, left/right mirroring and one-step undo
+  - Room-purpose dressing using theme art or built-in props, door and route clearance, dressing-only rerolls, and selected-area thin/add/reroll controls
+  - Settlement building interiors with disposable previews, reroll/cancel, and one-command acceptance into a child map linked to the building's place
+
+- **Completed through Phase 5.** Outdoor generators (phase 6) have not been started. The pyramid comparison, real-art appearance, Foundry import, TV and second-PC checks remain in `USER_CHECKS.md`.
 
 ## Development
 
@@ -62,7 +66,17 @@ In **Settings**, choose **Register folder** for loose PNG/JPEG/WebP/BMP art, or 
 
 Open **Assets**, browse folders or search names/tags, and select an image. **Stamp on map** places it on clicks using the current scale, rotation and flip. Select areas, paths or walls and choose **Texture selection** to apply repeating art. All map edits undo normally. **Built-in flat props** work without a pack.
 
-The **World theme** editor in Assets assigns the selected art to a named theme and role. Multiple assets can fill a role; removing the last assignment restores its flat placeholder. Assignments copy art into the world immediately. The source pack is not needed on another machine. Theme choices are ready for the later generator phases.
+The **World theme** editor in Assets assigns the selected art to a named theme and role. Multiple assets can fill a role; removing the last assignment restores its flat placeholder. Assignments copy art into the world immediately. The source pack is not needed on another machine. Choose the theme in Generator to use its furniture roles.
+
+## Dungeon and Interior Generators
+
+Open **Generator**. On a site or interior map, select an area footprint, choose Building rooms, Dungeon and corridors, or Chamber and alcoves, then set the seed, room count, purpose, density and optional left/right mirror. **Generate** creates editable floors, walls, doors and furniture. Footprints must be connected and large enough for nine grid squares; a solid manual wall needs a door before generation can connect across it.
+
+**Reroll** changes untouched generated content. Moving or editing an entity makes it manual, so it survives subsequent rerolls. **Reroll dressing only** keeps the layout. Select a floor to assign that room a purpose, or select an area and use **Thin out**, **Add more** or **Reroll area dressing**. Furniture stays clear of doors and straight routes between a room's doors. **Accept** keeps the run as manual content and finishes it; undo restores the run.
+
+On a settlement map, select a building footprint and choose **Preview interior**. Choose its purpose and layout, reroll until satisfied, then **Accept interior**. Previewing and cancelling do not change the world. Acceptance creates and opens an interior at the building's real size and links it to the existing place, keeping its notes, or creates a place if needed. Buildings with an interior offer **Open existing interior**. The accepted interior remains editable and rerollable.
+
+MCP uses the same `generator.run`, `generator.reroll`, `generator.dressArea`, `generator.accept` and `map.generateInterior` commands through `command_run`. Every action is one undo step.
 
 Agent commands accept `packAssetId` from `asset_search` for `prop.stamp` and `entity.setTexture`, and `packAssetIds` for `theme.setRole`. These copy the art before applying the commands as one undo step. Existing world art can be referenced with `assetId` (or `assetIds` for themes).
 

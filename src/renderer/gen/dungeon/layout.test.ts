@@ -26,6 +26,13 @@ function reachable(entities: Entity[], rings: Point[][]) {
 }
 
 describe('dungeon layouts', () => {
+  it('mirrors the layout left/right without moving the footprint',()=>{
+    const input={seed:5,params:DungeonParamsSchema.parse({mode:'dungeon'}),region,constraints:[],theme:{},grid:1};
+    const normal=dungeonLayout(input), mirrored=dungeonLayout({...input,params:{...input.params,mirror:true}});
+    const floorPoints=(items:Entity[])=>items.filter((e):e is Extract<Entity,{type:'area'}>=>e.type==='area').flatMap(e=>e.rings.flat()).map(p=>`${p.x},${p.y}`).sort();
+    const reflected=normal.map(e=>e.type==='area'?{...e,rings:e.rings.map(r=>r.map(p=>({x:30-p.x,y:p.y})))}:e);
+    expect(floorPoints(mirrored)).toEqual(floorPoints(reflected));
+  });
   for(const mode of ['building','dungeon','chamber'] as const) it(`${mode} is deterministic and every room is reachable from an entrance`, () => {
     for(let seed=1;seed<=8;seed++) {
       const input={seed,params:DungeonParamsSchema.parse({mode}),region,constraints:[],theme:{},grid:1};

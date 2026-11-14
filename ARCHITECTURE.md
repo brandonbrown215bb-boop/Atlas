@@ -13,7 +13,7 @@
 
 ## Purity Boundary
 
-- `src/renderer/model/` (and future `geom/`, `gen/`, `export/uvtt.ts`) must not import React, PixiJS, Electron, or touch the DOM.
+- Core `src/renderer/model/`, `geom/`, `gen/` and `export/uvtt.ts` must not import React, PixiJS, Electron, or touch the DOM.
 - Note: `agentBridge.ts` lives in `model/` as the IPC adapter for the MCP server and calls `renderPng.ts`; core state (`schema.ts`, `migrate.ts`, `history.ts`, `commands.ts`, `store.ts`) remains pure and is tested directly in Node via Vitest.
 
 ## State, Commands, and Undo/Redo
@@ -53,3 +53,11 @@
 - `model/sync.ts` compares per-entity edit/deletion revisions against link baselines. `map.syncLinked` applies the result as one undo step; unchanged repeated syncs produce no history entry.
 - `main/transferFs.ts` owns world-folder checks, hash-verified art copying, backups, transactional world writes and rollback. It verifies the target before saving source-side move/link changes. Source map files remain available for undo; world metadata determines membership.
 - `export/transferActions.ts` coordinates saved state and IPC for both UI and MCP. During transfer/sync, edits are held until the operation completes. Persistence waits for in-flight writes and only marks documents clean if their submitted versions are still current.
+
+## Phase 5 Generators
+
+- `gen/rng.ts` supplies mulberry32; generators use no ambient randomness. `gen/framework.ts` registers pure generators, gathers manual/inherited constraints, validates output, and replaces only untouched entities belonging to the chosen run. Generator records retain their footprint, seed, parameters, layer and theme.
+- `gen/dungeon/layout.ts` partitions buildings, connects dungeon rooms with grid corridors, or carves a chamber with alcoves. Room adjacencies receive spanning-tree doors; polygon clipping keeps floors and exterior walls within the footprint, including holes. Manual walls constrain connectivity, and inherited/manual doors retain their exact openings.
+- `gen/dungeon/dressing.ts` chooses furniture roles by room purpose, uses portable theme assets or built-ins, and keeps prop footprints away from walls, doorways, existing props and direct routes between room doors. Dressing-only runs retain layout entities exactly.
+- `gen/dungeon/interior.ts` constructs a disposable, deterministic child-map preview from a settlement footprint and its doors. `map.generateInterior` invokes the same function, creates the place link and preserves notes in one undo step. The panel refuses to accept a preview after its source or settings change.
+- `GeneratorPanel.tsx` calls registered commands for all world edits; its SVG preview stays outside the world/store and persistence. Selected-area dressing commands preserve manual props and out-of-area entities. `generator.accept` turns a completed run into manual content.

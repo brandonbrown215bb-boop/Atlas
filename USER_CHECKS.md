@@ -1,5 +1,11 @@
 # User Checks
 
+## Phase 5 — Dungeon and interior generators
+
+- Rebuild something like `docs/bundle/reference-maps/04-pyramid-interior.jpg`: draw its footprint on an interior map, choose Chamber and alcoves, try mirroring and a shrine purpose, then adjust the result by hand. Judge the room proportions, alcoves, door widths and furniture; the generator is a starting layout, not an image recreation.
+- Try Building rooms and Dungeon and corridors with several seeds. Draw a manual wall with a door and reroll around it. Move a generated prop and edit a room, then reroll; those edits must stay put. Try dressing-only reroll, a selected room's purpose, and area Thin out/Add more/Reroll. Check your real theme art at a 5 ft grid.
+- Select a settlement building, open Generator, choose purpose, Preview interior, reroll and cancel. Accept a preview and check that the interior has the building's dimensions, its entrance positions, and the place's notes. Undo once to remove the new map/link, then redo. Open an existing generated interior through its place and check it after restarting.
+
 ## P0.4 — Portable build
 - Copy `dist/CampaignAtlas-Portable.exe` to a folder on the second Windows PC and confirm it starts cleanly (and note whether company policy allows running the unsigned portable build on the work laptop).
 

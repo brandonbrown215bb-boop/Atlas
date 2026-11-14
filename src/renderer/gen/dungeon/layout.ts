@@ -3,6 +3,7 @@ import { z } from 'zod';
 import { distanceToSegment, pointInPolygon } from '../../geom/hitTest';
 import { fromPolygons, toPolygons } from '../../geom/fog';
 import type { Entity, Point } from '../../model/schema';
+import { scaleEntityPatch } from '../../geom/transform';
 import { registerGenerator, type GeneratorInput } from '../framework';
 import { mulberry32 } from '../rng';
 import { dressDungeon, ROOM_PURPOSES } from './dressing';
@@ -33,6 +34,12 @@ export function dungeonLayout(input: GeneratorInput<DungeonParams>): Entity[] {
   const points = region[0]!;
   const x0 = Math.min(...points.map(p => p.x)), y0 = Math.min(...points.map(p => p.y));
   const width = Math.max(...points.map(p => p.x))-x0, height = Math.max(...points.map(p => p.y))-y0;
+  if(params.mirror) {
+    const center={x:x0+width/2,y:0};
+    const reflect=(e:Entity):Entity=>({...e,...scaleEntityPatch(e,center,-1,1)});
+    return dungeonLayout({...input,params:{...params,mirror:false},region:region.map(r=>r.map(p=>({x:2*center.x-p.x,y:p.y}))),
+      constraints:constraints.map(reflect)}).map(reflect);
+  }
   const cols = Math.ceil(width/g), rows = Math.ceil(height/g);
   if (cols*rows > 20000) throw new Error('Footprint is too large: use at most 20,000 grid squares.');
   const cells = new Map<string, Cell>();
@@ -215,11 +222,25 @@ export function dungeonLayout(input: GeneratorInput<DungeonParams>): Entity[] {
   }
   for(const [i,e] of edges.entries()) {
     const mid={x:(e.a.x+e.b.x)/2,y:(e.a.y+e.b.y)/2};
-    if(e.manual || wallAt(mid)) continue;
+    if(wallAt(mid)) continue;
     // Clipping keeps boundary wall pieces inside concave footprints and holes.
     if(!pointInPolygon({x:mid.x+g*0.001,y:mid.y+g*0.001},region) && !pointInPolygon({x:mid.x-g*0.001,y:mid.y-g*0.001},region)) continue;
-    if(doors.has(e)) output.push({...base,id:`door-${i}`,type:'door',a:e.a,b:e.b,kind:'door',open:false});
-    else output.push({...base,id:`wall-${i}`,type:'wall',points:[e.a,e.b],blocksMove:true,blocksSight:true});
+    if(doors.has(e)&&!e.manual) output.push({...base,id:`door-${i}`,type:'door',a:e.a,b:e.b,kind:'door',open:false});
+    else {
+      const dx=e.b.x-e.a.x,dy=e.b.y-e.a.y,len2=dx*dx+dy*dy;
+      let pieces:[number,number][]=[[0,1]];
+      for(const door of manualDoors) {
+        const lineDistance=(p:Point)=>Math.abs((p.x-e.a.x)*dy-(p.y-e.a.y)*dx)/Math.sqrt(len2);
+        if(lineDistance(door.a)>0.001||lineDistance(door.b)>0.001) continue;
+        const project=(p:Point)=>((p.x-e.a.x)*dx+(p.y-e.a.y)*dy)/len2;
+        const lo=Math.max(0,Math.min(project(door.a),project(door.b))),hi=Math.min(1,Math.max(project(door.a),project(door.b)));
+        if(lo>=hi) continue;
+        pieces=pieces.flatMap(([a,b])=>hi<=a||lo>=b?[[a,b] as [number,number]]:
+          [...(lo>a?[[a,lo] as [number,number]]:[]),...(hi<b?[[hi,b] as [number,number]]:[])]);
+      }
+      for(const [j,[lo,hi]] of pieces.entries()) if(hi-lo>1e-8) output.push({...base,id:`wall-${i}-${j}`,type:'wall',
+        points:[{x:e.a.x+lo*dx,y:e.a.y+lo*dy},{x:e.a.x+hi*dx,y:e.a.y+hi*dy}],blocksMove:true,blocksSight:true});
+    }
   }
   return output;
 }
