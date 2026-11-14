@@ -1,3 +1,5 @@
+import { forkWorldFolder, readTransferWorld, transferWorldFolders } from './transferFs';
+import { TransferInputSchema, WorldDocumentSchema } from '../renderer/model/transfer';
 import { existsSync, mkdirSync, readFileSync } from 'node:fs';
 import { readFile, stat, mkdir, writeFile, rename } from 'node:fs/promises';
 import { z } from 'zod';
@@ -110,6 +112,19 @@ export function registerWorldIpc(getMainWindow: () => BrowserWindow | null): Wor
       lastOpenedAt: new Date().toISOString(),
     });
   };
+
+  ipcMain.handle('atlas:transfer-read', (_event,path:string) => readTransferWorld(path));
+  ipcMain.handle('atlas:transfer-map', (_event,targetDir:string,input:unknown,expected:unknown) => {
+    if(!currentWorldDir) throw new Error('No world is open');
+    const result=transferWorldFolders(currentWorldDir,targetDir,TransferInputSchema.parse(input),WorldDocumentSchema.parse(expected));
+    recordRecent({meta:readTransferWorld(targetDir).world.meta,maps:result.after.maps},targetDir);
+    return result;
+  });
+  ipcMain.handle('atlas:world-fork', (_event,targetDir:string,name:string) => {
+    if(!currentWorldDir) throw new Error('No world is open');
+    const result=forkWorldFolder(currentWorldDir,targetDir,name);
+    return {...result,recent:recordRecent(result,targetDir)};
+  });
 
   ipcMain.handle('atlas:save-export', async (_event, name: string, extension: 'png'|'dd2vtt', data: string) => {
     z.enum(['png','dd2vtt']).parse(extension);

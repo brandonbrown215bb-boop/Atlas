@@ -21,6 +21,7 @@ export interface CommandCall {
 }
 
 export interface WorldStoreState {
+  operationInProgress: boolean;
   world: WorldDocument | null;
   worldPath: string | null;
   activeMapId: string | null;
@@ -62,6 +63,7 @@ function collectTouchedFromPatches(patches: readonly Patch[]): {
 
 export function createWorldStore() {
   return createStore<WorldStoreState>((set, get) => ({
+    operationInProgress: false,
     world: null,
     worldPath: null,
     activeMapId: null,
@@ -103,6 +105,7 @@ export function createWorldStore() {
 
     executeBatch(calls, label) {
       const state = get();
+      if (state.operationInProgress && calls.some(c => c.name !== 'world.applyTransfer')) throw new Error('Wait for the world transfer to finish.');
       if (!state.world) {
         throw new Error('No world is open');
       }
@@ -148,6 +151,7 @@ export function createWorldStore() {
 
     undo() {
       const state = get();
+      if(state.operationInProgress) return false;
       if (!state.world) {
         return false;
       }
@@ -175,6 +179,7 @@ export function createWorldStore() {
 
     redo() {
       const state = get();
+      if(state.operationInProgress) return false;
       if (!state.world) {
         return false;
       }

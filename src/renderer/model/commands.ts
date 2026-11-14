@@ -1,3 +1,4 @@
+import { validateWorld, WorldDocumentSchema } from './transfer';
 import { paintFog, rectRing } from '../geom/fog';
 import { z } from 'zod';
 import { clipAndInheritEntities } from '../geom/clipInherit';
@@ -770,5 +771,16 @@ registerCommand({
       else map.fog.revealed = paintFog(map.fog.revealed,input.points,input.radius,input.mode === 'hide');
     }
     map.revision++;
+  },
+});
+
+registerCommand({
+  name:'world.applyTransfer',description:'Apply a validated transfer result to the open world as one undo step. Refuses if the world changed while the transfer was being prepared.',
+  input:z.object({before:WorldDocumentSchema,after:WorldDocumentSchema}),
+  run(draft,input) {
+    if(JSON.stringify(draft)!==JSON.stringify(input.before)) throw new Error('World changed during transfer. The target copy is safe; reopen it or retry from the current source.');
+    const next=validateWorld(input.after);
+    if(next.meta.id!==draft.meta.id) throw new Error('Transfer cannot replace the open world identity');
+    draft.meta=next.meta;draft.maps=next.maps;
   },
 });

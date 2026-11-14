@@ -27,6 +27,10 @@ export interface AgentServerInfo {
 }
 
 export interface AtlasApi {
+  readTransferWorld: (path: string) => Promise<{world:import('../renderer/model/commands').WorldDocument;assets:AssetsIndex}>;
+  transferMap: (targetDir: string, input: import('../renderer/model/transfer').TransferInput, expected: import('../renderer/model/commands').WorldDocument) => Promise<{before:import('../renderer/model/commands').WorldDocument;after:import('../renderer/model/commands').WorldDocument;mapId:string;targetWorldId:string}>;
+  forkWorld: (targetDir: string, name: string) => Promise<WorldActionResult>;
+
   saveExport: (name: string, extension: 'png' | 'dd2vtt', data: string) => Promise<string | null>;
   listDisplays: () => Promise<Array<{ id: number; label: string }>>;
   playerFullscreen: (displayId: number | null) => Promise<void>;
@@ -76,6 +80,10 @@ export interface AtlasApi {
 }
 
 const api: AtlasApi = {
+  readTransferWorld: path => ipcRenderer.invoke('atlas:transfer-read', path),
+  transferMap: (targetDir,input,expected) => ipcRenderer.invoke('atlas:transfer-map',targetDir,input,expected),
+  forkWorld: (targetDir,name) => ipcRenderer.invoke('atlas:world-fork',targetDir,name),
+
   saveExport: (name, extension, data) => ipcRenderer.invoke('atlas:save-export', name, extension, data),
   listDisplays: () => ipcRenderer.invoke('atlas:displays'),
   playerFullscreen: id => ipcRenderer.invoke('atlas:player-fullscreen', id),

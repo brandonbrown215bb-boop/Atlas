@@ -1,3 +1,5 @@
+import { copyMapToWorld, forkOpenWorld } from '../export/transferActions';
+import { TransferInputSchema } from './transfer';
 import { exportUvtt } from '../export/uvtt';
 import { exportPlayerImage } from '../export/playerImage';
 import { z } from 'zod';
@@ -151,6 +153,8 @@ export async function handleAgentCall(
       };
     }
 
+    case 'world_fork': return forkOpenWorld(String(params.targetDir),String(params.name));
+    case 'world_copy_map': return copyMapToWorld(String(params.targetDir),TransferInputSchema.parse(params));
     case 'export_uvtt':
     case 'export_player_image': {
       const state=worldStore.getState();

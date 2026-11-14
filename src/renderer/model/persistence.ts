@@ -7,11 +7,12 @@ const BACKUP_INTERVAL_MS = 10 * 60 * 1000;
 let saveTimer: number | null = null;
 let backupTimer: number | null = null;
 let changedSinceBackup = false;
-let saving = false;
+let pendingSave: Promise<unknown> | null = null;
 
 export async function flushDirtyWorld(): Promise<void> {
-  if (saving) {
-    return;
+  if (pendingSave) {
+    await pendingSave;
+    return flushDirtyWorld();
   }
   const state = worldStore.getState();
   if (!state.world || !state.worldPath) {
@@ -37,15 +38,17 @@ export async function flushDirtyWorld(): Promise<void> {
     }
   }
 
-  saving = true;
+  pendingSave = window.atlasApi.saveDirtyWorld(state.worldPath, payload);
   try {
-    await window.atlasApi.saveDirtyWorld(state.worldPath, payload);
+    await pendingSave;
+    const current = worldStore.getState();
+    if(current.worldPath !== state.worldPath || current.world?.meta.id !== state.world.meta.id) return;
     worldStore.getState().markClean({
-      world: Boolean(payload.meta),
-      mapIds: dirtyMapIds,
+      world: Boolean(payload.meta) && current.world?.meta === payload.meta,
+      mapIds: dirtyMapIds.filter(id => current.world?.maps[id] === state.world!.maps[id]),
     });
   } finally {
-    saving = false;
+    pendingSave = null;
   }
 }
 

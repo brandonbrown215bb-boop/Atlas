@@ -4,7 +4,7 @@ Written for an implementing agent. Read sections 1–5 fully before writing any 
 
 Source material: `MAP_EDITOR_BRIEF.md` (what the user wants), `TECH_STACK_AND_OPEN_QUESTIONS.md`, `reference-maps/`. Where this plan and the brief disagree, this plan wins: it records decisions made after the brief.
 
-Implementation progress: completed through **P4.3 Universal VTT export**. Next slice: **P4.4 Fork, copy, move**. Human visual/second-machine checks remain in `USER_CHECKS.md`.
+Implementation progress: completed through **P4.4 Fork, copy, move**. Next slice: **P4.5 Linked copies and sync**. Human visual/second-machine checks remain in `USER_CHECKS.md`.
 
 ---
 

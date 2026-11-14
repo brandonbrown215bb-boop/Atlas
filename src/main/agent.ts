@@ -1,3 +1,4 @@
+import { PlacementSchema } from '../renderer/model/transfer';
 import { randomBytes, timingSafeEqual } from 'node:crypto';
 import { existsSync, mkdirSync, readFileSync } from 'node:fs';
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from 'node:http';
@@ -224,6 +225,14 @@ export async function startAgentServer(
       },
     );
 
+    server.registerTool('world_copy_map', {
+      description:'Copy or move a map tree with portable assets to a separate existing world. Optional placement: metres, radians, uniform scale, replace/merge geography. Target is verified before source changes.',
+      inputSchema:{targetDir:z.string().min(1),mapId:z.string().min(1),mode:z.enum(['copy','move','linked']).default('copy'),placement:PlacementSchema.optional()},
+    },async args=>{try{return jsonText(await callRenderer('world_copy_map',args));}catch(e){return errorResult(e);}});
+    server.registerTool('world_fork', {
+      description:'Fork the open world to a separate empty folder with a new world identity.',
+      inputSchema:{targetDir:z.string().min(1),name:z.string().min(1)},
+    },async args=>{try{return jsonText(await callRenderer('world_fork',args));}catch(e){return errorResult(e);}});
     server.registerTool('export_uvtt', {
       description:'Export a Universal VTT document with player-safe PNG, grid, walls, doors and lights. Secret doors are closed portals with secret:true and a report.',
       inputSchema:{mapId:z.string().optional(),pixelsPerSquare:z.number().positive().finite().optional(),rect:z.object({x:z.number().finite(),y:z.number().finite(),w:z.number().positive().finite(),h:z.number().positive().finite()}).optional()},
