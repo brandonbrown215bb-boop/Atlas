@@ -230,6 +230,12 @@ export async function startAgentServer(
     }, async args => {
       try { return jsonText(await callRenderer('asset_search', args)); } catch (err) { return errorResult(err); }
     });
+    server.registerTool('theme_get', {
+      description:'Read a world theme and its resolved asset roles. Empty roles resolve to builtin:<role> flat placeholders.',
+      inputSchema:{themeName:z.string().min(1).optional()},
+    }, async args => {
+      try {return jsonText(await callRenderer('theme_get',args));} catch(err) {return errorResult(err);}
+    });
 
     server.registerTool(
       'command_list',

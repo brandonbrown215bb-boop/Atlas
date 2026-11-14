@@ -11,13 +11,14 @@ export function createPropTool(): MapTool {
       if (e.button !== 0 || busy) return false;
       const vs = viewStore.getState();
       const layerId = resolveTargetLayerId(ctx.map, vs.activeLayerId);
-      if (!layerId || !vs.selectedPackAssetId) {
+      if (!layerId || (!vs.selectedPackAssetId && !vs.selectedBuiltin)) {
         viewStore.setState({ assetError: 'Choose an asset in Assets and an unlocked layer.' });
         return false;
       }
       const pos = vs.snapToGrid ? snapPointToGrid(pt, ctx.map.grid.size) : pt;
       busy = true;
-      void executeAssetCommands([{ name: 'prop.stamp', input: { mapId: ctx.map.id, layerId, packAssetId: vs.selectedPackAssetId,
+      void executeAssetCommands([{ name: 'prop.stamp', input: { mapId: ctx.map.id, layerId, packAssetId: vs.selectedPackAssetId ?? undefined,
+        builtin:vs.selectedBuiltin ?? undefined,
         ...pos, scale: vs.propScale, rotation: vs.propRotation * Math.PI / 180, flipX: vs.propFlipX } }], 'Stamp prop')
         .then(results => { ctx.setSelectedIds([(results[0] as { id: string }).id]); viewStore.setState({ assetError: '' }); })
         .catch(e => viewStore.setState({ assetError: String(e) }))

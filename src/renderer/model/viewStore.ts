@@ -67,6 +67,7 @@ export interface ViewStoreState {
   selectedEntityIds: string[];
   assetsIndex: AssetsIndex;
   selectedPackAssetId: string | null;
+  selectedBuiltin: string | null;
   propScale: number;
   propRotation: number;
   propFlipX: boolean;
@@ -143,6 +144,7 @@ export const viewStore = createStore<ViewStoreState>((set) => ({
   selectedEntityIds: [],
   assetsIndex: {},
   selectedPackAssetId: null,
+  selectedBuiltin: null,
   propScale: 1,
   propRotation: 0,
   propFlipX: false,

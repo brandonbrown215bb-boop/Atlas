@@ -232,8 +232,13 @@ export function buildEntityDisplay(
       }
       const gfx = new Graphics();
       gfx.eventMode = 'none';
-      const r = Math.max(0.5, strokeUnit * 6);
-      gfx.circle(0, 0, r).fill({ color: 0x38bdf8, alpha: 0.8 });
+      const r = entity.builtin ? 0.65 : Math.max(0.5, strokeUnit * 6);
+      const builtin = entity.builtin?.replace(/^builtin:/,'');
+      if (builtin === 'tree' || builtin === 'forest') gfx.circle(0,0,r).fill({color:0x38764b}).circle(-r/3,-r/3,r/2).fill({color:0x5a9b60});
+      else if (builtin === 'rock' || builtin === 'mountain' || builtin === 'hill') gfx.moveTo(-r,r).lineTo(0,-r).lineTo(r,r).closePath().fill({color:0x93949b});
+      else if (builtin === 'bed') gfx.rect(-r,-r,r*2,r*2).fill({color:0x725246}).rect(-r*0.8,-r*0.8,r*1.6,r*0.5).fill({color:0xe5e7eb});
+      else if (builtin) gfx.roundRect(-r,-r,r*2,r*2,0.1).fill({color:0x997151});
+      else gfx.circle(0, 0, r).fill({ color: 0x38bdf8, alpha: 0.8 });
       if (options.selected) {
         gfx.circle(0, 0, r * 1.3).stroke({ width: strokeUnit * 1.5, color: 0xfbbf24 });
       }

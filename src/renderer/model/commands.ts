@@ -84,20 +84,21 @@ const AssetReferenceShape = {
 };
 registerCommand({
   name: 'prop.stamp',
-  description: 'Stamp a prop. Supply packAssetId to copy a library asset into the world, or assetId with w/h for an already imported asset. Sizes are metres before scale.',
+  description: 'Stamp a prop. Supply packAssetId for copy-on-use, assetId with w/h for imported art, or builtin (tree, rock, table, bed, etc.) for flat art. Sizes are metres before scale.',
   input: z.object({ ...AssetReferenceShape, mapId: z.string().min(1), layerId: z.string().min(1), id: z.string().min(1).optional(),
+    builtin: z.string().min(1).optional(),
     x: z.number().finite(), y: z.number().finite(), w: z.number().positive().finite().optional(), h: z.number().positive().finite().optional(),
     rotation: z.number().finite().default(0), scale: z.number().positive().finite().default(1), flipX: z.boolean().default(false) }),
   run(draft, input) {
     const map = getMapOrThrow(draft, input.mapId);
     const layer = map.layers.find(l => l.id === input.layerId);
     if (!layer?.visible || layer.locked) throw new Error('Choose a visible, unlocked layer.');
-    if (!input.assetId || !input.w || !input.h) throw new Error('An imported asset and its dimensions are required.');
+    if (!input.builtin && (!input.assetId || !input.w || !input.h)) throw new Error('An imported asset and its dimensions, or a built-in prop, are required.');
     const id = input.id ?? `prop-${crypto.randomUUID()}`;
     if (map.entities[id]) throw new Error(`Entity already exists: ${id}`);
     map.revision++;
     map.entities[id] = { type: 'prop', id, layerId: layer.id, origin: 'manual', rev: map.revision,
-      assetId: input.assetId, w: input.w, h: input.h, x: input.x, y: input.y, rotation: input.rotation, scale: input.scale, flipX: input.flipX };
+      assetId: input.assetId, builtin:input.builtin, w: input.w ?? 1.524, h: input.h ?? 1.524, x: input.x, y: input.y, rotation: input.rotation, scale: input.scale, flipX: input.flipX };
     delete map.deleted[id];
     return { id };
   },
@@ -462,7 +463,8 @@ registerCommand({
 const ThemeSetRoleInputSchema = z.object({
   themeName: z.string().min(1).default('default'),
   role: z.string().min(1),
-  assetIds: z.array(z.string().min(1)),
+  assetIds: z.array(z.string().min(1)).default([]),
+  packAssetIds: z.array(z.string().min(1)).optional(),
 });
 
 registerCommand({
@@ -470,8 +472,9 @@ registerCommand({
   description: 'Assign asset ids to a generator role in a world theme.',
   input: ThemeSetRoleInputSchema,
   run(draft, input) {
+    if (input.packAssetIds?.length) throw new Error('Copy pack assets into the world before assigning the role.');
     const theme = (draft.meta.themes[input.themeName] ??= {});
-    theme[input.role] = [...input.assetIds];
+    theme[input.role] = [...new Set(input.assetIds)];
     return { themeName: input.themeName, role: input.role };
   },
 });

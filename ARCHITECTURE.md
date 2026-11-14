@@ -5,7 +5,7 @@
 - **Main process (`src/main/`):**
   - Owns all filesystem access (`worldFs.ts`, `ipc.ts`), native dialogs, window lifecycle (`index.ts`, `windowBounds.ts`), custom protocols (`protocol.ts`, `pathSecurity.ts`), and the localhost MCP server (`agent.ts`).
   - `contextIsolation: true`, `nodeIntegration: false`, `sandbox: true` on all `BrowserWindow` instances.
-  - `app://atlas/*` serves the built renderer bundle; `atlas-file://*` serves local assets only if `resolveAllowedPath` confirms the resolved realpath lies inside `userData` or the currently open world directory.
+  - `app://atlas/*` serves the built renderer bundle; `atlas-file://*` serves local assets only if `resolveAllowedPath` confirms the resolved realpath lies inside `userData`, the currently open world directory, or a registered pack folder.
 - **Preload (`src/preload/index.ts`):**
   - Exposes a narrow typed `window.atlasApi` bridge via `contextBridge`.
 - **Renderer (`src/renderer/`):**
@@ -36,5 +36,10 @@
 - `src/main/index.ts` — App startup, scheme registration, window creation, popout bounds clamping.
 - `src/main/worldFs.ts` — Atomic writes, world create/open, backups, restore, asset hashing.
 - `src/main/agent.ts` — Authenticated `127.0.0.1` MCP HTTP server.
+- `src/main/packs.ts` — Async image-header indexing, cached library metadata, folder/tag search and result paging; thumbnails are queued and cached by IPC in userData.
+- `src/main/dungeondraft.ts` — Verified PCK v1 table reader and streamed extraction; successful imports register the extracted image folder at 256 px/square.
+- `src/renderer/assets/commands.ts` — Copy-on-use adapter shared by the UI and MCP. Resolves pack references before executing the pure world commands together as one undo step.
+- `src/renderer/model/themes.ts` — Theme roles and built-in fallback resolution. Theme assignments live in world metadata.
+- `src/renderer/render/textures.ts` — Lazy textures with per-view usage tracking; hidden/offscreen art unloads after its last view releases it. PNG rendering holds the same textures while it runs.
 - `src/renderer/app/App.tsx` — Menu bar, Dockview host, layout save/restore, theme sync.
 - `src/renderer/render/MapView.tsx` — PixiJS 8 canvas lifecycle, incremental entity sync, pan/zoom, scale calibration.

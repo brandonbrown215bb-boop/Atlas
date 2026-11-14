@@ -5,6 +5,8 @@ import { useStore } from 'zustand';
 import { viewStore } from '../model/viewStore';
 import { worldStore } from '../model/store';
 import { executeAssetCommands } from '../assets/commands';
+import { ThemeEditor } from './ThemeEditor';
+import { THEME_ROLES } from '../model/themes';
 
 function Thumbnail({ asset, onSelect }: { asset: AssetResult; onSelect: () => void }) {
   const ref = useRef<HTMLButtonElement>(null);
@@ -42,6 +44,7 @@ export function AssetsPanel(_props: IDockviewPanelProps) {
   const propScale = useStore(viewStore, s => s.propScale);
   const propRotation = useStore(viewStore, s => s.propRotation);
   const propFlipX = useStore(viewStore, s => s.propFlipX);
+  const selectedBuiltin = useStore(viewStore,s=>s.selectedBuiltin);
   const applyTexture = async (clear = false) => {
     try {
       const vs = viewStore.getState();
@@ -75,20 +78,23 @@ export function AssetsPanel(_props: IDockviewPanelProps) {
       {page?.folders.map(f => <button key={f} onClick={() => { setFolder(f); setOffset(0); }}>▸ {f.split('/').at(-1)}</button>)}
     </nav>
     <div>{page?.total.toLocaleString() ?? '…'} assets</div>
-    <div className="asset-grid">{page?.assets.map(a => <Thumbnail key={a.id} asset={a} onSelect={() => { setSelected(a); viewStore.setState({ selectedPackAssetId: a.id }); }} />)}</div>
+    <details><summary>Built-in flat props</summary><div className="asset-filters">{THEME_ROLES.filter(r=>!r.endsWith('Texture')).map(role=><button key={role} onClick={()=>{setSelected(null);viewStore.setState({selectedBuiltin:role,selectedPackAssetId:null});}}>{role}</button>)}</div></details>
+    <div className="asset-grid">{page?.assets.map(a => <Thumbnail key={a.id} asset={a} onSelect={() => { setSelected(a); viewStore.setState({ selectedPackAssetId: a.id, selectedBuiltin:null }); }} />)}</div>
     {page?.total === 0 && <p>Register an image folder in Settings, then refresh here.</p>}
     <div><button disabled={offset === 0} onClick={() => setOffset(n => Math.max(0,n-100))}>Previous</button>{' '}
       {page && page.total > 0 && `${offset + 1}–${Math.min(offset + 100,page.total)}`}{' '}
       <button disabled={!page || offset + 100 >= page.total} onClick={() => setOffset(n => n+100)}>Next</button></div>
     {selected && <div>{selected.name} · {selected.width} × {selected.height} px · {selected.pxPerSquare} px/square</div>}
-    {selected && <div className="asset-actions">
+    {selectedBuiltin && <div>Built-in: {selectedBuiltin}</div>}
+    {(selected || selectedBuiltin) && <div className="asset-actions">
       <button onClick={() => viewStore.getState().setActiveTool('prop')}>Stamp on map</button>
       <label>Scale <input aria-label="Prop scale" type="number" min="0.01" step="0.1" value={propScale} onChange={e => { const v = Number(e.target.value); if (v > 0) viewStore.setState({ propScale: v }); }} /></label>
       <label>Rotation ° <input aria-label="Prop rotation" type="number" value={propRotation} onChange={e => viewStore.setState({ propRotation: Number(e.target.value) })} /></label>
       <label><input type="checkbox" checked={propFlipX} onChange={e => viewStore.setState({ propFlipX: e.target.checked })} />Flip</label>
-      <button onClick={() => void applyTexture()}>Texture selection</button>
+      <button disabled={!selected} onClick={() => void applyTexture()}>Texture selection</button>
       <button onClick={() => void applyTexture(true)}>Clear texture</button>
     </div>}
     {assetError && <div role="alert">{assetError}</div>}
+    <ThemeEditor />
   </div>;
 }

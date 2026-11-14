@@ -4,7 +4,7 @@ Offline Windows desktop worldbuilding editor built with Electron, React, TypeScr
 
 ## Current Status
 
-- **Implemented (Phases 0–2):**
+- **Implemented (Phases 0–3):**
   - Electron + `electron-vite` + React 19 + strict TypeScript shell
   - Custom `app://` (production bundle) and `atlas-file://` (allowed-root-restricted asset loading) schemes
   - Dockview workspace with real popout windows, per-world layout persistence, off-screen display recovery, and light/dark theme syncing across all windows
@@ -18,10 +18,14 @@ Offline Windows desktop worldbuilding editor built with Electron, React, TypeScr
   - Places with search, category filters and notes; child maps, interiors, portals, continuous zoom-through and pull-from-parent updates
   - SVG import with outline preview, per-shape area/path roles, real width in feet, editable-layer selection, compound-path holes and one-step undo (`map.importSvg` accepts flattened geometry through MCP)
   - Temporary route measurement in feet/miles, speed in mph, travel duration and arrival time with day rollover; routes survive docking/popouts and never change saves or undo history (`map.measureRoute` through MCP)
+  - Cached background indexing of loose image folders, folder/name/tag browsing with paged results and lazy cached thumbnails; editable pixels-per-square scale
+  - Portable prop stamping, flat built-in props, repeating area fills and textures along paths/walls; used art is copied into the world, textures load/unload with visibility across views
+  - Dungeondraft Godot PCK v1 imports, verified against a real public pack, with path/bounds/checksum validation
+  - MCP asset search plus copy-on-use `prop.stamp` and `entity.setTexture` commands
+  - World theme editor in Assets, portable role assignments, built-in fallbacks and MCP `theme_get` / `theme.setRole`
 
-- **Next: P3.1 — register loose asset folders. Remaining work (Phases 3–8):**
+- **Next: P4.1 — player/TV window. Remaining work (Phases 4–8):**
   - Cross-world copy/move/sync
-  - Asset pack indexing (Forgotten Adventures / `.dungeondraft_pack`) and theme editor
   - Player/TV window, reveal brush, player-safe PNG export, and Universal VTT (`.dd2vtt`) export
   - Procedural generators (dungeon/interior, outdoor glade, world/continent, city)
 
@@ -48,6 +52,16 @@ MyWorld/
 ```
 
 Window/panel layouts and the recent-worlds list are stored in Electron `userData` rather than inside the world folder so worlds stay portable across machines with different monitors.
+
+## Asset Packs
+
+In **Settings**, choose **Register folder** for loose PNG/JPEG/WebP/BMP art, or **Import Dungeondraft pack** for a `.dungeondraft_pack` file. Unzip downloaded packs first. Registration indexes files in place; **Reindex** picks up later changes. Loose folders default to 200 pixels per square, Dungeondraft to 256. Change this in Settings before placing art if your pack uses another scale.
+
+Open **Assets**, browse folders or search names/tags, and select an image. **Stamp on map** places it on clicks using the current scale, rotation and flip. Select areas, paths or walls and choose **Texture selection** to apply repeating art. All map edits undo normally. **Built-in flat props** work without a pack.
+
+The **World theme** editor in Assets assigns the selected art to a named theme and role. Multiple assets can fill a role; removing the last assignment restores its flat placeholder. Assignments copy art into the world immediately. The source pack is not needed on another machine. Theme choices are ready for the later generator phases.
+
+Agent commands accept `packAssetId` from `asset_search` for `prop.stamp` and `entity.setTexture`, and `packAssetIds` for `theme.setRole`. These copy the art before applying the commands as one undo step. Existing world art can be referenced with `assetId` (or `assetIds` for themes).
 
 ## SVG Import
 

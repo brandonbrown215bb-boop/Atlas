@@ -4,7 +4,7 @@ Written for an implementing agent. Read sections 1–5 fully before writing any 
 
 Source material: `MAP_EDITOR_BRIEF.md` (what the user wants), `TECH_STACK_AND_OPEN_QUESTIONS.md`, `reference-maps/`. Where this plan and the brief disagree, this plan wins: it records decisions made after the brief.
 
-Implementation progress: completed through **P3.4 Dungeondraft packs**. Next slice: **P3.5 Themes**. Human visual/second-machine checks remain in `USER_CHECKS.md`.
+Implementation progress: completed through **P3.5 Themes (Phase 3)**. Next slice: **P4.1 Player window**. The asset/theme E2E timeout was a test selector collision, fixed and verified; see `BLOCKERS.md` for the resolved finding. Human visual/second-machine checks remain in `USER_CHECKS.md`.
 
 ---
 

@@ -5,6 +5,7 @@ import { worldStore } from './store';
 import { viewStore } from './viewStore';
 import { renderMapToPngBase64 } from '../render/renderPng';
 import { executeAssetCommands } from '../assets/commands';
+import { themeAssets, themeRoles } from './themes';
 
 function entityIntersectsBbox(
   entity: Entity,
@@ -85,6 +86,13 @@ export async function handleAgentCall(
       return listCommands();
     }
     case 'asset_search': return window.atlasApi.searchAssets(params);
+    case 'theme_get': {
+      const state = worldStore.getState();
+      if (!state.world) throw new Error('No world is open');
+      const themeName = String(params.themeName ?? 'default');
+      const theme = state.world.meta.themes[themeName] ?? {};
+      return { themeName, roles:theme, resolved:Object.fromEntries(themeRoles(theme).map(role => [role,themeAssets(theme,role)])) };
+    }
 
     case 'command_run': {
       const commands = params['commands'] as Array<{
@@ -93,7 +101,7 @@ export async function handleAgentCall(
       }>;
       const label =
         typeof params['label'] === 'string' ? params['label'] : undefined;
-      const results = commands.some(c => ['prop.stamp','entity.setTexture'].includes(c.name))
+      const results = commands.some(c => ['prop.stamp','entity.setTexture','theme.setRole'].includes(c.name))
         ? await executeAssetCommands(commands, label) : worldStore.getState().executeBatch(commands, label);
       return { results };
     }

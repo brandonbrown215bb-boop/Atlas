@@ -57,6 +57,7 @@ test('MCP stamps portable props and textures with one undo step; UI can stamp th
       const found = await call('asset_search',{query:'tree'});
       expect(found.total).toBe(1);
       const packAssetId = found.assets[0].id;
+      expect((await call('theme_get')).resolved.tree).toEqual(['builtin:tree']);
       await call('command_run',{commands:[
         {name:'map.create',input:{id:'site',name:'Site',kind:'site',bounds:{x:0,y:0,w:20,h:20}}},
       ]});
@@ -70,10 +71,12 @@ test('MCP stamps portable props and textures with one undo step; UI can stamp th
       await call('command_run',{commands:[
         {name:'prop.stamp',input:{mapId:'site',layerId,id:'tree',packAssetId,x:12,y:5}},
         {name:'entity.setTexture',input:{mapId:'site',entityIds:['floor','path','wall'],packAssetId}},
+        {name:'theme.setRole',input:{themeName:'default',role:'tree',packAssetIds:[packAssetId]}},
       ]});
       const map = await call('map_get',{mapId:'site'});
       expect(map.entities.tree.w).toBe(1.524); expect(map.entities.tree.h).toBe(3.048);
       expect(map.entities.floor.texture.assetId).toBe(map.entities.tree.assetId);
+      expect((await call('theme_get')).roles.tree).toEqual([map.entities.tree.assetId]);
       expect(existsSync(join(worldDir,'assets',`${map.entities.tree.assetId}.png`))).toBe(true);
       const idx = JSON.parse(readFileSync(join(worldDir,'assets','index.json'),'utf8'));
       expect(idx[map.entities.tree.assetId]).toMatchObject({packName:'Art',pxPerSquare:200,width:200,height:400});
@@ -88,15 +91,31 @@ test('MCP stamps portable props and textures with one undo step; UI can stamp th
       expect(colors).toBeGreaterThan(8_000);
       await call('undo'); const undone = await call('map_get',{mapId:'site'});
       expect(undone.entities.tree).toBeUndefined(); expect(undone.entities.floor.texture).toBeUndefined();
+      expect((await call('theme_get')).resolved.tree).toEqual(['builtin:tree']);
       await call('redo');
       await win.getByTestId('btn-assets').click();
-      await win.getByTestId('assets-panel').getByRole('button',{name:'Tree.png'}).click();
+      await win.getByTestId('assets-panel').getByRole('button',{name:'Tree.png',exact:true}).click();
       await win.getByRole('button',{name:'Stamp on map'}).click();
       // Open the site through the existing Maps panel, then click its canvas.
       await win.getByText('Site (site)',{exact:true}).first().click();
       const canvas = win.getByTestId('canvas-host-map-main').locator('canvas');
       await canvas.click({position:{x:100,y:100}});
       await expect.poll(async () => Object.values((await call('map_get',{mapId:'site'})).entities).filter((e:any) => e.type==='prop').length).toBe(2);
+      await win.getByTestId('btn-assets').click();
+      await win.getByLabel('Theme role',{exact:true}).selectOption('rock');
+      await win.getByRole('button',{name:'Add selected asset to role'}).click();
+      await expect(win.getByTestId('theme-editor').getByRole('listitem')).toContainText('Tree.png');
+      await expect.poll(async () => (await call('theme_get')).roles.rock?.length ?? 0).toBe(1);
+      await win.getByRole('button',{name:'Remove Tree.png from role'}).click();
+      await expect(win.getByTestId('theme-placeholder')).toContainText('rock');
+      await call('undo');
+      await expect(win.getByTestId('theme-editor').getByRole('listitem')).toContainText('Tree.png');
+      await win.getByText('Built-in flat props',{exact:true}).click();
+      await win.getByTestId('assets-panel').getByRole('button',{name:'bed',exact:true}).click();
+      await win.getByRole('button',{name:'Stamp on map'}).click();
+      await win.getByText('Site (site)',{exact:true}).first().click();
+      await canvas.click({position:{x:150,y:120}});
+      await expect.poll(async () => Object.values((await call('map_get',{mapId:'site'})).entities).some((e:any) => e.builtin==='bed')).toBe(true);
       await win.getByTestId('btn-save-now').click();
       await expect(win.getByTestId('save-status')).toContainText('Saved');
     } finally { await client.close(); }
@@ -112,6 +131,8 @@ test('MCP stamps portable props and textures with one undo step; UI can stamp th
     try {
       const opened = await client.callTool({name:'world_open',arguments:{worldDir}});
       expect(opened.isError,JSON.stringify(opened.content)).toBeFalsy();
+      const theme=await client.callTool({name:'theme_get',arguments:{}});
+      expect(JSON.parse((theme.content as Array<{text:string}>)[0]!.text).roles.tree).toHaveLength(1);
       const png = await client.callTool({name:'render_png',arguments:{mapId:'site',width:400,height:400}});
       expect(png.isError).toBeFalsy();
       const green = await app2.evaluate(({nativeImage},data) => {
