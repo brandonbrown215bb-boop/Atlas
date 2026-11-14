@@ -5,6 +5,7 @@ import { MapsPanel } from '../panels/MapsPanel';
 import { PlacesPanel } from '../panels/PlacesPanel';
 import { SettingsPanel } from '../panels/SettingsPanel';
 import { AssetsPanel } from '../panels/AssetsPanel';
+import { GeneratorPanel } from '../panels/GeneratorPanel';
 import { MapView } from '../render/MapView';
 
 export interface MapPanelParams {
@@ -19,6 +20,7 @@ export const panelComponents = {
   places: PlacesPanel,
   settings: SettingsPanel,
   assets: AssetsPanel,
+  generator: GeneratorPanel,
 };
 
 export type PanelComponentKey = keyof typeof panelComponents;

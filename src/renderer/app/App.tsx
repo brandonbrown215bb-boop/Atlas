@@ -392,6 +392,7 @@ export function App() {
         >
           Assets
         </button>
+        <button type="button" data-testid="btn-generator" onClick={() => openOrFocusPanel('generator', 'Generator')}>Generator</button>
         <button
           type="button"
           data-testid="btn-settings"

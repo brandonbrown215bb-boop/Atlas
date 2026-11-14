@@ -12,6 +12,7 @@
     "resolveJsonModule": true,
     "types": ["node"]
   },
+  "exclude": ["src/renderer/gen/**/*.test.ts"],
   "include": [
     "electron.vite.config.*",
     "vitest.config.*",
@@ -22,6 +23,7 @@
     "src/renderer/model/commands.ts",
     "src/renderer/model/transfer.ts",
     "src/renderer/model/sync.ts",
+    "src/renderer/gen/**/*.ts",
     "src/renderer/geom/fog.ts",
     "src/renderer/geom/clipOutside.ts",
     "src/renderer/geom/hitTest.ts",

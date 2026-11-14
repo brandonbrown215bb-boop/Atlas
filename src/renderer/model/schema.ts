@@ -182,6 +182,8 @@ export const GeneratorRecordSchema = z.object({
   seed: z.number().int(),
   params: z.record(z.string(), z.unknown()),
   regionEntityId: z.string().min(1),
+  layerId: z.string().min(1).optional(),
+  themeName: z.string().min(1).optional(),
 });
 export type GeneratorRecord = z.infer<typeof GeneratorRecordSchema>;
 

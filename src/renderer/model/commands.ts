@@ -1,4 +1,5 @@
 import { planSync } from './sync';
+import { runGenerator } from '../gen/framework';
 import { validateWorld, WorldDocumentSchema } from './transfer';
 import { paintFog, rectRing } from '../geom/fog';
 import { z } from 'zod';
@@ -78,6 +79,50 @@ function getMapOrThrow(draft: WorldDocument, mapId: string): MapDoc {
   }
   return map;
 }
+
+registerCommand({
+  name: 'generator.run',
+  description: 'Generate a dungeon/interior inside an area. One undo step; manual and inherited entities are constraints.',
+  input: z.object({ mapId: z.string().min(1), genId: z.string().min(1).optional(), type: z.string().min(1),
+    seed: z.number().int(), params: z.record(z.string(), z.unknown()).default({}), regionEntityId: z.string().min(1),
+    layerId: z.string().min(1), themeName: z.string().min(1).default('default') }),
+  run(draft, input) {
+    const map = getMapOrThrow(draft, input.mapId);
+    const genId = input.genId ?? crypto.randomUUID();
+    if (map.generators[genId]) throw new Error('Use generator.reroll for an existing run.');
+    const ids = runGenerator(map, { ...input, genId, theme: draft.meta.themes[input.themeName] ?? {} });
+    return { genId, ids };
+  },
+});
+registerCommand({
+  name: 'generator.reroll',
+  description: 'Reroll untouched generated content, or dressing only, preserving all manual edits. Supply the new seed.',
+  input: z.object({ mapId: z.string().min(1), genId: z.string().min(1), seed: z.number().int(),
+    params: z.record(z.string(), z.unknown()).optional(), dressingOnly: z.boolean().default(false) }),
+  run(draft, input) {
+    const map = getMapOrThrow(draft, input.mapId), record = map.generators[input.genId];
+    if (!record) throw new Error('Generator run not found.');
+    const themeName = record.themeName ?? 'default';
+    const ids = runGenerator(map, { ...record, ...input, params: input.params ?? record.params,
+      layerId: record.layerId ?? map.layers[0]!.id, themeName, theme: draft.meta.themes[themeName] ?? {} });
+    return { genId: input.genId, ids };
+  },
+});
+registerCommand({
+  name: 'generator.accept',
+  description: 'Keep this result as manual content and finish its generator run. Undo restores the run.',
+  input: z.object({ mapId: z.string().min(1), genId: z.string().min(1) }),
+  run(draft, input) {
+    const map = getMapOrThrow(draft, input.mapId);
+    if (!map.generators[input.genId]) throw new Error('Generator run not found.');
+    map.revision++;
+    for (const e of Object.values(map.entities)) if (e.genId === input.genId && e.origin === 'generated') {
+      e.origin = 'manual'; e.rev = map.revision;
+    }
+    delete map.generators[input.genId];
+    return { genId: input.genId };
+  },
+});
 
 // --- Core Entity Commands ---
 
