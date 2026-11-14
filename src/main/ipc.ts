@@ -1,5 +1,5 @@
-import { forkWorldFolder, readTransferWorld, transferWorldFolders } from './transferFs';
-import { TransferInputSchema, WorldDocumentSchema } from '../renderer/model/transfer';
+import { copyAssetSet, forkWorldFolder, readTransferWorld, transferWorldFolders } from './transferFs';
+import { TransferInputSchema, WorldDocumentSchema, usedAssets } from '../renderer/model/transfer';
 import { existsSync, mkdirSync, readFileSync } from 'node:fs';
 import { readFile, stat, mkdir, writeFile, rename } from 'node:fs/promises';
 import { z } from 'zod';
@@ -113,7 +113,23 @@ export function registerWorldIpc(getMainWindow: () => BrowserWindow | null): Wor
     });
   };
 
-  ipcMain.handle('atlas:transfer-read', (_event,path:string) => readTransferWorld(path));
+  ipcMain.handle('atlas:transfer-read', (_event,path:string) => {
+    const result=readTransferWorld(path);recordRecent(result.world,path);return result;
+  });
+  ipcMain.handle('atlas:linked-world-path', (_event,worldId:string) => readRecentWorlds(userDataDir()).find(w=>w.id===worldId&&existsSync(join(w.path,'world.json')))?.path ?? null);
+  ipcMain.handle('atlas:sync-prepare', (_event,mapId:string,path:string,expectedMine:string,expectedTheirs:string) => {
+    if(!currentWorldDir)throw new Error('No world is open');
+    const mine=readTransferWorld(currentWorldDir),theirs=readTransferWorld(path),map=mine.world.maps[mapId];
+    if(!map?.link || map.link.worldId!==theirs.world.meta.id)throw new Error('Choose the world this map is linked to.');
+    const other=theirs.world.maps[map.link.mapId];
+    if(!other || other.link?.worldId!==mine.world.meta.id || other.link.mapId!==map.id)throw new Error('The reciprocal linked map is missing.');
+    if(JSON.stringify(map)!==expectedMine||JSON.stringify(other)!==expectedTheirs)throw new Error('A map changed since the sync preview. Preview again.');
+    createBackup(currentWorldDir);
+    copyAssetSet(path,currentWorldDir,usedAssets(theirs.world,[other.id]),theirs.assets,mine.assets);
+    atomicWriteFile(join(currentWorldDir,'assets','index.json'),JSON.stringify(mine.assets,null,2));
+    recordRecent(theirs.world,path);
+    return {otherMap:other,otherWorldId:theirs.world.meta.id,assets:mine.assets};
+  });
   ipcMain.handle('atlas:transfer-map', (_event,targetDir:string,input:unknown,expected:unknown) => {
     if(!currentWorldDir) throw new Error('No world is open');
     const result=transferWorldFolders(currentWorldDir,targetDir,TransferInputSchema.parse(input),WorldDocumentSchema.parse(expected));

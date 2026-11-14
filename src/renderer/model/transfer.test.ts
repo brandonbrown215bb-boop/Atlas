@@ -43,3 +43,15 @@ for(const underneath of ['replace','merge'] as const)it(`${underneath} placement
   expect(()=>validateWorld(result.target)).not.toThrow();
   expect(incoming.parent?.footprintEntityId).toBeDefined();
 });
+
+it('replacement cuts crossing roads while preserving existing child footprints',()=>{
+  const {source,target}=fixture();const parent=target.maps['target-map']!;
+  parent.entities.road={id:'road',type:'path',points:[{x:-5,y:5},{x:15,y:5}],role:'road',width:1,closed:false,layerId:'l',origin:'manual',rev:1};
+  parent.entities.footprint={id:'footprint',type:'area',role:'building',rings:[[{x:1,y:1},{x:2,y:1},{x:2,y:2},{x:1,y:2}]],layerId:'l',origin:'manual',rev:1};
+  const child=map('existing-child','target-map');child.parent!.footprintEntityId='footprint';target.maps[child.id]=child;target.meta.maps.push({id:child.id,name:child.name,kind:child.kind,parentId:'target-map'});
+  const result=transferMap(source,target,{mapId:'root',mode:'copy',placement:{parentMapId:'target-map',x:0,y:0,rotation:0,scale:1,underneath:'replace',seamMargin:0}});
+  const placed=result.target.maps['target-map']!;
+  expect(placed.entities.footprint).toEqual(parent.entities.footprint);
+  expect(Object.values(placed.entities).filter(e=>e.type==='path').map(e=>e.type==='path'?e.points:[])).toEqual([[{x:-5,y:5},{x:0,y:5}],[{x:10,y:5},{x:15,y:5}]]);
+  expect(()=>validateWorld(result.target)).not.toThrow();
+});

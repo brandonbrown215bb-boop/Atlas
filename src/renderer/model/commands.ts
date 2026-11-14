@@ -1,3 +1,4 @@
+import { planSync } from './sync';
 import { validateWorld, WorldDocumentSchema } from './transfer';
 import { paintFog, rectRing } from '../geom/fog';
 import { z } from 'zod';
@@ -782,5 +783,20 @@ registerCommand({
     const next=validateWorld(input.after);
     if(next.meta.id!==draft.meta.id) throw new Error('Transfer cannot replace the open world identity');
     draft.meta=next.meta;draft.maps=next.maps;
+  },
+});
+
+registerCommand({
+  name:'map.syncLinked',description:'Pull entity changes from the linked map. Conflicts default to mine; choose mine/theirs per entity. The entire sync is one undo step.',
+  input:z.object({mapId:z.string().min(1),otherWorldId:z.string().min(1),otherMap:MapDocSchema,choices:z.record(z.string(),z.enum(['mine','theirs'])).default({})}),
+  run(draft,input) {
+    const mine=getMapOrThrow(draft,input.mapId);
+    if(mine.link?.worldId!==input.otherWorldId || input.otherMap.link?.worldId!==draft.meta.id || input.otherMap.link?.mapId!==mine.id)throw new Error('The linked world identity does not match.');
+    const result=planSync(mine,input.otherMap,input.choices);
+    if(result.updated) {
+      draft.maps[mine.id]=result.map;
+      validateWorld(draft);
+    }
+    return {conflicts:result.conflicts,taken:result.taken,updated:result.updated};
   },
 });

@@ -220,6 +220,8 @@ export const MapDocSchema = z.object({
       mapId: z.string().min(1),
       syncedTheirRev: z.number().int().nonnegative(),
       syncedMyRev: z.number().int().nonnegative(),
+      // Converts the linked map's entity coordinates into this map's coordinates.
+      transform: z.object({x:z.number().finite(),y:z.number().finite(),scale:z.number().positive().finite(),rotation:z.number().finite()}).optional(),
     })
     .optional(),
   fog: z.object({

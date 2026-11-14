@@ -4,7 +4,7 @@ Offline Windows desktop worldbuilding editor built with Electron, React, TypeScr
 
 ## Current Status
 
-- **Implemented (Phases 0–3):**
+- **Implemented (Phases 0–4 / v1):**
   - Electron + `electron-vite` + React 19 + strict TypeScript shell
   - Custom `app://` (production bundle) and `atlas-file://` (allowed-root-restricted asset loading) schemes
   - Dockview workspace with real popout windows, per-world layout persistence, off-screen display recovery, and light/dark theme syncing across all windows
@@ -24,10 +24,13 @@ Offline Windows desktop worldbuilding editor built with Electron, React, TypeScr
   - MCP asset search plus copy-on-use `prop.stamp` and `entity.setTexture` commands
   - World theme editor in Assets, portable role assignments, built-in fallbacks and MCP `theme_get` / `theme.setRole`
 
-- **Next: P4.1 — player/TV window. Remaining work (Phases 4–8):**
-  - Cross-world copy/move/sync
-  - Player/TV window, reveal brush, player-safe PNG export, and Universal VTT (`.dd2vtt`) export
-  - Procedural generators (dungeon/interior, outdoor glade, world/continent, city)
+  - Shared-state player/TV window with independent map selection, Send my view, labels/grid toggles and monitor fullscreen; private content and secret-door markers are excluded
+  - Undoable reveal/hide brush with adjustable radius, reveal-all/hide-all and matching GM/player fog cover
+  - Player-safe PNG and Universal VTT exports for the whole map, selection rectangle or custom rectangle, with grid scale and an 8192-pixel cap; UVTT includes walls, doors, lights and a secret-door report
+  - Whole-world forks, portable map-tree copies/moves, placement transforms and replace/merge land; target verification and backups protect source maps
+  - Linked copies, manual sync with per-entity Mine/Theirs conflicts, one-step undo, new asset copying and machine-local world-folder lookup
+
+- **Stopped after Phase 4, as planned.** Phase 5 generators wait for the user. Foundry import, TV appearance and second-PC checks remain in `USER_CHECKS.md`.
 
 ## Development
 
@@ -78,3 +81,19 @@ When enabled (on by default), the main process serves an MCP Streamable HTTP end
 Choose **Measure**, then click along a route. The readout previews the next segment under the cursor. Press **Enter**, double-click, or choose **Finish** to hold the result. **Backspace** removes the last point; **Esc** or **Clear** clears the route. Click after finishing to start another route.
 
 Distance displays feet below one mile and miles above it. Enter speed in miles per hour and a departure time for travel duration and arrival, including any days crossed. Estimates assume continuous travel at that speed; arrival rounds to the nearest minute. Measurements are temporary and stay out of world files, exports and undo history.
+
+## Player Display and Exports
+
+Open **Player window**, choose its map, and use **Send my view** to copy the current GM camera. Navigating to another map in the editor keeps the player display on the chosen map. Choose a monitor and **Apply display** for fullscreen, or choose **Windowed** to leave fullscreen. Player labels and grid have separate toggles.
+
+Fog controls act on the map being edited. Enable fog, select the **Fog** tool, and drag to Reveal or Hide using the brush radius in metres. Each stroke is one undo step. The GM sees half-transparent cover; players see solid cover.
+
+Open **Export** for a player-safe PNG or `.dd2vtt`. Choose the whole map, selection bounds or a custom rectangle, and pixels per grid square. Large exports are proportionally reduced to 8192 pixels per side and report the cap. Exports omit fog and private content. The VTT report identifies secret doors to set up as secret after import into Foundry.
+
+## World Transfers and Linked Sync
+
+Open **World transfers** to fork into an empty folder, or copy/move the active map and its descendants into an existing world. Placement can position, rotate and scale geography under a target parent, replacing area and line geometry underneath or merging land with a seam margin. Interior dimensions stay fixed. Used art travels with the maps. A move verifies the written target before updating the source. Undo restores the source side; the target copy remains independent.
+
+**Linked copy** keeps map/entity ids, so those map ids must be absent from the target. Each map can link to one counterpart. On either side, **Preview linked sync** lists incoming changes and conflicts; select Mine or Theirs per entity and apply. Sync pulls entity changes into the open map; sync linked descendants individually. A second unchanged sync adds no undo step. World-folder locations stay in this computer's recent-world list, and the app asks for the linked folder if it cannot locate it.
+
+MCP exposes `export_player_image`, `export_uvtt`, `world_fork`, `world_copy_map` (copy/move/linked) and `world_sync_map` (preview by default). The normal command registry also includes `fog.paint` and `map.syncLinked`.

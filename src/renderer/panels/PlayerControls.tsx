@@ -50,6 +50,7 @@ export function PlayerControls() {
     if (child.current && !child.current.closed) { child.current.focus(); return; }
     const win = window.open(window.location.protocol === 'app:' ? 'app://atlas/player.html' : '/player.html', 'atlas-player');
     if (!win) { setError('Could not open player window.'); return; }
+    if(!chosen && activeMap)setChosen(activeMap);
     child.current = win;
     win.addEventListener('load', () => {
       root.current = createRoot(win.document.body);
@@ -73,11 +74,11 @@ export function PlayerControls() {
     <label><input type="checkbox" checked={grid} onChange={e => setGrid(e.target.checked)} />Player grid</label>
     <select aria-label="Player monitor" value={display} onChange={e => setDisplay(e.target.value)} onFocus={() => void window.atlasApi.listDisplays().then(setDisplays)}><option value="">Windowed</option>{displays.map(d => <option key={d.id} value={d.id}>{d.label}</option>)}</select>
     <button onClick={() => void window.atlasApi.playerFullscreen(display ? Number(display) : null).catch(e => setError(String(e)))}>Apply display</button>
-    <label><input type="checkbox" checked={world?.maps[mapId]?.fog.enabled ?? false} onChange={e => worldStore.getState().execute('fog.paint',{mapId,mode:e.target.checked?'enable':'disable'})} disabled={!world} />Fog</label>
+    <label><input type="checkbox" checked={world?.maps[activeMap??'']?.fog.enabled ?? false} onChange={e => worldStore.getState().execute('fog.paint',{mapId:activeMap,mode:e.target.checked?'enable':'disable'})} disabled={!activeMap} />Fog on {world?.maps[activeMap??'']?.name??'edited map'}</label>
     <select aria-label="Fog brush mode" value={fogMode} onChange={e => viewStore.setState({fogMode:e.target.value as 'reveal'|'hide'})}><option value="reveal">Reveal</option><option value="hide">Hide</option></select>
     <label>Brush radius (m) <input aria-label="Fog brush radius" type="number" min="0.1" value={fogRadius} style={{width:55}} onChange={e => {const n=Number(e.target.value); if(n>0 && Number.isFinite(n)) viewStore.setState({fogRadius:n});}} /></label>
-    <button disabled={!world} onClick={() => worldStore.getState().execute('fog.paint',{mapId,mode:'revealAll'})}>Reveal all</button>
-    <button disabled={!world} onClick={() => worldStore.getState().execute('fog.paint',{mapId,mode:'hideAll'})}>Hide all</button>
+    <button disabled={!activeMap} onClick={() => worldStore.getState().execute('fog.paint',{mapId:activeMap,mode:'revealAll'})}>Reveal all</button>
+    <button disabled={!activeMap} onClick={() => worldStore.getState().execute('fog.paint',{mapId:activeMap,mode:'hideAll'})}>Hide all</button>
     {error && <span role="alert">{error}</span>}
   </div>;
 }

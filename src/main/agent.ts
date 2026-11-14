@@ -225,6 +225,10 @@ export async function startAgentServer(
       },
     );
 
+    server.registerTool('world_sync_map', {
+      description:'Preview or apply a linked-map sync into the open world. Defaults to preview; conflicts keep mine unless choices selects theirs. One undo reverses an applied sync. otherDir locates the linked world if this computer has not seen it.',
+      inputSchema:{mapId:z.string().min(1),otherDir:z.string().min(1).optional(),apply:z.boolean().default(false),choices:z.record(z.string(),z.enum(['mine','theirs'])).default({})},
+    },async args=>{try{return jsonText(await callRenderer('world_sync_map',args));}catch(e){return errorResult(e);}});
     server.registerTool('world_copy_map', {
       description:'Copy or move a map tree with portable assets to a separate existing world. Optional placement: metres, radians, uniform scale, replace/merge geography. Target is verified before source changes.',
       inputSchema:{targetDir:z.string().min(1),mapId:z.string().min(1),mode:z.enum(['copy','move','linked']).default('copy'),placement:PlacementSchema.optional()},

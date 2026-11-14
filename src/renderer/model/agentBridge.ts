@@ -1,4 +1,4 @@
-import { copyMapToWorld, forkOpenWorld } from '../export/transferActions';
+import { copyMapToWorld, forkOpenWorld, previewLinkedSync, syncLinkedMap } from '../export/transferActions';
 import { TransferInputSchema } from './transfer';
 import { exportUvtt } from '../export/uvtt';
 import { exportPlayerImage } from '../export/playerImage';
@@ -153,6 +153,11 @@ export async function handleAgentCall(
       };
     }
 
+    case 'world_sync_map': {
+      const preview=await previewLinkedSync(String(params.mapId),params.otherDir as string|undefined);
+      if(!params.apply)return {path:preview.path,conflicts:preview.conflicts,taken:preview.taken,updated:preview.updated};
+      return syncLinkedMap(preview.mapId,preview.path,params.choices as Record<string,'mine'|'theirs'>|undefined,preview);
+    }
     case 'world_fork': return forkOpenWorld(String(params.targetDir),String(params.name));
     case 'world_copy_map': return copyMapToWorld(String(params.targetDir),TransferInputSchema.parse(params));
     case 'export_uvtt':

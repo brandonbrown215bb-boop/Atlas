@@ -27,6 +27,9 @@ export interface AgentServerInfo {
 }
 
 export interface AtlasApi {
+  linkedWorldPath: (worldId: string) => Promise<string | null>;
+  prepareLinkedSync: (mapId: string, path: string, expectedMine: string, expectedTheirs: string) => Promise<{otherMap:MapDoc;otherWorldId:string;assets:AssetsIndex}>;
+
   readTransferWorld: (path: string) => Promise<{world:import('../renderer/model/commands').WorldDocument;assets:AssetsIndex}>;
   transferMap: (targetDir: string, input: import('../renderer/model/transfer').TransferInput, expected: import('../renderer/model/commands').WorldDocument) => Promise<{before:import('../renderer/model/commands').WorldDocument;after:import('../renderer/model/commands').WorldDocument;mapId:string;targetWorldId:string}>;
   forkWorld: (targetDir: string, name: string) => Promise<WorldActionResult>;
@@ -80,6 +83,9 @@ export interface AtlasApi {
 }
 
 const api: AtlasApi = {
+  linkedWorldPath: worldId => ipcRenderer.invoke('atlas:linked-world-path',worldId),
+  prepareLinkedSync: (mapId,path,expectedMine,expectedTheirs) => ipcRenderer.invoke('atlas:sync-prepare',mapId,path,expectedMine,expectedTheirs),
+
   readTransferWorld: path => ipcRenderer.invoke('atlas:transfer-read', path),
   transferMap: (targetDir,input,expected) => ipcRenderer.invoke('atlas:transfer-map',targetDir,input,expected),
   forkWorld: (targetDir,name) => ipcRenderer.invoke('atlas:world-fork',targetDir,name),

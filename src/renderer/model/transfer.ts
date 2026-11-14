@@ -1,3 +1,4 @@
+import { clipOutside } from '../geom/clipOutside';
 import { z } from 'zod';
 import clipping from 'polygon-clipping';
 import { MapDocSchema, WorldMetaSchema, type Entity, type MapDoc, type Point } from './schema';
@@ -82,10 +83,10 @@ function placeTree(maps: Record<string,MapDoc>, ids:string[], placement: Placeme
   const root=maps[ids[0]!]!;
   root.parent={mapId:placement.parentMapId,x:placement.x,y:placement.y,rotation:0};
   const original=originals[ids[0]!]!, t=transforms.get(root.id)!;
-  return rectRing(original.bounds).map(p=>{const q=movePoint(p,t.scale,t.angle);return {x:q.x+t.offset.x+placement.x,y:q.y+t.offset.y+placement.y};});
+  return {transforms,footprint:rectRing(original.bounds).map(p=>{const q=movePoint(p,t.scale,t.angle);return {x:q.x+t.offset.x+placement.x,y:q.y+t.offset.y+placement.y};})};
 }
 
-function applyGeography(parent: MapDoc, incoming: MapDoc, footprint:Point[], placement:Placement,createId:()=>string) {
+function applyGeography(parent: MapDoc, incoming: MapDoc, footprint:Point[], placement:Placement,createId:()=>string,protectedIds:Set<string>) {
   parent.revision++;
   const revision=parent.revision;
   const land=Object.values(incoming.entities).filter((e):e is Extract<Entity,{type:'area'}>=>e.type==='area'&&e.role==='land'&&!e.gmOnly&&incoming.layers.some(l=>l.id===e.layerId&&!l.gmOnly&&l.visible));
@@ -98,7 +99,24 @@ function applyGeography(parent: MapDoc, incoming: MapDoc, footprint:Point[], pla
     for(const rings of polys.slice(1)){const id=createId();parent.entities[id]={...structuredClone(e),id,rings};}
   };
   if(placement.underneath==='replace') {
-    for(const e of Object.values(parent.entities)) if(e.type==='area') replaceArea(e,fromPolygons(clipping.difference(toPolygons([e.rings]),toPolygons([[footprint]]))));
+    for(const e of Object.values(parent.entities)) {
+      if(protectedIds.has(e.id))continue;
+      if(e.type==='area') replaceArea(e,fromPolygons(clipping.difference(toPolygons([e.rings]),toPolygons([[footprint]]))));
+      else if(e.type==='path'||e.type==='wall'||e.type==='door') {
+        const points=e.type==='door'?[e.a,e.b]:e.points;
+        const pieces=clipOutside(points,e.type==='path'&&e.closed,footprint);
+        const original=e.type==='path'&&e.closed?[...points,points[0]!]:points;
+        if(pieces.length===1&&JSON.stringify(pieces[0])===JSON.stringify(original))continue;
+        if(!pieces.length){delete parent.entities[e.id];parent.deleted[e.id]=revision;continue;}
+        const apply=(entity:typeof e,points:Point[])=>{
+          if(entity.type==='door'){entity.a=points[0]!;entity.b=points[points.length-1]!;}
+          else {entity.points=points;if(entity.type==='path')entity.closed=false;}
+          entity.rev=revision;entity.origin='manual';
+        };
+        for(const piece of pieces.slice(1)){const id=createId(),copy=structuredClone(e);copy.id=id;apply(copy,piece);parent.entities[id]=copy;}
+        apply(e,pieces[0]!);
+      }
+    }
   } else if(incomingLand.length) {
     const existing=Object.values(parent.entities).filter((e):e is Extract<Entity,{type:'area'}>=>e.type==='area'&&e.role==='land'&&!e.gmOnly&&parent.layers.some(l=>l.id===e.layerId&&!l.gmOnly&&l.visible));
     const merged=fromPolygons(clipping.union(incomingLand,...existing.map(e=>toPolygons([e.rings]))));
@@ -148,11 +166,14 @@ export function transferMap(sourceInput:WorldDocument,targetInput:WorldDocument,
     incoming[m.id]=m;
   }
   const incomingIds=ids.map(id=>mapIds.get(id)!);
+  let placedTransforms: Map<string,{scale:number;angle:number;offset:Point}> | undefined;
   if(input.placement) {
     const parent=target.maps[input.placement.parentMapId];if(!parent)throw new Error('Target parent map not found');
-    const footprint=placeTree(incoming,incomingIds,input.placement);
+    const placed=placeTree(incoming,incomingIds,input.placement);
+    const footprint=placed.footprint;placedTransforms=placed.transforms;
     const root=incoming[incomingIds[0]!]!;
-    applyGeography(parent,root,footprint,input.placement,createId);
+    const protectedIds=new Set(Object.values(target.maps).flatMap(m=>m.parent?.mapId===parent.id&&m.parent.footprintEntityId?[m.parent.footprintEntityId]:[]));
+    applyGeography(parent,root,footprint,input.placement,createId,protectedIds);
     const eid=createId();parent.entities[eid]={id:eid,type:'area',role:'district',rings:[footprint],layerId:parent.layers[0]!.id,origin:'manual',rev:parent.revision,name:root.name};
     root.parent!.footprintEntityId=eid;
   }
@@ -160,8 +181,15 @@ export function transferMap(sourceInput:WorldDocument,targetInput:WorldDocument,
   target.meta.maps.push(...incomingIds.map(id=>{const m=incoming[id]!;return {id,name:m.name,kind:m.kind,parentId:m.parent?.mapId};}));
   if(linked) for(const id of ids) {
     const mine=source.maps[id]!,theirs=target.maps[mapIds.get(id)!]!;
+    if(mine.link) throw new Error('This map already has a linked copy. Fork or copy it independently first.');
     mine.link={worldId:target.meta.id,mapId:theirs.id,syncedTheirRev:theirs.revision,syncedMyRev:mine.revision};
     theirs.link={worldId:source.meta.id,mapId:mine.id,syncedTheirRev:mine.revision,syncedMyRev:theirs.revision};
+    const t=placedTransforms?.get(theirs.id);
+    if(t) {
+      theirs.link.transform={x:t.offset.x,y:t.offset.y,scale:t.scale,rotation:t.angle};
+      const inverse=movePoint({x:-t.offset.x,y:-t.offset.y},1/t.scale,-t.angle);
+      mine.link.transform={...inverse,scale:1/t.scale,rotation:-t.angle};
+    }
   }
   if(input.mode==='move') {
     for(const id of ids) delete source.maps[id];

@@ -43,3 +43,13 @@
 - `src/renderer/render/textures.ts` — Lazy textures with per-view usage tracking; hidden/offscreen art unloads after its last view releases it. PNG rendering holds the same textures while it runs.
 - `src/renderer/app/App.tsx` — Menu bar, Dockview host, layout save/restore, theme sync.
 - `src/renderer/render/MapView.tsx` — PixiJS 8 canvas lifecycle, incremental entity sync, pan/zoom, scale calibration.
+
+## Phase 4 Outputs and Transfer
+
+- `PlayerControls.tsx` opens `player.html` with `window.open` and mounts into its document using the same stores. A player-owned offscreen canvas renders on state/size changes and supplies the visible image; canvases are created and destroyed in their owning document.
+- `model/player.ts` supplies the player render filter. `geom/fog.ts` performs polygon reveal/hide operations and hidden-entity rejection; `render/drawFog.ts` draws the resulting cover for both views.
+- `export/playerImage.ts` uses the same player filter with fog disabled. `export/imageSize.ts` controls grid scale and the 8192-pixel limit. `export/uvtt.ts` is pure, clips structural data to the export rectangle, cuts wall gaps at doors, and reports secret-door compatibility.
+- `model/transfer.ts` validates world references and prepares independent map trees or linked copies. Placement is baked into local coordinates; reciprocal link transforms convert later entity syncs between coordinate systems.
+- `model/sync.ts` compares per-entity edit/deletion revisions against link baselines. `map.syncLinked` applies the result as one undo step; unchanged repeated syncs produce no history entry.
+- `main/transferFs.ts` owns world-folder checks, hash-verified art copying, backups, transactional world writes and rollback. It verifies the target before saving source-side move/link changes. Source map files remain available for undo; world metadata determines membership.
+- `export/transferActions.ts` coordinates saved state and IPC for both UI and MCP. During transfer/sync, edits are held until the operation completes. Persistence waits for in-flight writes and only marks documents clean if their submitted versions are still current.

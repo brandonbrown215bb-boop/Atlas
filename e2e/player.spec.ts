@@ -42,6 +42,14 @@ test('player window shares live map state and hides private content', async () =
     }).toBe(true);
     await main.getByRole('button',{name:'Reveal all',exact:true}).click();
     await expect.poll(() => player.getByTestId('player-image').getAttribute('src')).not.toBeNull();
+    const held = await player.getByTestId('player-image').getAttribute('src');
+    await main.evaluate(() => {
+      const state=(window as any).__atlasWorldStore.getState();
+      state.execute('map.create',{id:'another',name:'Another GM map',kind:'interior'});
+      state.setActiveMap('another');
+    });
+    await expect(main.getByLabel('Player map')).toHaveValue('map-1');
+    await expect(player.getByTestId('player-image')).toHaveAttribute('src',held!);
     await player.close();
     const again = app.waitForEvent('window');
     await main.getByTestId('btn-player-window').click();

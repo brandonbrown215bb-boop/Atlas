@@ -105,7 +105,7 @@ export function createWorldStore() {
 
     executeBatch(calls, label) {
       const state = get();
-      if (state.operationInProgress && calls.some(c => c.name !== 'world.applyTransfer')) throw new Error('Wait for the world transfer to finish.');
+      if (state.operationInProgress && calls.some(c => !['world.applyTransfer','map.syncLinked'].includes(c.name))) throw new Error('Wait for the world transfer to finish.');
       if (!state.world) {
         throw new Error('No world is open');
       }
