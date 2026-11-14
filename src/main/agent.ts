@@ -224,6 +224,10 @@ export async function startAgentServer(
       },
     );
 
+    server.registerTool('export_uvtt', {
+      description:'Export a Universal VTT document with player-safe PNG, grid, walls, doors and lights. Secret doors are closed portals with secret:true and a report.',
+      inputSchema:{mapId:z.string().optional(),pixelsPerSquare:z.number().positive().finite().optional(),rect:z.object({x:z.number().finite(),y:z.number().finite(),w:z.number().positive().finite(),h:z.number().positive().finite()}).optional()},
+    },async args=>{try{return jsonText(await callRenderer('export_uvtt',args));}catch(e){return errorResult(e);}});
     server.registerTool('export_player_image', {
       description:'Export a player-safe PNG without fog or private content. Returns base64 image and dimensions; caps each side at 8192 pixels.',
       inputSchema:{mapId:z.string().optional(),pixelsPerSquare:z.number().positive().finite().optional(),rect:z.object({x:z.number().finite(),y:z.number().finite(),w:z.number().positive().finite(),h:z.number().positive().finite()}).optional()},

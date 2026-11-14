@@ -41,5 +41,12 @@ test('player PNG exports through UI and MCP preserve size, hide GM art and omit 
     await main.getByRole('button',{name:'Save player PNG',exact:true}).click();
     await expect(main.getByRole('status',{name:'Export result'})).toContainText(/Saved 100 . 100 PNG/);
     expect(readFileSync(output).toString('base64')).toBe(image.data);
+    const vtt=await call('export_uvtt',args);
+    expect(vtt.document).toMatchObject({format:0.2,image:image.data,resolution:{pixels_per_grid:100,map_size:{x:1,y:1}}});
+    const vttPath=join(dir,'map.dd2vtt');
+    await app.evaluate(({dialog},path)=>{dialog.showSaveDialog=async()=>({canceled:false,filePath:path});},vttPath);
+    await main.getByRole('button',{name:'Save Universal VTT',exact:true}).click();
+    await expect(main.getByRole('status',{name:'Export result'})).toContainText('DD2VTT');
+    expect(JSON.parse(readFileSync(vttPath,'utf8'))).toEqual(vtt.document);
   } finally {await client.close();await app.close();}
 });

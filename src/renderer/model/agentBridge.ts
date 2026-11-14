@@ -1,3 +1,4 @@
+import { exportUvtt } from '../export/uvtt';
 import { exportPlayerImage } from '../export/playerImage';
 import { z } from 'zod';
 import { listCommands } from './commands';
@@ -150,11 +151,17 @@ export async function handleAgentCall(
       };
     }
 
+    case 'export_uvtt':
     case 'export_player_image': {
       const state=worldStore.getState();
       const map=state.world?.maps[String(params.mapId ?? state.activeMapId ?? '')];
       if(!map) throw new Error('Map not found');
-      return exportPlayerImage(map, params.pixelsPerSquare as number | undefined, params.rect as {x:number;y:number;w:number;h:number}|undefined);
+      const image=await exportPlayerImage(map, params.pixelsPerSquare as number | undefined, params.rect as {x:number;y:number;w:number;h:number}|undefined);
+      if(method==='export_uvtt') {
+        const uvtt=exportUvtt(map,image.data,params.pixelsPerSquare as number | undefined,image.rect);
+        return {...uvtt,width:image.width,height:image.height,capped:image.capped,report:[image.report,uvtt.report].filter(Boolean).join(' ')};
+      }
+      return image;
     }
     case 'render_png': {
       const s = worldStore.getState();
