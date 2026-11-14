@@ -3,6 +3,7 @@ import { clipAndInheritEntities } from '../geom/clipInherit';
 import { getPlaceBounds } from '../geom/places';
 import { getChildRectInParent, listKeptEditedEntities } from '../geom/pullFromParent';
 import { translateEntityPatch } from '../geom/transform';
+import { CLOCK_TIME, measureRoute } from '../geom/measure';
 import {
   EntitySchema,
   AreaEntitySchema,
@@ -10,6 +11,7 @@ import {
   LayerSchema,
   MapDocSchema,
   MapKindSchema,
+  PointSchema,
   type Entity,
   type Layer,
   type MapDoc,
@@ -327,6 +329,21 @@ registerCommand({
 });
 
 // --- Map Commands ---
+
+registerCommand({
+  name: 'map.measureRoute',
+  description: 'Measure a route in metre coordinates. Returns feet/miles, optional constant-speed travel duration and 24-hour arrival with day offset. Speed is miles/hour; departure is HH:MM. Read-only: creates no undo step or dirty files.',
+  input: z.object({
+    mapId: z.string().min(1),
+    points: z.array(PointSchema).min(2).max(10000),
+    speedMph: z.number().positive().finite().optional(),
+    departure: z.string().regex(CLOCK_TIME).optional(),
+  }),
+  run(draft, input) {
+    getMapOrThrow(draft, input.mapId);
+    return measureRoute(input.points, input.speedMph, input.departure);
+  },
+});
 
 const MapCreateInputSchema = z.object({
   id: z.string().min(1),

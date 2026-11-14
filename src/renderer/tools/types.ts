@@ -28,6 +28,7 @@ export function resolveTargetLayerId(
 
 export interface ToolContext {
   panelId: string;
+  worldId: string;
   map: MapDoc;
   camera: CameraState;
   getSelectedIds: () => string[];

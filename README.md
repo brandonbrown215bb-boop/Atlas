@@ -4,7 +4,7 @@ Offline Windows desktop worldbuilding editor built with Electron, React, TypeScr
 
 ## Current Status
 
-- **Implemented (Phases 0–1 and manual editing through P2.8):**
+- **Implemented (Phases 0–2):**
   - Electron + `electron-vite` + React 19 + strict TypeScript shell
   - Custom `app://` (production bundle) and `atlas-file://` (allowed-root-restricted asset loading) schemes
   - Dockview workspace with real popout windows, per-world layout persistence, off-screen display recovery, and light/dark theme syncing across all windows
@@ -17,9 +17,9 @@ Offline Windows desktop worldbuilding editor built with Electron, React, TypeScr
   - Manual selection and transforms, layers and inspector, area/path drawing, vertex editing and area add/subtract, walls, doors, lights and labels
   - Places with search, category filters and notes; child maps, interiors, portals, continuous zoom-through and pull-from-parent updates
   - SVG import with outline preview, per-shape area/path roles, real width in feet, editable-layer selection, compound-path holes and one-step undo (`map.importSvg` accepts flattened geometry through MCP)
+  - Temporary route measurement in feet/miles, speed in mph, travel duration and arrival time with day rollover; routes survive docking/popouts and never change saves or undo history (`map.measureRoute` through MCP)
 
-- **Next: P2.9 — measure tool. Remaining work (Phases 2–8):**
-  - Route measurement with distance, travel duration and arrival time
+- **Next: P3.1 — register loose asset folders. Remaining work (Phases 3–8):**
   - Cross-world copy/move/sync
   - Asset pack indexing (Forgotten Adventures / `.dungeondraft_pack`) and theme editor
   - Player/TV window, reveal brush, player-safe PNG export, and Universal VTT (`.dd2vtt`) export
@@ -58,3 +58,9 @@ This imports plain vector geometry, including paths and basic shapes. Text, embe
 ## Agent MCP Server
 
 When enabled (on by default), the main process serves an MCP Streamable HTTP endpoint on `http://127.0.0.1:<port>/mcp` requiring `Authorization: Bearer <token>`. View the URL, token, toggle, and ready-to-copy client config in the **Settings** panel.
+
+## Measure a Route
+
+Choose **Measure**, then click along a route. The readout previews the next segment under the cursor. Press **Enter**, double-click, or choose **Finish** to hold the result. **Backspace** removes the last point; **Esc** or **Clear** clears the route. Click after finishing to start another route.
+
+Distance displays feet below one mile and miles above it. Enter speed in miles per hour and a departure time for travel duration and arrival, including any days crossed. Estimates assume continuous travel at that speed; arrival rounds to the nearest minute. Measurements are temporary and stay out of world files, exports and undo history.

@@ -76,3 +76,11 @@ button:disabled {
 .svg-import-warning { color: var(--atlas-text-muted); }
 .svg-import-actions { justify-content: flex-end; margin-top: 16px; }
 .svg-import-dialog [role='alert'] { color: var(--atlas-danger); }
+
+.measure-bar { padding: 8px 10px; background: var(--atlas-surface); border-bottom: 1px solid var(--atlas-border); font-size: 12px; }
+.measure-controls, .measure-results { display: flex; align-items: center; flex-wrap: wrap; gap: 8px 14px; margin-bottom: 6px; }
+.measure-controls label { display: inline-flex; align-items: center; gap: 5px; }
+.measure-controls input { width: 80px; padding: 3px; background: var(--atlas-bg); color: var(--atlas-text); border: 1px solid var(--atlas-border); border-radius: 4px; }
+.measure-controls input[type='time'] { width: 105px; }
+.measure-results strong { color: var(--atlas-accent); }
+.measure-bar small { color: var(--atlas-text-muted); line-height: 1.5; }

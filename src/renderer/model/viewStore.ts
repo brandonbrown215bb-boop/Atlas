@@ -1,5 +1,5 @@
 import { createStore } from 'zustand/vanilla';
-import type { AreaRole, AssetsIndex, MapKind, PathRole } from './schema';
+import type { AreaRole, AssetsIndex, MapKind, PathRole, Point } from './schema';
 import type { CameraState } from '../render/camera';
 
 export type ToolId =
@@ -12,6 +12,7 @@ export type ToolId =
   | 'light'
   | 'label'
   | 'portal'
+  | 'measure'
   | 'developArea';
 export type DrawMode = 'click' | 'freehand';
 export type PointEditMode = 'edit' | 'add' | 'subtract';
@@ -26,6 +27,14 @@ export interface FocusPlaceRequest {
   mapId: string;
   placeId: string;
   nonce: number;
+}
+
+export interface MeasurementRoute {
+  worldId: string;
+  mapId: string;
+  points: Point[];
+  hover: Point | null;
+  finished: boolean;
 }
 
 export interface ViewStoreState {
@@ -59,6 +68,9 @@ export interface ViewStoreState {
   calibratingImageId: string | null;
   showPlaceCategoryOverlay: boolean;
   focusPlaceRequest: FocusPlaceRequest | null;
+  measurements: Record<string, MeasurementRoute>;
+  measureSpeedMph: string;
+  measureDeparture: string;
 
   setPanelMap: (panelId: string, mapId: string | null) => void;
   setPanelCamera: (panelId: string, camera: CameraState) => void;
@@ -94,6 +106,9 @@ export interface ViewStoreState {
   setCalibratingImageId: (entityId: string | null) => void;
   setShowPlaceCategoryOverlay: (show: boolean) => void;
   requestFocusPlace: (mapId: string, placeId: string) => void;
+  setMeasurement: (panelId: string, route: MeasurementRoute | null) => void;
+  setMeasureSpeedMph: (speed: string) => void;
+  setMeasureDeparture: (departure: string) => void;
 }
 
 export const viewStore = createStore<ViewStoreState>((set) => ({
@@ -124,6 +139,9 @@ export const viewStore = createStore<ViewStoreState>((set) => ({
   calibratingImageId: null,
   showPlaceCategoryOverlay: false,
   focusPlaceRequest: null,
+  measurements: {},
+  measureSpeedMph: '3',
+  measureDeparture: '08:00',
 
   setPanelMap(panelId, mapId) {
     set((state) => {
@@ -157,8 +175,11 @@ export const viewStore = createStore<ViewStoreState>((set) => ({
     set((state) => {
       const next = { ...state.panels };
       delete next[panelId];
+      const measurements = { ...state.measurements };
+      delete measurements[panelId];
       return {
         panels: next,
+        measurements,
         activeMapPanelId:
           state.activeMapPanelId === panelId ? null : state.activeMapPanelId,
       };
@@ -274,4 +295,14 @@ export const viewStore = createStore<ViewStoreState>((set) => ({
       },
     }));
   },
+  setMeasurement(panelId, route) {
+    set((state) => {
+      const measurements = { ...state.measurements };
+      if (route) measurements[panelId] = route;
+      else delete measurements[panelId];
+      return { measurements };
+    });
+  },
+  setMeasureSpeedMph(measureSpeedMph) { set({ measureSpeedMph }); },
+  setMeasureDeparture(measureDeparture) { set({ measureDeparture }); },
 }));

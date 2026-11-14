@@ -52,6 +52,7 @@ function makeFixture() {
   let selectedIds: string[] = [];
   const makeCtx = (): ToolContext => ({
     panelId: 'map-1',
+    worldId: 'w1',
     map: store.getState().world!.maps['m1']!,
     camera: { x: 0, y: 0, zoom: 10 },
     getSelectedIds: () => selectedIds,

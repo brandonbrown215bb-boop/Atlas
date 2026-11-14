@@ -401,6 +401,7 @@ export function App() {
         data-testid="tool-bar"
         style={{
           display: 'flex',
+          flexWrap: 'wrap',
           alignItems: 'center',
           gap: 8,
           padding: '4px 10px',
@@ -410,7 +411,7 @@ export function App() {
         }}
       >
         <span style={{ color: 'var(--atlas-text-muted)' }}>Tool:</span>
-        {(['select', 'area', 'path', 'pointEdit', 'wall', 'door', 'light', 'label', 'portal', 'developArea'] as ToolId[]).map((tool) => (
+        {(['select', 'area', 'path', 'pointEdit', 'wall', 'door', 'light', 'label', 'portal', 'developArea', 'measure'] as ToolId[]).map((tool) => (
           <button
             key={tool}
             type="button"

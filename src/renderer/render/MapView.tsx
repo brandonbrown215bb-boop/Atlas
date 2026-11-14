@@ -36,12 +36,14 @@ import { createDevelopAreaTool } from '../tools/developAreaTool';
 import { createDoorTool } from '../tools/doorTool';
 import { createLabelTool } from '../tools/labelTool';
 import { createLightTool } from '../tools/lightTool';
+import { createMeasureTool } from '../tools/measureTool';
 import { createPathTool } from '../tools/pathTool';
 import { createPointEditTool } from '../tools/pointEditTool';
 import { createPortalTool } from '../tools/portalTool';
 import { createSelectTool } from '../tools/selectTool';
 import { createWallTool } from '../tools/wallTool';
 import type { MapTool, ToolContext } from '../tools/types';
+import { MeasureBar } from '../panels/MeasureBar';
 
 export interface MapPanelParams {
   mapId?: string;
@@ -80,6 +82,7 @@ export function MapView(props: IDockviewPanelProps<MapPanelParams>) {
   const focusPlaceRequest = useStore(viewStore, (s) => s.focusPlaceRequest);
   const activeMapPanelId = useStore(viewStore, (s) => s.activeMapPanelId);
   const pendingDevelopRect = useStore(viewStore, (s) => s.pendingDevelopRect);
+  const measurement = useStore(viewStore, (s) => s.measurements[props.api.id]);
 
   const [calibLine, setCalibLine] = useState<{
     start: Point;
@@ -172,6 +175,8 @@ export function MapView(props: IDockviewPanelProps<MapPanelParams>) {
     placeOverlayContainer.eventMode = 'none';
     const overlayGfx = new Graphics();
     overlayGfx.eventMode = 'none';
+    const measureGfx = new Graphics();
+    measureGfx.eventMode = 'none';
 
     const selectTool = createSelectTool();
     const areaTool = createAreaTool();
@@ -183,6 +188,7 @@ export function MapView(props: IDockviewPanelProps<MapPanelParams>) {
     const labelTool = createLabelTool();
     const portalTool = createPortalTool();
     const developAreaTool = createDevelopAreaTool();
+    const measureTool = createMeasureTool();
     const getActiveTool = (): MapTool => {
       switch (activeToolIdRef.current) {
         case 'area':
@@ -203,6 +209,8 @@ export function MapView(props: IDockviewPanelProps<MapPanelParams>) {
           return portalTool;
         case 'developArea':
           return developAreaTool;
+        case 'measure':
+          return measureTool;
         default:
           return selectTool;
       }
@@ -259,6 +267,7 @@ export function MapView(props: IDockviewPanelProps<MapPanelParams>) {
 
     const buildToolContext = (m: MapDoc): ToolContext => ({
       panelId: props.api.id,
+      worldId: worldRef.current?.meta.id ?? '',
       map: m,
       camera: getCamera(),
       getSelectedIds: () => viewStore.getState().selectedEntityIds,
@@ -283,6 +292,7 @@ export function MapView(props: IDockviewPanelProps<MapPanelParams>) {
         placeOverlayContainer.removeChildren().forEach((c) => c.destroy({ children: true }));
         gridGfx.clear();
         overlayGfx.clear();
+        measureGfx.clear();
         return;
       }
 
@@ -503,7 +513,8 @@ export function MapView(props: IDockviewPanelProps<MapPanelParams>) {
           }
         }
       }
-      activeTool.drawOverlay(overlayGfx, buildToolContext(m));
+      measureGfx.clear();
+      activeTool.drawOverlay(activeTool.id === 'measure' ? measureGfx : overlayGfx, buildToolContext(m));
     };
 
     const scheduleRender = () => {
@@ -774,6 +785,7 @@ export function MapView(props: IDockviewPanelProps<MapPanelParams>) {
         worldLayer.addChild(childMapsContainer);
         worldLayer.addChild(placeOverlayContainer);
         worldLayer.addChild(overlayGfx);
+        worldLayer.addChild(measureGfx);
         app.stage.addChild(worldLayer);
 
         canvas.addEventListener('pointerdown', onPointerDown);
@@ -829,6 +841,7 @@ export function MapView(props: IDockviewPanelProps<MapPanelParams>) {
     activeToolId,
     showPlaceCategoryOverlay,
     pendingDevelopRect,
+    measurement,
     panelState?.camera,
   ]);
 
@@ -1018,6 +1031,7 @@ export function MapView(props: IDockviewPanelProps<MapPanelParams>) {
           )}
         </div>
       </div>
+      {activeToolId === 'measure' && map && world && <MeasureBar panelId={props.api.id} worldId={world.meta.id} mapId={map.id} />}
       <div
         style={{
           flex: 1,
