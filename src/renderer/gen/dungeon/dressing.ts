@@ -23,10 +23,20 @@ export function dressDungeon(input: GeneratorInput<DungeonParams>, layout: Entit
   const floors=layout.filter((e):e is Extract<Entity,{type:'area'}>=>e.type==='area'&&e.role==='floor'&&e.name!=='Corridor');
   const all=[...layout,...input.constraints];
   const walls=all.filter((e):e is Extract<Entity,{type:'wall'}>=>e.type==='wall');
+  const wallSegments=walls.flatMap(w=>w.points.slice(1).map((b,i)=>({
+    a:{x:w.points[i]!.x,y:w.points[i]!.y},b:{x:b.x,y:b.y},
+  })));
   const doors=all.filter((e):e is Extract<Entity,{type:'door'}>=>e.type==='door');
   const obstacles=all.filter(e=>e.type==='prop'||e.type==='image'||(e.type==='area'&&(e.role==='water'||e.role==='building')));
   const placed: Entity[]=[];
-  const wallDistance=(p:Point)=>Math.min(Infinity,...walls.flatMap(w=>w.points.slice(1).map((b,i)=>distanceToSegment(p,w.points[i]!,b))));
+  const wallDistances=new Map<Point,number>();
+  const wallDistance=(p:Point)=>{
+    const cached=wallDistances.get(p);
+    if(cached!==undefined)return cached;
+    const distance=Math.min(Infinity,...wallSegments.map(s=>distanceToSegment(p,s.a,s.b)));
+    wallDistances.set(p,distance);
+    return distance;
+  };
   for(const [roomIndex,floor] of floors.entries()) {
     const chosen=params.roomPurposes[floor.name ?? ''] ?? params.purpose;
     const purpose: Purpose=chosen==='random'?ROOM_PURPOSES[1+Math.floor(random()*(ROOM_PURPOSES.length-1))]! as Purpose:chosen;
@@ -60,7 +70,7 @@ export function dressDungeon(input: GeneratorInput<DungeonParams>, layout: Entit
         if(added>=count) break;
         if(placed.some(e=>e.type==='prop'&&Math.hypot(p.x-e.x,p.y-e.y)<radius*2+g*.15)) continue;
         const assets=themeAssets(input.theme,item.role), asset=assets[Math.floor(random()*assets.length)]!;
-        const nearest=walls.flatMap(w=>w.points.slice(1).map((b,i)=>({a:w.points[i]!,b})))
+        const nearest=[...wallSegments]
           .sort((a,b)=>distanceToSegment(p,a.a,a.b)-distanceToSegment(p,b.a,b.b))[0];
         placed.push({id:`dressing-${roomIndex}-${placed.length}`,type:'prop',origin:'generated',layerId:'generated',rev:0,
           name:`${purpose}: ${item.role}`, x:p.x,y:p.y,w:g*.7,h:g*.7,scale:1,flipX:false,
