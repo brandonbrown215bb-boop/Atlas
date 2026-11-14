@@ -1,5 +1,6 @@
 import { contextBridge, ipcRenderer } from 'electron';
 import type { AssetsIndex, MapDoc, WorldMeta } from '../renderer/model/schema';
+import type { Pack, PackProgress } from '../renderer/model/packs';
 
 export interface RecentWorldInfo {
   id: string;
@@ -26,6 +27,10 @@ export interface AgentServerInfo {
 }
 
 export interface AtlasApi {
+  listPacks: () => Promise<Pack[]>;
+  registerPack: (root: string) => Promise<Pack[]>;
+  setPackScale: (id: string, pxPerSquare: number) => Promise<Pack[]>;
+  onPackProgress: (handler: (progress: PackProgress) => void) => () => void;
   platform: NodeJS.Platform;
   closePopout: (frameName: string) => Promise<void>;
   pickFolder: (title?: string) => Promise<string | null>;
@@ -64,6 +69,14 @@ export interface AtlasApi {
 }
 
 const api: AtlasApi = {
+  listPacks: () => ipcRenderer.invoke('atlas:packs-list'),
+  registerPack: root => ipcRenderer.invoke('atlas:packs-register', root),
+  setPackScale: (id, pxPerSquare) => ipcRenderer.invoke('atlas:packs-scale', id, pxPerSquare),
+  onPackProgress: handler => {
+    const listener = (_event: Electron.IpcRendererEvent, progress: PackProgress) => handler(progress);
+    ipcRenderer.on('atlas:packs-progress', listener);
+    return () => ipcRenderer.removeListener('atlas:packs-progress', listener);
+  },
   platform: process.platform,
   closePopout: (frameName: string) => ipcRenderer.invoke('atlas:close-popout', frameName),
   pickFolder: (title?: string) => ipcRenderer.invoke('atlas:pick-folder', title),

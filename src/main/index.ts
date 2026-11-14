@@ -109,7 +109,7 @@ void app.whenReady().then(async () => {
   setupProtocolHandlers({
     rendererDir: join(__dirname, '../renderer'),
     getAllowedRoots: () => {
-      const roots = [app.getPath('userData')];
+      const roots = [app.getPath('userData'), ...worldIpc.getPackRoots()];
       const worldDir = worldIpc.getCurrentWorldDir();
       if (worldDir) {
         roots.push(worldDir);

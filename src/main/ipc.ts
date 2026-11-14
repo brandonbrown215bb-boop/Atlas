@@ -3,6 +3,7 @@ import { readFile, stat } from 'node:fs/promises';
 import { basename, join, resolve } from 'node:path';
 import { app, dialog, ipcMain, nativeImage, type BrowserWindow } from 'electron';
 import type { MapDoc, WorldMeta } from '../renderer/model/schema';
+import { PackLibrary } from './packs';
 import {
   addRecentWorld,
   atomicWriteFile,
@@ -24,11 +25,25 @@ export interface WorldIpcState {
   getCurrentWorldDir: () => string | null;
   createWorld: (worldDir: string, name: string) => unknown;
   openWorld: (worldDir: string) => unknown;
+  getPackRoots: () => string[];
 }
 
 export function registerWorldIpc(getMainWindow: () => BrowserWindow | null): WorldIpcState {
   let currentWorldDir: string | null = null;
   const userDataDir = () => app.getPath('userData');
+  const library = new PackLibrary(userDataDir());
+  const libraryReady = library.load();
+  ipcMain.handle('atlas:packs-list', async () => { await libraryReady; return library.packs; });
+  ipcMain.handle('atlas:packs-register', async (event, root: string) => {
+    await libraryReady;
+    return library.register(root, progress => {
+      if (!event.sender.isDestroyed()) event.sender.send('atlas:packs-progress', progress);
+    });
+  });
+  ipcMain.handle('atlas:packs-scale', async (_event, id: string, pxPerSquare: number) => {
+    await libraryReady;
+    return library.setScale(id, pxPerSquare);
+  });
 
   const recordRecent = (loaded: LoadedWorld, worldDir: string): RecentWorldEntry[] => {
     return addRecentWorld(userDataDir(), {
@@ -221,6 +236,7 @@ export function registerWorldIpc(getMainWindow: () => BrowserWindow | null): Wor
   });
 
   return {
+    getPackRoots: () => library.packs.map(p => p.root),
     getCurrentWorldDir: () => currentWorldDir,
     createWorld: doCreateWorld,
     openWorld: doOpenWorld,

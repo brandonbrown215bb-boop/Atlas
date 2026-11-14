@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react';
 import type { IDockviewPanelProps } from 'dockview-react';
+import { PackSettings } from './PackSettings';
 
 type AgentServerInfo = Awaited<ReturnType<typeof window.atlasApi.getAgentInfo>>;
 
@@ -53,6 +54,7 @@ export function SettingsPanel(props: IDockviewPanelProps) {
         background: 'var(--atlas-bg)',
         color: 'var(--atlas-text)',
         fontSize: 12,
+        overflow: 'auto',
       }}
     >
       <div
@@ -116,6 +118,7 @@ export function SettingsPanel(props: IDockviewPanelProps) {
           </>
         )}
       </div>
+      <PackSettings />
     </div>
   );
 }
