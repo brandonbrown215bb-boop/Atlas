@@ -5,6 +5,7 @@ import { listGenerators } from '../gen/framework';
 import { DungeonParamsSchema, type DungeonParams } from '../gen/dungeon/layout';
 import { ROOM_PURPOSES } from '../gen/dungeon/dressing';
 import { OutdoorParamsSchema } from '../gen/glade/outdoor';
+import { TerrainParamsSchema } from '../gen/world/terrain';
 import { bboxFromPoints } from '../geom/hitTest';
 import { previewInterior } from '../gen/dungeon/interior';
 import type { MapDoc, Theme } from '../model/schema';
@@ -26,6 +27,7 @@ export function GeneratorPanel(props: IDockviewPanelProps) {
   const [seed, setSeed] = useState(1);
   const [params, setParams] = useState(DungeonParamsSchema.parse({}));
   const [outdoor, setOutdoor] = useState(OutdoorParamsSchema.parse({}));
+  const [terrain, setTerrain] = useState(TerrainParamsSchema.parse({}));
   const [themeName, setThemeName] = useState('default');
   const [runId, setRunId] = useState('');
   const [placeId, setPlaceId] = useState('');
@@ -34,7 +36,8 @@ export function GeneratorPanel(props: IDockviewPanelProps) {
   const map = mapId ? world?.maps[mapId] : undefined;
   const record = map?.generators[runId];
   const isOutdoor = type === 'glade';
-  const activeParams = isOutdoor ? outdoor : params;
+  const isWorld = type === 'world';
+  const activeParams = isWorld ? terrain : isOutdoor ? outdoor : params;
   const hasDressing = !!definitions.find(d => d.type === record?.type)?.dress;
   const regionId = selectedIds.find(id => map?.entities[id]?.type === 'area');
   const selectedArea = regionId ? map?.entities[regionId] : undefined;
@@ -89,7 +92,7 @@ export function GeneratorPanel(props: IDockviewPanelProps) {
   return <div data-testid={`panel-${props.api.id}`} style={{ height: '100%', overflow: 'auto', fontSize: 12 }}>
     <PanelHeaderBar title="Generator" panelProps={props} />
     <div style={{ display: 'flex', flexDirection: 'column', gap: 8, padding: 10 }}>
-      <p>Select an area on a site for woodland, a site/interior footprint for rooms, or a settlement building to preview its interior. Edits survive rerolls.</p>
+      <p>Select a world/region area for a continent, a site area for woodland, or a site/interior footprint for rooms. Settlement buildings can preview interiors. Edits survive rerolls.</p>
       <label>Generator <select aria-label="Generator type" value={type} onChange={e => { setType(e.target.value); setRunId(''); setPreview(null); }}>
         {definitions.map(g => <option key={g.type} value={g.type}>{g.title}</option>)}
       </select></label>
@@ -97,7 +100,10 @@ export function GeneratorPanel(props: IDockviewPanelProps) {
         {[...new Set(['default', ...Object.keys(world?.meta.themes ?? {})])].map(name => <option key={name}>{name}</option>)}
       </select></label>
       <label>Seed <input aria-label="Generator seed" type="number" value={seed} onChange={e => setSeed(Number(e.target.value))} /></label>
-      {isOutdoor ? <>
+      {isWorld ? <>
+        <label>Sea level <input aria-label="Sea level" type="number" min={.15} max={.85} step={.05} value={terrain.seaLevel} onChange={e => setTerrain({ ...terrain, seaLevel: Number(e.target.value) })} /></label>
+        <label>Ruggedness <input aria-label="Ruggedness" type="number" min={0} max={1} step={.05} value={terrain.ruggedness} onChange={e => setTerrain({ ...terrain, ruggedness: Number(e.target.value) })} /></label>
+      </> : isOutdoor ? <>
         <label>Clearings <input aria-label="Clearing count" type="number" min={1} max={20} value={outdoor.clearings} onChange={e => setOutdoor({ ...outdoor, clearings: Number(e.target.value) })} /></label>
         <label>Tree density <input aria-label="Tree density" type="number" min={0} max={3} step={.25} value={outdoor.density} onChange={e => setOutdoor({ ...outdoor, density: Number(e.target.value) })} /></label>
         <label><input aria-label="Outdoor water" type="checkbox" checked={outdoor.water} onChange={e => setOutdoor({ ...outdoor, water: e.target.checked })} />Water</label>
@@ -127,7 +133,7 @@ export function GeneratorPanel(props: IDockviewPanelProps) {
       </select></label>
       <label>Dressing density <input aria-label="Dressing density" type="number" min={0} max={3} step={0.25} value={params.density} onChange={e => setParams({ ...params, density: Number(e.target.value) })} /></label>
       </>}
-      {isBuilding && !isOutdoor ? <>
+      {isBuilding && !isOutdoor && !isWorld ? <>
         {linkedPlaces.length > 1 && <label>Place <select aria-label="Interior place" value={place?.id ?? ''} onChange={e => setPlaceId(e.target.value)}>
           <option value="">Choose a place</option>{linkedPlaces.map(p => <option key={p.id} value={p.id}>{p.name}</option>)}
         </select></label>}
@@ -142,15 +148,15 @@ export function GeneratorPanel(props: IDockviewPanelProps) {
           </>}
         </>}
       </> : <>
-        {!isOutdoor && selectedArea?.type === 'area' && selectedArea.role === 'floor' && selectedArea.name && <label>{selectedArea.name} purpose <select aria-label="Selected room purpose"
+        {!isWorld && !isOutdoor && selectedArea?.type === 'area' && selectedArea.role === 'floor' && selectedArea.name && <label>{selectedArea.name} purpose <select aria-label="Selected room purpose"
           value={params.roomPurposes[selectedArea.name] ?? params.purpose} onChange={e => setParams({ ...params, roomPurposes: { ...params.roomPurposes, [selectedArea.name!]: e.target.value as typeof params.purpose } })}>
           {ROOM_PURPOSES.map(p => <option key={p} value={p}>{p}</option>)}
         </select></label>}
-        <button disabled={!map || !regionId || !type || !(isOutdoor ? ['site'] : ['site','interior']).includes(map.kind)} onClick={() =>
+        <button disabled={!map || !regionId || !type || !(isWorld ? ['world', 'region'] : isOutdoor ? ['site'] : ['site','interior']).includes(map.kind)} onClick={() =>
           call('generator.run', { type, seed, params: activeParams, themeName, regionEntityId: regionId, layerId: layerId ?? map?.layers[0]?.id })}>Generate</button>
         <label>Existing run <select aria-label="Generator run" value={record ? runId : ''} onChange={e => {
           setRunId(e.target.value); const r = map?.generators[e.target.value];
-          if (r) { setType(r.type); setSeed(r.seed); if (r.type === 'glade') setOutdoor(OutdoorParamsSchema.parse(r.params)); else setParams(DungeonParamsSchema.parse(r.params)); setThemeName(r.themeName ?? 'default'); }
+          if (r) { setType(r.type); setSeed(r.seed); if (r.type === 'world') setTerrain(TerrainParamsSchema.parse(r.params)); else if (r.type === 'glade') setOutdoor(OutdoorParamsSchema.parse(r.params)); else setParams(DungeonParamsSchema.parse(r.params)); setThemeName(r.themeName ?? 'default'); }
         }}><option value="">Choose a run</option>{Object.entries(map?.generators ?? {}).map(([id, r]) => <option key={id} value={id}>{r.type} · {r.seed}</option>)}</select></label>
         <button disabled={!record} onClick={() => reroll(false)}>Reroll</button>
         {hasDressing && <>

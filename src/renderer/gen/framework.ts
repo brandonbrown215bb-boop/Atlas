@@ -45,7 +45,9 @@ export function runGenerator(map: MapDoc, options: {
   regionEntityId: string; layerId: string; theme: Theme; themeName?: string; dressingOnly?: boolean;
 }): string[] {
   if (options.type === 'glade' && map.kind !== 'site') throw new Error('Outdoor generators need a site map.');
-  if (map.kind !== 'site' && map.kind !== 'interior') throw new Error('Generators need a site or interior map.');
+  if (options.type === 'world' ? !['world', 'region'].includes(map.kind) : map.kind !== 'site' && map.kind !== 'interior') {
+    throw new Error(options.type === 'world' ? 'World generators need a world or region map.' : 'Generators need a site or interior map.');
+  }
   const region = map.entities[options.regionEntityId];
   if (region?.type !== 'area') throw new Error('Choose an area as the generator footprint.');
   const layer = map.layers.find(l => l.id === options.layerId);

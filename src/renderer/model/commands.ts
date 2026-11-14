@@ -2,6 +2,7 @@ import { planSync } from './sync';
 import { getGenerator, regionConstraints, runGenerator } from '../gen/framework';
 import '../gen/dungeon/layout';
 import '../gen/glade/outdoor';
+import '../gen/world/terrain';
 import { previewInterior } from '../gen/dungeon/interior';
 import { pointInPolygon } from '../geom/hitTest';
 import { validateWorld, WorldDocumentSchema } from './transfer';
