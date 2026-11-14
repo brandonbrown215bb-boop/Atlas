@@ -5,7 +5,7 @@ import { z } from 'zod';
 import { bboxFromPoints, pointInPolygon } from '../../geom/hitTest';
 import { fromPolygons, toPolygons } from '../../geom/fog';
 import type { Entity, Point } from '../../model/schema';
-import { registerGenerator, type GeneratorInput } from '../framework';
+import type { GeneratorInput } from '../framework';
 import { mulberry32 } from '../rng';
 import { traceCellBoundaries } from './boundaries';
 
@@ -39,9 +39,9 @@ export function buildTerrain(input: GeneratorInput<TerrainParams>): Terrain {
     points.push([(x + .15 + random() * .7) / cols * w / size, (y + .15 + random() * .7) / rows * h / size]);
   }
   const delaunay = Delaunay.from(points), voronoi = delaunay.voronoi([0, 0, w / size, h / size]);
-  const overrides = input.constraints.filter((e): e is Area => e.type === 'area' && (e.role === 'land' || e.role === 'water'));
+  const overrides = input.constraints.filter((e): e is Area => e.type === 'area' && (e.role === 'land' || e.role === 'water' || e.role.startsWith('biome:')));
   const wet = overrides.flatMap(e => e.role === 'water' ? [e.rings] : e.rings.slice(1).map(r => [r]));
-  const dry = overrides.filter(e => e.role === 'land').map(e => e.rings);
+  const dry = overrides.filter(e => e.role !== 'water').map(e => e.rings);
   const cells: TerrainCell[] = points.map(([px, py], i) => {
     const x = px * size / w, y = py * size / h;
     const wx = x + noise(x * 2 + 31, y * 2) * .17, wy = y + noise(x * 2, y * 2 + 41) * .17;
@@ -72,5 +72,3 @@ export function terrainEntities(terrain: Terrain): Entity[] {
   ];
 }
 
-registerGenerator({ type: 'world', title: 'World / continent', params: TerrainParamsSchema,
-  generate: input => terrainEntities(buildTerrain(input)) });

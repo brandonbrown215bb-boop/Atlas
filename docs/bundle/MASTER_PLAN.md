@@ -4,7 +4,7 @@ Written for an implementing agent. Read sections 1–5 fully before writing any 
 
 Source material: `MAP_EDITOR_BRIEF.md` (what the user wants), `TECH_STACK_AND_OPEN_QUESTIONS.md`, `reference-maps/`. Where this plan and the brief disagree, this plan wins: it records decisions made after the brief.
 
-Implementation progress: completed through **P6.1 Outdoor location (Phase 6)**. Stop here; phase 7 is outside the current request. Human forest/pyramid comparisons, real-art, second-machine and Foundry checks remain in `USER_CHECKS.md`.
+Implementation progress: completed through **P7.2 Climate and rivers**. Verification passes: 138 unit tests, production build and all 21 Electron tests. The dungeon-dressing timeout is fixed without changing its assertions or timeout; see `BLOCKERS.md`. P7.3 and P7.4 have not been started. Human continent/forest/pyramid comparisons, real-art, second-machine and Foundry checks remain in `USER_CHECKS.md`.
 
 ---
 

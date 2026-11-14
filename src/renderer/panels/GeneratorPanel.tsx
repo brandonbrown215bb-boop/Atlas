@@ -5,7 +5,8 @@ import { listGenerators } from '../gen/framework';
 import { DungeonParamsSchema, type DungeonParams } from '../gen/dungeon/layout';
 import { ROOM_PURPOSES } from '../gen/dungeon/dressing';
 import { OutdoorParamsSchema } from '../gen/glade/outdoor';
-import { TerrainParamsSchema } from '../gen/world/terrain';
+import { WorldParamsSchema } from '../gen/world/world';
+import { WorldClimateEditor } from './WorldClimateEditor';
 import { bboxFromPoints } from '../geom/hitTest';
 import { previewInterior } from '../gen/dungeon/interior';
 import type { MapDoc, Theme } from '../model/schema';
@@ -27,7 +28,7 @@ export function GeneratorPanel(props: IDockviewPanelProps) {
   const [seed, setSeed] = useState(1);
   const [params, setParams] = useState(DungeonParamsSchema.parse({}));
   const [outdoor, setOutdoor] = useState(OutdoorParamsSchema.parse({}));
-  const [terrain, setTerrain] = useState(TerrainParamsSchema.parse({}));
+  const [terrain, setTerrain] = useState(WorldParamsSchema.parse({}));
   const [themeName, setThemeName] = useState('default');
   const [runId, setRunId] = useState('');
   const [placeId, setPlaceId] = useState('');
@@ -103,6 +104,9 @@ export function GeneratorPanel(props: IDockviewPanelProps) {
       {isWorld ? <>
         <label>Sea level <input aria-label="Sea level" type="number" min={.15} max={.85} step={.05} value={terrain.seaLevel} onChange={e => setTerrain({ ...terrain, seaLevel: Number(e.target.value) })} /></label>
         <label>Ruggedness <input aria-label="Ruggedness" type="number" min={0} max={1} step={.05} value={terrain.ruggedness} onChange={e => setTerrain({ ...terrain, ruggedness: Number(e.target.value) })} /></label>
+        <label><input aria-label="World rivers" type="checkbox" checked={terrain.rivers} onChange={e => setTerrain({ ...terrain, rivers: e.target.checked })} />Rivers</label>
+        {terrain.rivers && <label>River flow threshold <input aria-label="River flow threshold" type="number" min={2} max={200} value={terrain.riverThreshold} onChange={e => setTerrain({ ...terrain, riverThreshold: Number(e.target.value) })} /></label>}
+        <WorldClimateEditor />
       </> : isOutdoor ? <>
         <label>Clearings <input aria-label="Clearing count" type="number" min={1} max={20} value={outdoor.clearings} onChange={e => setOutdoor({ ...outdoor, clearings: Number(e.target.value) })} /></label>
         <label>Tree density <input aria-label="Tree density" type="number" min={0} max={3} step={.25} value={outdoor.density} onChange={e => setOutdoor({ ...outdoor, density: Number(e.target.value) })} /></label>
@@ -156,7 +160,7 @@ export function GeneratorPanel(props: IDockviewPanelProps) {
           call('generator.run', { type, seed, params: activeParams, themeName, regionEntityId: regionId, layerId: layerId ?? map?.layers[0]?.id })}>Generate</button>
         <label>Existing run <select aria-label="Generator run" value={record ? runId : ''} onChange={e => {
           setRunId(e.target.value); const r = map?.generators[e.target.value];
-          if (r) { setType(r.type); setSeed(r.seed); if (r.type === 'world') setTerrain(TerrainParamsSchema.parse(r.params)); else if (r.type === 'glade') setOutdoor(OutdoorParamsSchema.parse(r.params)); else setParams(DungeonParamsSchema.parse(r.params)); setThemeName(r.themeName ?? 'default'); }
+          if (r) { setType(r.type); setSeed(r.seed); if (r.type === 'world') setTerrain(WorldParamsSchema.parse(r.params)); else if (r.type === 'glade') setOutdoor(OutdoorParamsSchema.parse(r.params)); else setParams(DungeonParamsSchema.parse(r.params)); setThemeName(r.themeName ?? 'default'); }
         }}><option value="">Choose a run</option>{Object.entries(map?.generators ?? {}).map(([id, r]) => <option key={id} value={id}>{r.type} · {r.seed}</option>)}</select></label>
         <button disabled={!record} onClick={() => reroll(false)}>Reroll</button>
         {hasDressing && <>

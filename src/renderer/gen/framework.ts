@@ -1,6 +1,6 @@
 import { z } from 'zod';
 import { boxesIntersect, getEntityBounds } from '../geom/hitTest';
-import { EntitySchema, type Entity, type MapDoc, type Point, type Theme } from '../model/schema';
+import { EntitySchema, type Climate, type Entity, type MapDoc, type Point, type Theme } from '../model/schema';
 
 export interface GeneratorInput<P> {
   seed: number;
@@ -9,6 +9,7 @@ export interface GeneratorInput<P> {
   constraints: Entity[];
   theme: Theme;
   grid: number;
+  climate?: { settings?: Climate; bounds: MapDoc['bounds']; transforms: Array<{ x: number; y: number; rotation: number }> };
 }
 export type Generator<P> = (input: GeneratorInput<P>) => Entity[];
 export interface GeneratorDefinition<P = any> {
@@ -43,6 +44,7 @@ export function regionConstraints(map: MapDoc, region: Point[][], excludeId: str
 export function runGenerator(map: MapDoc, options: {
   genId: string; type: string; seed: number; params: Record<string, unknown>;
   regionEntityId: string; layerId: string; theme: Theme; themeName?: string; dressingOnly?: boolean;
+  climate?: GeneratorInput<unknown>['climate'];
 }): string[] {
   if (options.type === 'glade' && map.kind !== 'site') throw new Error('Outdoor generators need a site map.');
   if (options.type === 'world' ? !['world', 'region'].includes(map.kind) : map.kind !== 'site' && map.kind !== 'interior') {
@@ -54,7 +56,7 @@ export function runGenerator(map: MapDoc, options: {
   if (!layer?.visible || layer.locked) throw new Error('Choose a visible, unlocked layer.');
   const definition = getGenerator(options.type);
   const input: GeneratorInput<unknown> = { seed: options.seed, params: definition.params.parse(options.params),
-    region: region.rings, constraints: regionConstraints(map, region.rings, region.id), theme: options.theme, grid: map.grid.size };
+    region: region.rings, constraints: regionConstraints(map, region.rings, region.id), theme: options.theme, grid: map.grid.size, climate: options.climate };
   const previous = Object.values(map.entities).filter(e => e.genId === options.genId && e.origin === 'generated');
   if (previous.some(e => map.layers.find(l => l.id === e.layerId)?.locked)) throw new Error('Unlock the generated layers before rerolling.');
   if (options.dressingOnly && !definition.dress) throw new Error('This generator has no dressing pass.');
@@ -82,5 +84,13 @@ export function runGenerator(map: MapDoc, options: {
   }
   map.generators[options.genId] = { type: options.type, seed: options.seed, params: options.params,
     regionEntityId: region.id, layerId: layer.id, themeName: options.themeName ?? 'default' };
+  if (options.type === 'world') {
+    // Paint terrain beneath deliberate edits, with rivers and symbols above the area fills.
+    const outputIds = new Set(ids), entities = Object.values(map.entities);
+    const backgrounds = entities.filter(e => outputIds.has(e.id) && e.type === 'area');
+    const foregrounds = entities.filter(e => outputIds.has(e.id) && e.type !== 'area');
+    const kept = entities.filter(e => e.id !== region.id && !outputIds.has(e.id));
+    map.entities = Object.fromEntries([region, ...backgrounds, ...kept, ...foregrounds].map(e => [e.id, e]));
+  }
   return ids;
 }

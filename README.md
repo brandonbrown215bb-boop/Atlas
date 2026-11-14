@@ -35,7 +35,7 @@ Offline Windows desktop worldbuilding editor built with Electron, React, TypeScr
   - Settlement building interiors with disposable previews, reroll/cancel, and one-command acceptance into a child map linked to the building's place
   - Outdoor woodland generator with numbered connected clearings, winding entrance trails, boundary trees and scattered trees, optional stream/pond, and themed bridges; manual areas, paths and props survive rerolls
 
-- **Completed through Phase 6.** World/continent generation (phase 7) has not been started. The forest/pyramid comparisons, real-art appearance, Foundry import, TV and second-PC checks remain in `USER_CHECKS.md`.
+- **Completed through P7.2 climate and rivers.** World/region area footprints can generate seeded continents with traced coasts, holes, manual land/water overrides, custom biome tables and downhill rivers. World climate settings persist and manual biomes survive rerolls. All automated checks pass; see `BLOCKERS.md`. Decoration, settlement suggestions and re-climate transfers remain unfinished. Human visual comparisons, real-art, Foundry, TV and second-PC checks remain in `USER_CHECKS.md`.
 
 ## Development
 

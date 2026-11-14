@@ -29,6 +29,8 @@ test('phase 7: continent commands, UI settings, manual lake reroll, undo and sav
     await command('generator.run', { mapId: 'continent', genId: 'terrain', type: 'world', seed: 9, params: {}, regionEntityId: 'footprint', layerId: 'layer-base' });
     const generated: MapDoc = await call('map_get', { mapId: 'continent' });
     expect(Object.values(generated.entities).some(e => e.type === 'area' && e.role === 'land' && e.origin === 'generated')).toBe(true);
+    expect(Object.values(generated.entities).some(e => e.type === 'area' && e.role.startsWith('biome:'))).toBe(true);
+    expect(Object.values(generated.entities).some(e => e.type === 'path' && e.role === 'river')).toBe(true);
     await command('entity.add', { mapId: 'continent', entity: { id: 'lake', type: 'area', role: 'water', origin: 'manual', layerId: 'layer-base', rev: 0,
       rings: [[{ x: 400000, y: 300000 }, { x: 600000, y: 300000 }, { x: 600000, y: 500000 }, { x: 400000, y: 500000 }]] } });
     const before: MapDoc = await call('map_get', { mapId: 'continent' });
@@ -42,7 +44,15 @@ test('phase 7: continent commands, UI settings, manual lake reroll, undo and sav
     await main.getByLabel('Generator run').selectOption('terrain');
     await expect(main.getByLabel('Generator type')).toHaveValue('world');
     await expect(main.getByLabel('Sea level')).toHaveValue('0.45');
+    await main.getByText('World climate and biome table', { exact: true }).click();
+    await main.getByLabel('Temperature bias').fill('-0.4');
+    await main.getByRole('button', { name: 'Add custom biome rule', exact: true }).click();
+    await main.getByLabel('Biome 1 name', { exact: true }).fill('crystal wastes');
+    await main.getByRole('button', { name: 'Apply world climate', exact: true }).click();
+    await expect(main.getByTestId('panel-generator').getByRole('alert')).toHaveCount(0);
+    // The climate command is a separate undo step from the terrain reroll.
     await main.getByLabel('Sea level').fill('0.5');
+    await main.getByText('World climate and biome table', { exact: true }).click();
     await main.getByRole('button', { name: 'Reroll', exact: true }).click();
     await expect(main.getByTestId('panel-generator').getByRole('alert')).toHaveCount(0);
     const rerolled: MapDoc = await call('map_get', { mapId: 'continent' });
@@ -61,5 +71,8 @@ test('phase 7: continent commands, UI settings, manual lake reroll, undo and sav
     await main.getByTestId('btn-save-now').click();
     await expect(main.getByTestId('save-status')).toContainText('Saved');
     expect(JSON.parse(readFileSync(join(dir, 'world', 'maps', 'continent.json'), 'utf8'))).toEqual(rerolled);
+    const savedClimate = JSON.parse(readFileSync(join(dir, 'world', 'world.json'), 'utf8')).climate;
+    expect(savedClimate.temperature).toBe(-.4);
+    expect(savedClimate.biomes[0].name).toBe('crystal wastes');
   } finally { await client.close(); await app.close(); }
 });

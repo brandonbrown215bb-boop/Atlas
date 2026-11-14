@@ -1,5 +1,10 @@
 # User Checks
 
+## Phase 7 — Terrain, climate and rivers (through P7.2)
+
+- On a world or region map with continent-scale bounds, draw/select a footprint area and choose **World / continent** in Generator. Try several seeds, sea levels and ruggedness values. Draw a manual water area through the centre, reroll, and check that its exact shape remains water; compare the result with `docs/bundle/reference-maps/02-world-map.jpg`. Check undo/redo and saving.
+- Open **World climate and biome table**, change temperature/moisture biases and latitude, add a custom biome rule, apply settings, then reroll. Check the resulting colors and river density; draw a manual biome area and confirm it survives rerolls. Decoration and re-climate transfers are not implemented yet.
+
 ## Phase 6 — Outdoor locations
 
 - On a site map, select a footprint around 260 × 210 ft and choose **Outdoor woodland**. Generate six clearings with water on, then try several seeds and tree densities. Compare the connected numbered clearings, winding trails, tree bands, stream bridges and pond with `docs/bundle/reference-maps/01-procedural-forest-inspiration.jpg`. Judge the shape and spacing, then try your real `tree`/`bridge` theme art.

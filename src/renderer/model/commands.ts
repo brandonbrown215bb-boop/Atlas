@@ -2,7 +2,8 @@ import { planSync } from './sync';
 import { getGenerator, regionConstraints, runGenerator } from '../gen/framework';
 import '../gen/dungeon/layout';
 import '../gen/glade/outdoor';
-import '../gen/world/terrain';
+import '../gen/world/world';
+import { climateContext } from '../gen/world/context';
 import { previewInterior } from '../gen/dungeon/interior';
 import { pointInPolygon } from '../geom/hitTest';
 import { validateWorld, WorldDocumentSchema } from './transfer';
@@ -21,6 +22,7 @@ import {
   MapDocSchema,
   MapKindSchema,
   PointSchema,
+  ClimateSchema,
   type Entity,
   type Layer,
   type MapDoc,
@@ -87,7 +89,7 @@ function getMapOrThrow(draft: WorldDocument, mapId: string): MapDoc {
 
 registerCommand({
   name: 'generator.run',
-  description: 'Generate dungeon/interior or glade outdoor content inside an area. One undo step; manual and inherited entities are constraints. Glade params: clearings, density, water, stream, pond, entrances (boundary points in metres; empty means north/south).',
+  description: 'Generate world/continent terrain, climate and rivers (world/region maps), dungeon/interior or glade woodland inside an area. One undo step; manual edits survive. World params: cells (default 8000), seaLevel, ruggedness, rivers, riverThreshold. Climate comes from world.setClimate. Glade params: clearings, density, water, stream, pond, entrances (metres).',
   input: z.object({ mapId: z.string().min(1), genId: z.string().min(1).optional(), type: z.string().min(1),
     seed: z.number().int(), params: z.record(z.string(), z.unknown()).default({}), regionEntityId: z.string().min(1),
     layerId: z.string().min(1), themeName: z.string().min(1).default('default') }),
@@ -95,7 +97,7 @@ registerCommand({
     const map = getMapOrThrow(draft, input.mapId);
     const genId = input.genId ?? crypto.randomUUID();
     if (map.generators[genId]) throw new Error('Use generator.reroll for an existing run.');
-    const ids = runGenerator(map, { ...input, genId, theme: draft.meta.themes[input.themeName] ?? {} });
+    const ids = runGenerator(map, { ...input, genId, theme: draft.meta.themes[input.themeName] ?? {}, climate: climateContext(draft, map) });
     return { genId, ids };
   },
 });
@@ -109,9 +111,15 @@ registerCommand({
     if (!record) throw new Error('Generator run not found.');
     const themeName = input.themeName ?? record.themeName ?? 'default';
     const ids = runGenerator(map, { ...record, ...input, params: input.params ?? record.params,
-      layerId: record.layerId ?? map.layers[0]!.id, themeName, theme: draft.meta.themes[themeName] ?? {} });
+      layerId: record.layerId ?? map.layers[0]!.id, themeName, theme: draft.meta.themes[themeName] ?? {}, climate: climateContext(draft, map) });
     return { genId: input.genId, ids };
   },
+});
+registerCommand({
+  name: 'world.setClimate',
+  description: 'Set world temperature/moisture biases (-0.8 to 0.8), north/south latitude, and first-match biome rules with custom names and colors. Reroll a continent to apply. Transfers can re-climate generated biomes on arrival.',
+  input: z.object({ climate: ClimateSchema }),
+  run(draft, input) { draft.meta.climate = input.climate; return input.climate; },
 });
 registerCommand({
   name: 'generator.accept',

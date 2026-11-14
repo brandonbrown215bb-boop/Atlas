@@ -244,6 +244,31 @@ export const WorldMapSummarySchema = z.object({
 });
 export type WorldMapSummary = z.infer<typeof WorldMapSummarySchema>;
 
+export const BiomeRuleSchema = z.object({
+  name: z.string().trim().min(1).max(80),
+  temperatureMin: z.number().min(0).max(1).default(0),
+  temperatureMax: z.number().min(0).max(1).default(1),
+  moistureMin: z.number().min(0).max(1).default(0),
+  moistureMax: z.number().min(0).max(1).default(1),
+  color: z.string().regex(/^#[0-9a-fA-F]{6}$/).default('#8f9d70'),
+}).refine(r => r.temperatureMin <= r.temperatureMax && r.moistureMin <= r.moistureMax, 'Biome minimum must not exceed maximum.');
+export const DEFAULT_BIOMES = [
+  { name: 'snow', temperatureMax: .18, color: '#d9e3dc' },
+  { name: 'tundra', temperatureMax: .3, color: '#a8b2a0' },
+  { name: 'desert', moistureMax: .25, color: '#cdb77d' },
+  { name: 'rainforest', temperatureMin: .7, moistureMin: .6, color: '#416d51' },
+  { name: 'forest', moistureMin: .52, color: '#648260' },
+  { name: 'grassland', color: '#9eaa76' },
+].map(r => BiomeRuleSchema.parse(r));
+export const ClimateSchema = z.object({
+  temperature: z.number().min(-.8).max(.8).default(0),
+  moisture: z.number().min(-.8).max(.8).default(0),
+  northLatitude: z.number().min(-90).max(90).default(70),
+  southLatitude: z.number().min(-90).max(90).default(-40),
+  biomes: z.array(BiomeRuleSchema).min(1).max(40).default(DEFAULT_BIOMES),
+});
+export type Climate = z.infer<typeof ClimateSchema>;
+
 export const WorldMetaSchema = z.object({
   formatVersion: z.number().int().positive(),
   id: z.string().min(1),
@@ -256,6 +281,7 @@ export const WorldMetaSchema = z.object({
     .optional(),
   maps: z.array(WorldMapSummarySchema),
   themes: z.record(z.string(), ThemeSchema),
+  climate: ClimateSchema.optional(),
 });
 export type WorldMeta = z.infer<typeof WorldMetaSchema>;
 
