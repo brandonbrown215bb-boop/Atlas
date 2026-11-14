@@ -24,12 +24,13 @@ export function TransferPanel() {
   const [choices,setChoices]=useState<Record<string,'mine'|'theirs'>>({});
   useEffect(()=>{setPreview(null);setChoices({});},[mapId,world?.meta.id]);
   const [underneath,setUnderneath]=useState<'replace'|'merge'>('replace');
+  const [reClimate,setReClimate]=useState(false);
   const pick=async()=>{
     try {const dir=await window.atlasApi.pickFolder('Choose target world');if(!dir)return;const result=await window.atlasApi.readTransferWorld(dir);setTarget(dir);setTargetWorld(result.world);setParent('');setReport('');}catch(e){setReport((e as Error).message);}
   };
   const transfer=async()=>{
     if(!mapId)return;setBusy(true);setReport('');
-    try {const result=await copyMapToWorld(target,{mapId,mode,placement:parent?{parentMapId:parent,x,y,rotation:rotation*Math.PI/180,scale,underneath,seamMargin:margin}:undefined});setReport(`Map tree ${mode==='move'?'moved':mode==='linked'?'linked':'copied'} to ${targetWorld?.meta.name}. Map: ${result.mapId}`);}catch(e){setReport((e as Error).message);}finally{setBusy(false);}
+    try {const result=await copyMapToWorld(target,{mapId,mode,placement:parent?{parentMapId:parent,x,y,rotation:rotation*Math.PI/180,scale,underneath,seamMargin:margin,reClimate}:undefined});setReport(`Map tree ${mode==='move'?'moved':mode==='linked'?'linked':'copied'} to ${targetWorld?.meta.name}. Map: ${result.mapId}`);}catch(e){setReport((e as Error).message);}finally{setBusy(false);}
   };
   const fork=async()=>{
     try {const dir=await window.atlasApi.pickFolder('Choose an empty folder for the world fork');if(!dir)return;setBusy(true);const result=await forkOpenWorld(dir,`${world?.meta.name} Fork`);setReport(`Fork saved to ${result.worldDir}`);}catch(e){setReport((e as Error).message);}finally{setBusy(false);}
@@ -57,6 +58,8 @@ export function TransferPanel() {
       {parent&&<>
         {([['X (m)',x,setX],['Y (m)',y,setY],['Rotation (degrees)',rotation,setRotation],['Scale',scale,setScale],['Seam margin (m)',margin,setMargin]] as const).map(([label,value,setter])=><label key={label}>{label}<input aria-label={label} type="number" style={{width:65}} value={value} onChange={e=>setter(Number(e.target.value))}/></label>)}
         <select aria-label="Underlying geography" value={underneath} onChange={e=>setUnderneath(e.target.value as typeof underneath)}><option value="replace">Replace underneath</option><option value="merge">Merge land</option></select>
+        <label><input aria-label="Re-climate on arrival" type="checkbox" checked={reClimate} onChange={e=>setReClimate(e.target.checked)} />Re-climate on arrival</label>
+        {reClimate&&<span>Repaint generated world/region biomes using the target climate. Manual work and developed locations are kept.</span>}
         <span>Interior dimensions stay fixed.</span>
       </>}
       <button disabled={busy||!target||!mapId} onClick={()=>void transfer()}>Transfer map tree</button>

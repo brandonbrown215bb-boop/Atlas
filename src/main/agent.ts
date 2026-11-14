@@ -230,7 +230,7 @@ export async function startAgentServer(
       inputSchema:{mapId:z.string().min(1),otherDir:z.string().min(1).optional(),apply:z.boolean().default(false),choices:z.record(z.string(),z.enum(['mine','theirs'])).default({})},
     },async args=>{try{return jsonText(await callRenderer('world_sync_map',args));}catch(e){return errorResult(e);}});
     server.registerTool('world_copy_map', {
-      description:'Copy or move a map tree with portable assets to a separate existing world. Optional placement: metres, radians, uniform scale, replace/merge geography. Target is verified before source changes.',
+      description:'Copy, move or link a map tree with portable assets to a separate existing world. Placement uses metres, radians, uniform scale and replace/merge geography. Set placement.reClimate to repaint incoming generated biomes using the target climate; manual work and developed locations are preserved. Target is verified before source changes.',
       inputSchema:{targetDir:z.string().min(1),mapId:z.string().min(1),mode:z.enum(['copy','move','linked']).default('copy'),placement:PlacementSchema.optional()},
     },async args=>{try{return jsonText(await callRenderer('world_copy_map',args));}catch(e){return errorResult(e);}});
     server.registerTool('world_fork', {

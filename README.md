@@ -4,7 +4,7 @@ Offline Windows desktop worldbuilding editor built with Electron, React, TypeScr
 
 ## Current Status
 
-- **Implemented (Phases 0–6):**
+- **Implemented (Phases 0–7):**
   - Electron + `electron-vite` + React 19 + strict TypeScript shell
   - Custom `app://` (production bundle) and `atlas-file://` (allowed-root-restricted asset loading) schemes
   - Dockview workspace with real popout windows, per-world layout persistence, off-screen display recovery, and light/dark theme syncing across all windows
@@ -34,8 +34,11 @@ Offline Windows desktop worldbuilding editor built with Electron, React, TypeScr
   - Room-purpose dressing using theme art or built-in props, door and route clearance, dressing-only rerolls, and selected-area thin/add/reroll controls
   - Settlement building interiors with disposable previews, reroll/cancel, and one-command acceptance into a child map linked to the building's place
   - Outdoor woodland generator with numbered connected clearings, winding entrance trails, boundary trees and scattered trees, optional stream/pond, and themed bridges; manual areas, paths and props survive rerolls
+  - Seeded world/continent terrain with roughly 8,000 Voronoi cells, traced coastlines and holes, exact manual land/water overrides, editable climate/biome tables and downhill rivers
+  - World-scale mountains, forests and hills from theme roles; unevenly spaced GM-only settlement suggestions with undoable accept/dismiss controls and permanent named places
+  - Optional re-climate on arrival for copied, moved or linked regions; generated biomes adapt to the target climate while manual work, coastline, rivers and developed locations are preserved
 
-- **Completed through P7.3 decoration and settlement suggestions.** World/region area footprints can generate seeded continents with traced coasts, holes, manual land/water overrides, custom biome tables and downhill rivers. World climate settings persist and manual biomes survive rerolls. All automated checks pass; see `BLOCKERS.md`. Mountains, forests and hills use theme art; settlement suggestions can be accepted as permanent places or dismissed. Re-climate transfers remain unfinished. Human visual comparisons, real-art, Foundry, TV and second-PC checks remain in `USER_CHECKS.md`.
+- **Completed through Phase 7.** All 147 unit tests, the production build and all 22 Electron tests pass; see `BLOCKERS.md`. Human visual comparisons, real-art, Foundry, TV and second-PC checks remain in `USER_CHECKS.md`.
 
 ## Development
 

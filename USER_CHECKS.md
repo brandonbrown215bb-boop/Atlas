@@ -1,10 +1,11 @@
 # User Checks
 
-## Phase 7 — Terrain, climate and rivers (through P7.2)
+## Phase 7 — World and continent (complete through P7.4)
 
 - On a world or region map with continent-scale bounds, draw/select a footprint area and choose **World / continent** in Generator. Try several seeds, sea levels and ruggedness values. Draw a manual water area through the centre, reroll, and check that its exact shape remains water; compare the result with `docs/bundle/reference-maps/02-world-map.jpg`. Check undo/redo and saving.
-- Open **World climate and biome table**, change temperature/moisture biases and latitude, add a custom biome rule, apply settings, then reroll. Check the resulting colors and river density; draw a manual biome area and confirm it survives rerolls. Decoration and re-climate transfers are not implemented yet.
-- Try world decoration density 0–3 with real `mountain`, `forest`, `hill` and `settlement` theme art. Judge the symbol size and clustered settlement spacing. Accept a suggestion with your own name, find it in Places, dismiss another, undo, and reroll; the accepted town must remain. Re-climate transfers are the remaining phase-7 task.
+- Open **World climate and biome table**, change temperature/moisture biases and latitude, add a custom biome rule, apply settings, then reroll. Check the resulting colors and river density; draw a manual biome area and confirm it survives rerolls.
+- Try world decoration density 0–3 with real `mountain`, `forest`, `hill` and `settlement` theme art. Judge the symbol size and clustered settlement spacing. Accept a suggestion with your own name, find it in Places, dismiss another, undo, and reroll; the accepted town must remain.
+- Give two worlds different climates. In **World transfers**, place a generated region onto a parent map in the other world and enable **Re-climate on arrival**. Try copy, move and linked copy. The generated biomes should adapt while your manual areas, places/notes, rivers, coastline and developed locations stay intact. Try placement at different latitudes, rotation/scale and undo of a move. Re-climate changes biome fills; existing terrain symbols remain as placed.
 
 ## Phase 6 — Outdoor locations
 

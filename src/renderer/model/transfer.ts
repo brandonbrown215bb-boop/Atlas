@@ -5,9 +5,10 @@ import { MapDocSchema, WorldMetaSchema, type Entity, type MapDoc, type Point } f
 import type { WorldDocument } from './commands';
 import { fromPolygons, toPolygons, rectRing } from '../geom/fog';
 import { rotateEntityPatch, scaleEntityPatch, translateEntityPatch } from '../geom/transform';
+import { reclimateMap } from '../gen/world/reclimate';
 
 export const WorldDocumentSchema=z.object({meta:WorldMetaSchema,maps:z.record(z.string(),MapDocSchema)});
-export const PlacementSchema=z.object({parentMapId:z.string().min(1),x:z.number().finite(),y:z.number().finite(),rotation:z.number().finite().default(0),scale:z.number().positive().finite().default(1),underneath:z.enum(['replace','merge']).default('replace'),seamMargin:z.number().nonnegative().finite().default(0)});
+export const PlacementSchema=z.object({parentMapId:z.string().min(1),x:z.number().finite(),y:z.number().finite(),rotation:z.number().finite().default(0),scale:z.number().positive().finite().default(1),underneath:z.enum(['replace','merge']).default('replace'),seamMargin:z.number().nonnegative().finite().default(0),reClimate:z.boolean().optional()});
 export type Placement=z.infer<typeof PlacementSchema>;
 export const TransferInputSchema=z.object({mapId:z.string().min(1),mode:z.enum(['copy','move','linked']).default('copy'),placement:PlacementSchema.optional()});
 export type TransferInput=z.infer<typeof TransferInputSchema>;
@@ -179,6 +180,7 @@ export function transferMap(sourceInput:WorldDocument,targetInput:WorldDocument,
   }
   Object.assign(target.maps,incoming);
   target.meta.maps.push(...incomingIds.map(id=>{const m=incoming[id]!;return {id,name:m.name,kind:m.kind,parentId:m.parent?.mapId};}));
+  if(input.placement?.reClimate) for(const id of incomingIds) reclimateMap(target,target.maps[id]!,createId);
   if(linked) for(const id of ids) {
     const mine=source.maps[id]!,theirs=target.maps[mapIds.get(id)!]!;
     if(mine.link) throw new Error('This map already has a linked copy. Fork or copy it independently first.');

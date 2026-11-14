@@ -941,7 +941,8 @@ registerCommand({
   name:'world.applyTransfer',description:'Apply a validated transfer result to the open world as one undo step. Refuses if the world changed while the transfer was being prepared.',
   input:z.object({before:WorldDocumentSchema,after:WorldDocumentSchema}),
   run(draft,input) {
-    if(JSON.stringify(draft)!==JSON.stringify(input.before)) throw new Error('World changed during transfer. The target copy is safe; reopen it or retry from the current source.');
+    // Saved snapshots are schema-parsed; normalize the live document's field order too.
+    if(JSON.stringify(WorldDocumentSchema.parse(draft))!==JSON.stringify(input.before)) throw new Error('World changed during transfer. The target copy is safe; reopen it or retry from the current source.');
     const next=validateWorld(input.after);
     if(next.meta.id!==draft.meta.id) throw new Error('Transfer cannot replace the open world identity');
     draft.meta=next.meta;draft.maps=next.maps;

@@ -4,7 +4,7 @@ Written for an implementing agent. Read sections 1–5 fully before writing any 
 
 Source material: `MAP_EDITOR_BRIEF.md` (what the user wants), `TECH_STACK_AND_OPEN_QUESTIONS.md`, `reference-maps/`. Where this plan and the brief disagree, this plan wins: it records decisions made after the brief.
 
-Implementation progress: completed through **P7.3 Decoration and settlement suggestions**. Verification passes: 141 unit tests, production build and all 21 Electron tests. The dungeon-dressing timeout is fixed without changing its assertions or timeout; see `BLOCKERS.md`. P7.4 has not been started. Human continent/forest/pyramid comparisons, real-art, second-machine and Foundry checks remain in `USER_CHECKS.md`.
+Implementation progress: completed through **P7.4 Re-climate on arrival (Phase 7)**. Verification passes: 147 unit tests, production build and all 22 Electron tests. Phase 8 has not been started. Human continent/forest/pyramid comparisons, real-art, second-machine and Foundry checks remain in `USER_CHECKS.md`.
 
 ---
 
