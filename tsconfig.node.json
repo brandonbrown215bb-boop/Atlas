@@ -28,6 +28,7 @@
     "src/renderer/geom/fog.ts",
     "src/renderer/geom/clipOutside.ts",
     "src/renderer/geom/hitTest.ts",
+    "src/renderer/geom/simplify.ts",
     "src/renderer/geom/places.ts",
     "src/renderer/geom/clipInherit.ts",
     "src/renderer/geom/pullFromParent.ts",

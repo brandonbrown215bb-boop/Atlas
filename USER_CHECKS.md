@@ -1,5 +1,10 @@
 # User Checks
 
+## Phase 6 — Outdoor locations
+
+- On a site map, select a footprint around 260 × 210 ft and choose **Outdoor woodland**. Generate six clearings with water on, then try several seeds and tree densities. Compare the connected numbered clearings, winding trails, tree bands, stream bridges and pond with `docs/bundle/reference-maps/01-procedural-forest-inspiration.jpg`. Judge the shape and spacing, then try your real `tree`/`bridge` theme art.
+- Try Water off, stream only and pond only. Add custom entrance coordinates in feet, including entrances on a concave boundary. Draw a manual camp/water area, a trail and a few props first; generate around them. Move a generated tree or edit a clearing, reroll, and check that your edits stay put. Check undo/redo and Accept. If the footprint is too cramped or split by obstacles, the error should leave it unchanged.
+
 ## Phase 5 — Dungeon and interior generators
 
 - Rebuild something like `docs/bundle/reference-maps/04-pyramid-interior.jpg`: draw its footprint on an interior map, choose Chamber and alcoves, try mirroring and a shrine purpose, then adjust the result by hand. Judge the room proportions, alcoves, door widths and furniture; the generator is a starting layout, not an image recreation.

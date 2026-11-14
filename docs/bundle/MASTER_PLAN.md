@@ -4,7 +4,7 @@ Written for an implementing agent. Read sections 1–5 fully before writing any 
 
 Source material: `MAP_EDITOR_BRIEF.md` (what the user wants), `TECH_STACK_AND_OPEN_QUESTIONS.md`, `reference-maps/`. Where this plan and the brief disagree, this plan wins: it records decisions made after the brief.
 
-Implementation progress: completed through **P5.4 Open-interior flow (Phase 5)**. Stop here; phase 6 is outside the current request. Human generator/art, second-machine and Foundry checks remain in `USER_CHECKS.md`.
+Implementation progress: completed through **P6.1 Outdoor location (Phase 6)**. Stop here; phase 7 is outside the current request. Human forest/pyramid comparisons, real-art, second-machine and Foundry checks remain in `USER_CHECKS.md`.
 
 ---
 

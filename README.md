@@ -4,7 +4,7 @@ Offline Windows desktop worldbuilding editor built with Electron, React, TypeScr
 
 ## Current Status
 
-- **Implemented (Phases 0–5):**
+- **Implemented (Phases 0–6):**
   - Electron + `electron-vite` + React 19 + strict TypeScript shell
   - Custom `app://` (production bundle) and `atlas-file://` (allowed-root-restricted asset loading) schemes
   - Dockview workspace with real popout windows, per-world layout persistence, off-screen display recovery, and light/dark theme syncing across all windows
@@ -33,8 +33,9 @@ Offline Windows desktop worldbuilding editor built with Electron, React, TypeScr
   - Seeded building, dungeon/corridor and chamber/alcove generators; connected rooms, inherited entrances, manual-wall constraints, left/right mirroring and one-step undo
   - Room-purpose dressing using theme art or built-in props, door and route clearance, dressing-only rerolls, and selected-area thin/add/reroll controls
   - Settlement building interiors with disposable previews, reroll/cancel, and one-command acceptance into a child map linked to the building's place
+  - Outdoor woodland generator with numbered connected clearings, winding entrance trails, boundary trees and scattered trees, optional stream/pond, and themed bridges; manual areas, paths and props survive rerolls
 
-- **Completed through Phase 5.** Outdoor generators (phase 6) have not been started. The pyramid comparison, real-art appearance, Foundry import, TV and second-PC checks remain in `USER_CHECKS.md`.
+- **Completed through Phase 6.** World/continent generation (phase 7) has not been started. The forest/pyramid comparisons, real-art appearance, Foundry import, TV and second-PC checks remain in `USER_CHECKS.md`.
 
 ## Development
 
@@ -79,6 +80,14 @@ On a settlement map, select a building footprint and choose **Preview interior**
 MCP uses the same `generator.run`, `generator.reroll`, `generator.dressArea`, `generator.accept` and `map.generateInterior` commands through `command_run`. Every action is one undo step.
 
 Agent commands accept `packAssetId` from `asset_search` for `prop.stamp` and `entity.setTexture`, and `packAssetIds` for `theme.setRole`. These copy the art before applying the commands as one undo step. Existing world art can be referenced with `assetId` (or `assetIds` for themes).
+
+## Outdoor Locations
+
+On a **site** map, draw/select an area and choose **Outdoor woodland** in Generator. Set the clearing count, tree density and seed. Water can include a stream crossing, a pond, or both. **Generate**, **Reroll** and **Accept** use the same undoable commands as interiors. Trees and bridges use the theme's `tree` and `bridge` roles, with built-in art when those roles are empty.
+
+Trails connect the numbered clearings and entrances; bridges cover stream crossings, including crossings of manual trails/roads. Entrances default to the north and south boundary. **Add entrance** supplies custom coordinates in feet; the generator snaps them to the footprint boundary. Existing runs restore those settings. MCP uses `generator.run` with `type: 'glade'` and `params: { clearings, density, water, stream, pond, entrances }`; its entrance points use metres.
+
+Manual areas and props reserve space, hand-drawn trails/roads connect to the new network, and developed sites can use inherited land/biome ground. The generator rejects disconnected or cramped footprints and blocked entrances without changing the map; reduce the count, disable a water feature, or choose a larger connected footprint when prompted. The limit is 20,000 grid squares. Outdoor rerolls replace the layout and trees together.
 
 ## SVG Import
 

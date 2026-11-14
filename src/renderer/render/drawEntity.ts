@@ -237,6 +237,10 @@ export function buildEntityDisplay(
       if (builtin === 'tree' || builtin === 'forest') gfx.circle(0,0,r).fill({color:0x38764b}).circle(-r/3,-r/3,r/2).fill({color:0x5a9b60});
       else if (builtin === 'rock' || builtin === 'mountain' || builtin === 'hill') gfx.moveTo(-r,r).lineTo(0,-r).lineTo(r,r).closePath().fill({color:0x93949b});
       else if (builtin === 'bed') gfx.rect(-r,-r,r*2,r*2).fill({color:0x725246}).rect(-r*0.8,-r*0.8,r*1.6,r*0.5).fill({color:0xe5e7eb});
+      else if (builtin === 'bridge') {
+        gfx.rect(-r,-r,r*2,r*2).fill({color:0xa98150});
+        for (let i=1;i<8;i++) gfx.moveTo(-r+i*r/4,-r).lineTo(-r+i*r/4,r).stroke({color:0x62452c,width:r*.055});
+      }
       else if (builtin) gfx.roundRect(-r,-r,r*2,r*2,0.1).fill({color:0x997151});
       else gfx.circle(0, 0, r).fill({ color: 0x38bdf8, alpha: 0.8 });
       if (builtin) gfx.scale.set((entity.w ?? 1.3)/1.3, (entity.h ?? 1.3)/1.3);

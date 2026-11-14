@@ -1,6 +1,7 @@
 import { planSync } from './sync';
 import { getGenerator, regionConstraints, runGenerator } from '../gen/framework';
 import '../gen/dungeon/layout';
+import '../gen/glade/outdoor';
 import { previewInterior } from '../gen/dungeon/interior';
 import { pointInPolygon } from '../geom/hitTest';
 import { validateWorld, WorldDocumentSchema } from './transfer';
@@ -85,7 +86,7 @@ function getMapOrThrow(draft: WorldDocument, mapId: string): MapDoc {
 
 registerCommand({
   name: 'generator.run',
-  description: 'Generate a dungeon/interior inside an area. One undo step; manual and inherited entities are constraints.',
+  description: 'Generate dungeon/interior or glade outdoor content inside an area. One undo step; manual and inherited entities are constraints. Glade params: clearings, density, water, stream, pond, entrances (boundary points in metres; empty means north/south).',
   input: z.object({ mapId: z.string().min(1), genId: z.string().min(1).optional(), type: z.string().min(1),
     seed: z.number().int(), params: z.record(z.string(), z.unknown()).default({}), regionEntityId: z.string().min(1),
     layerId: z.string().min(1), themeName: z.string().min(1).default('default') }),
