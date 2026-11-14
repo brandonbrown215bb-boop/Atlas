@@ -5,6 +5,7 @@ import { app, dialog, ipcMain, nativeImage, type BrowserWindow } from 'electron'
 import type { MapDoc, WorldMeta } from '../renderer/model/schema';
 import { PackLibrary } from './packs';
 import type { AssetQuery } from '../renderer/model/packs';
+import { extractDungeondraft } from './dungeondraft';
 import {
   addRecentWorld,
   atomicWriteFile,
@@ -34,6 +35,25 @@ export function registerWorldIpc(getMainWindow: () => BrowserWindow | null): Wor
   const userDataDir = () => app.getPath('userData');
   const library = new PackLibrary(userDataDir());
   const libraryReady = library.load();
+  let importingPack = false;
+  ipcMain.handle('atlas:pack-import', async (event, source?: string) => {
+    await libraryReady;
+    if (importingPack) throw new Error('A pack is already being imported.');
+    if (!source) {
+      const win = getMainWindow();
+      const options = { title: 'Import Dungeondraft Pack', filters: [{name:'Dungeondraft packs',extensions:['dungeondraft_pack']}], properties:['openFile'] as Array<'openFile'> };
+      const picked = win ? await dialog.showOpenDialog(win,options) : await dialog.showOpenDialog(options);
+      if (picked.canceled || !picked.filePaths[0]) return null;
+      source = picked.filePaths[0];
+    }
+    importingPack = true;
+    try {
+      const extracted = await extractDungeondraft(source, userDataDir(), (done,total) => {
+        if (!event.sender.isDestroyed()) event.sender.send('atlas:packs-progress', { scanned:done,indexed:total,path:'Extracting pack' });
+      });
+      return await library.register(extracted.root, undefined, { name:extracted.name,pxPerSquare:256 });
+    } finally { importingPack = false; }
+  });
   ipcMain.handle('atlas:asset-search', async (_event, query: AssetQuery) => { await libraryReady; return library.search(query); });
   ipcMain.handle('atlas:asset-use', async (_event, worldDir: string, id: string) => {
     await libraryReady;

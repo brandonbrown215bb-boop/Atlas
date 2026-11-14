@@ -123,3 +123,28 @@ test('MCP stamps portable props and textures with one undo step; UI can stamp th
     } finally { await client.close(); }
   } finally { await app2.close(); }
 });
+
+test('imports a Dungeondraft fixture through Settings and leaves the library unchanged for an invalid pack', async () => {
+  const root=mkdtempSync(join(tmpdir(),'atlas-e2e-pck-'));
+  const png=Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+aL9sAAAAASUVORK5CYII=','base64');
+  const path=Buffer.from('res://packs/demo/textures/objects/Oak.png');
+  const header=Buffer.alloc(88); header.write('GDPC');header.writeUInt32LE(1,4);header.writeUInt32LE(3,8);header.writeUInt32LE(1,84);
+  const entry=Buffer.alloc(4+path.length+32);entry.writeUInt32LE(path.length);path.copy(entry,4);
+  entry.writeBigUInt64LE(BigInt(88+entry.length),4+path.length);entry.writeBigUInt64LE(BigInt(png.length),12+path.length);
+  const source=join(root,'Demo.dungeondraft_pack');writeFileSync(source,Buffer.concat([header,entry,png]));
+  const bad=join(root,'Bad.dungeondraft_pack');writeFileSync(bad,'not a pack');
+  const app=await electron.launch({args:[resolve(__dirname,'../out/main/index.js'),`--user-data-dir=${join(root,'userData')}`]});
+  try {
+    const win=await app.firstWindow();await win.getByTestId('btn-settings').click();
+    await app.evaluate(({dialog},file)=>{dialog.showOpenDialog=async()=>({canceled:false,filePaths:[file]});},source);
+    await win.getByRole('button',{name:'Import Dungeondraft pack'}).click();
+    await expect(win.getByLabel('Demo pixels per square')).toHaveValue('256');
+    const before=await win.evaluate(()=>(window as unknown as {atlasApi:AtlasApi}).atlasApi.listPacks());
+    await app.evaluate(({dialog},file)=>{dialog.showOpenDialog=async()=>({canceled:false,filePaths:[file]});},bad);
+    await win.getByRole('button',{name:'Import Dungeondraft pack'}).click();
+    await expect(win.getByRole('alert').filter({hasText:'Corrupt or unsupported'})).toBeVisible();
+    expect(await win.evaluate(()=>(window as unknown as {atlasApi:AtlasApi}).atlasApi.listPacks())).toEqual(before);
+    await win.getByTestId('btn-assets').click();
+    await expect(win.getByTestId('assets-panel').getByRole('button',{name:'Oak.png'})).toBeVisible();
+  } finally {await app.close();}
+});

@@ -20,10 +20,19 @@ export function PackSettings() {
     } catch (e) { setError(String(e)); }
     finally { setBusy(false); }
   };
+  const importPack = async () => {
+    setBusy(true); setProgress(null); setError('');
+    try { const result = await window.atlasApi.importDungeondraftPack(); if (result) setPacks(result); }
+    catch (e) { setError(String(e)); }
+    finally { setBusy(false); }
+  };
   return <section style={{ padding: 12, borderTop: '1px solid var(--atlas-border)' }}>
     <strong>Asset folders</strong>{' '}
     <button disabled={busy} onClick={() => void register()}>Register folder</button>
-    {busy && <div role="status">Indexing… {progress?.indexed ?? 0} images ({progress?.scanned ?? 0} checked)</div>}
+    <button disabled={busy} onClick={() => void importPack()}>Import Dungeondraft pack</button>
+    {busy && <div role="status">{progress?.path === 'Extracting pack'
+      ? `Extracting… ${progress.scanned} of ${progress.indexed} files`
+      : `Indexing… ${progress?.indexed ?? 0} images (${progress?.scanned ?? 0} checked)`}</div>}
     {error && <div role="alert">{error}</div>}
     {packs.map(p => <div key={p.id} style={{ marginTop: 10 }}>
       <div title={p.root}>{p.name} — {p.assets.length.toLocaleString()} images{p.skipped > 0 && `, ${p.skipped} unreadable`}</div>

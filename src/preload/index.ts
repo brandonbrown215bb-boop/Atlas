@@ -27,6 +27,7 @@ export interface AgentServerInfo {
 }
 
 export interface AtlasApi {
+  importDungeondraftPack: (source?: string) => Promise<Pack[] | null>;
   usePackAsset: (worldDir: string, id: string) => Promise<{ assetId: string; index: AssetsIndex; w: number; h: number; metersPerPixel: number }>;
   searchAssets: (query: AssetQuery) => Promise<AssetPage>;
   getAssetThumbnail: (id: string) => Promise<string>;
@@ -72,6 +73,7 @@ export interface AtlasApi {
 }
 
 const api: AtlasApi = {
+  importDungeondraftPack: source => ipcRenderer.invoke('atlas:pack-import', source),
   usePackAsset: (worldDir, id) => ipcRenderer.invoke('atlas:asset-use', worldDir, id),
   searchAssets: query => ipcRenderer.invoke('atlas:asset-search', query),
   getAssetThumbnail: id => ipcRenderer.invoke('atlas:asset-thumbnail', id),

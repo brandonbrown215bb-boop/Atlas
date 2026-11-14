@@ -132,12 +132,13 @@ export class PackLibrary {
     await rename(`${path}.tmp`, path);
     this.packs = packs;
   }
-  async register(root: string, progress?: (p: PackProgress) => void): Promise<Pack[]> {
+  async register(root: string, progress?: (p: PackProgress) => void, defaults?: { name: string; pxPerSquare: number }): Promise<Pack[]> {
     if (this.busy) throw new Error('An asset folder is already being indexed.');
     this.busy = true;
     try {
       const old = this.packs.find(p => p.root.toLowerCase() === resolve(root).toLowerCase());
       const pack = await indexFolder(root, old, progress);
+      if (defaults) { pack.name = defaults.name; pack.pxPerSquare = old?.pxPerSquare ?? defaults.pxPerSquare; }
       await this.save([...this.packs.filter(p => p.id !== pack.id), pack]);
       return this.packs;
     } finally { this.busy = false; }
