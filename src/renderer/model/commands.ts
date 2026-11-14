@@ -89,7 +89,7 @@ function getMapOrThrow(draft: WorldDocument, mapId: string): MapDoc {
 
 registerCommand({
   name: 'generator.run',
-  description: 'Generate world/continent terrain, climate and rivers (world/region maps), dungeon/interior or glade woodland inside an area. One undo step; manual edits survive. World params: cells (default 8000), seaLevel, ruggedness, rivers, riverThreshold. Climate comes from world.setClimate. Glade params: clearings, density, water, stream, pond, entrances (metres).',
+  description: 'Generate world/continent terrain, climate, rivers and themed symbols (world/region maps), dungeon/interior or glade woodland inside an area. One undo step; manual edits survive. World params: cells (8000), seaLevel, ruggedness, rivers, riverThreshold, density (0–3), settlements (0–50). Settlement suggestions are GM-only until settlement.resolveSuggestion accepts them. Climate comes from world.setClimate.',
   input: z.object({ mapId: z.string().min(1), genId: z.string().min(1).optional(), type: z.string().min(1),
     seed: z.number().int(), params: z.record(z.string(), z.unknown()).default({}), regionEntityId: z.string().min(1),
     layerId: z.string().min(1), themeName: z.string().min(1).default('default') }),
@@ -113,6 +113,32 @@ registerCommand({
     const ids = runGenerator(map, { ...record, ...input, params: input.params ?? record.params,
       layerId: record.layerId ?? map.layers[0]!.id, themeName, theme: draft.meta.themes[themeName] ?? {}, climate: climateContext(draft, map) });
     return { genId: input.genId, ids };
+  },
+});
+registerCommand({
+  name: 'settlement.resolveSuggestion',
+  description: 'Accept a suggested settlement as a permanent map symbol and named place, or dismiss it. One undo step. Accepted settlements survive generator rerolls.',
+  input: z.object({ mapId: z.string().min(1), entityId: z.string().min(1), action: z.enum(['accept', 'dismiss']), name: z.string().trim().min(1).optional() }),
+  run(draft, input) {
+    const map = getMapOrThrow(draft, input.mapId), entity = map.entities[input.entityId];
+    if (entity?.type !== 'prop' || !entity.suggestedSettlement) throw new Error('Settlement suggestion not found.');
+    const layer = map.layers.find(l => l.id === entity.layerId);
+    if (!layer || layer.locked) throw new Error('Unlock the suggestion layer first.');
+    map.revision++;
+    if (input.action === 'dismiss') {
+      delete map.entities[entity.id]; map.deleted[entity.id] = map.revision;
+      for (const e of Object.values(map.entities)) if (e.type === 'place' && e.entityIds.includes(entity.id)) {
+        e.entityIds = e.entityIds.filter(id => id !== entity.id); e.rev = map.revision;
+      }
+      return { id: entity.id };
+    }
+    entity.name = input.name ?? entity.name?.replace(' suggestion', '') ?? 'Settlement';
+    entity.origin = 'manual'; entity.gmOnly = false; entity.rev = map.revision;
+    delete entity.suggestedSettlement;
+    const id = crypto.randomUUID();
+    map.entities[id] = { id, type: 'place', name: entity.name, category: 'settlement', notes: '', gmNotes: '',
+      entityIds: [entity.id], layerId: entity.layerId, origin: 'manual', rev: map.revision };
+    return { id: entity.id, placeId: id };
   },
 });
 registerCommand({

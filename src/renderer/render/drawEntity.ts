@@ -236,6 +236,11 @@ export function buildEntityDisplay(
       const builtin = entity.builtin?.replace(/^builtin:/,'');
       if (builtin === 'tree' || builtin === 'forest') gfx.circle(0,0,r).fill({color:0x38764b}).circle(-r/3,-r/3,r/2).fill({color:0x5a9b60});
       else if (builtin === 'rock' || builtin === 'mountain' || builtin === 'hill') gfx.moveTo(-r,r).lineTo(0,-r).lineTo(r,r).closePath().fill({color:0x93949b});
+      else if (builtin === 'settlement') {
+        gfx.rect(-r*.7,-r*.1,r*1.4,r*1.1).fill({color:0xe6d4a9});
+        gfx.moveTo(-r,-r*.1).lineTo(0,-r).lineTo(r,-r*.1).closePath().fill({color:entity.suggestedSettlement?0xd9a544:0x955844});
+        gfx.rect(-r*.18,r*.4,r*.36,r*.6).fill({color:0x514338});
+      }
       else if (builtin === 'bed') gfx.rect(-r,-r,r*2,r*2).fill({color:0x725246}).rect(-r*0.8,-r*0.8,r*1.6,r*0.5).fill({color:0xe5e7eb});
       else if (builtin === 'bridge') {
         gfx.rect(-r,-r,r*2,r*2).fill({color:0xa98150});

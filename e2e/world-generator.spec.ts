@@ -44,6 +44,20 @@ test('phase 7: continent commands, UI settings, manual lake reroll, undo and sav
     await main.getByLabel('Generator run').selectOption('terrain');
     await expect(main.getByLabel('Generator type')).toHaveValue('world');
     await expect(main.getByLabel('Sea level')).toHaveValue('0.45');
+    await expect(main.getByLabel('World decoration density')).toHaveValue('1');
+    await expect(main.getByLabel('Settlement suggestion count')).toHaveValue('12');
+    const suggestions = main.getByTestId('settlement-suggestion');
+    await expect(suggestions).toHaveCount(12);
+    await suggestions.first().getByLabel('Settlement name').fill('Rookhaven');
+    await suggestions.first().getByRole('button', { name: 'Accept settlement', exact: true }).click();
+    await expect(suggestions).toHaveCount(11);
+    const accepted: MapDoc = await call('map_get', { mapId: 'continent' });
+    const place = Object.values(accepted.entities).find(e => e.type === 'place' && e.name === 'Rookhaven')!;
+    expect(place).toBeDefined();
+    await suggestions.first().getByRole('button', { name: 'Dismiss settlement', exact: true }).click();
+    await expect(suggestions).toHaveCount(10);
+    await call('undo'); await expect(suggestions).toHaveCount(11);
+    await call('undo'); await expect(suggestions).toHaveCount(12);
     await main.getByText('World climate and biome table', { exact: true }).click();
     await main.getByLabel('Temperature bias').fill('-0.4');
     await main.getByRole('button', { name: 'Add custom biome rule', exact: true }).click();
@@ -74,5 +88,12 @@ test('phase 7: continent commands, UI settings, manual lake reroll, undo and sav
     const savedClimate = JSON.parse(readFileSync(join(dir, 'world', 'world.json'), 'utf8')).climate;
     expect(savedClimate.temperature).toBe(-.4);
     expect(savedClimate.biomes[0].name).toBe('crystal wastes');
+    const marker = Object.values(rerolled.entities).find(e => e.type === 'prop' && e.suggestedSettlement)!;
+    expect(marker).toBeDefined();
+    await command('settlement.resolveSuggestion', { mapId: 'continent', entityId: marker.id, action: 'accept', name: 'Permanent town' });
+    const withTown: MapDoc = await call('map_get', { mapId: 'continent' });
+    await command('generator.reroll', { mapId: 'continent', genId: 'terrain', seed: 11 });
+    const withTownRerolled: MapDoc = await call('map_get', { mapId: 'continent' });
+    expect(withTownRerolled.entities[marker.id]).toEqual(withTown.entities[marker.id]);
   } finally { await client.close(); await app.close(); }
 });

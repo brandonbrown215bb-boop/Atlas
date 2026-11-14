@@ -7,6 +7,7 @@ import { ROOM_PURPOSES } from '../gen/dungeon/dressing';
 import { OutdoorParamsSchema } from '../gen/glade/outdoor';
 import { WorldParamsSchema } from '../gen/world/world';
 import { WorldClimateEditor } from './WorldClimateEditor';
+import { SettlementSuggestions } from './SettlementSuggestions';
 import { bboxFromPoints } from '../geom/hitTest';
 import { previewInterior } from '../gen/dungeon/interior';
 import type { MapDoc, Theme } from '../model/schema';
@@ -106,6 +107,8 @@ export function GeneratorPanel(props: IDockviewPanelProps) {
         <label>Ruggedness <input aria-label="Ruggedness" type="number" min={0} max={1} step={.05} value={terrain.ruggedness} onChange={e => setTerrain({ ...terrain, ruggedness: Number(e.target.value) })} /></label>
         <label><input aria-label="World rivers" type="checkbox" checked={terrain.rivers} onChange={e => setTerrain({ ...terrain, rivers: e.target.checked })} />Rivers</label>
         {terrain.rivers && <label>River flow threshold <input aria-label="River flow threshold" type="number" min={2} max={200} value={terrain.riverThreshold} onChange={e => setTerrain({ ...terrain, riverThreshold: Number(e.target.value) })} /></label>}
+        <label>World decoration density <input aria-label="World decoration density" type="number" min={0} max={3} step={.25} value={terrain.density} onChange={e => setTerrain({ ...terrain, density: Number(e.target.value) })} /></label>
+        <label>Settlement suggestions <input aria-label="Settlement suggestion count" type="number" min={0} max={50} value={terrain.settlements} onChange={e => setTerrain({ ...terrain, settlements: Number(e.target.value) })} /></label>
         <WorldClimateEditor />
       </> : isOutdoor ? <>
         <label>Clearings <input aria-label="Clearing count" type="number" min={1} max={20} value={outdoor.clearings} onChange={e => setOutdoor({ ...outdoor, clearings: Number(e.target.value) })} /></label>
@@ -173,6 +176,7 @@ export function GeneratorPanel(props: IDockviewPanelProps) {
         <button disabled={!record} onClick={() => call('generator.accept', { genId: runId })}>Accept</button>
         <span>Accept keeps the result as manual content.</span>
       </>}
+      {map && ['world', 'region'].includes(map.kind) && <SettlementSuggestions mapId={map.id} entities={Object.values(map.entities)} />}
       {error && <div role="alert">{error}</div>}
     </div>
   </div>;

@@ -1,4 +1,4 @@
-# Phase 7 verification — P7.2 complete
+# Phase 7 verification — P7.3 complete
 
 P7.1 terrain is complete and committed as `fb7e016`. Its checks passed: 41 files / 135 unit tests, production build, and all 21 Electron tests. The rendered continent was inspected visually, including a manual central water cut.
 
@@ -14,11 +14,11 @@ Error: Test timed out in 5000ms.
 
 Furniture placement repeatedly flattened wall geometry and recalculated nearest-wall distances during candidate sorting. Building the wall segments once and caching distances per candidate reduced the test from 3.78 seconds to 0.26 seconds in isolated runs. No assertions or timeouts were relaxed. The climate save assertion also checks the first biome rule directly, allowing the remaining built-in rules to stay in the table.
 
-- `npm run check`: passed, 43 files / 138 unit tests.
+- `npm run check`: passed, 44 files / 141 unit tests.
 - `npm run build`: passed.
 - `npm run e2e`: passed, all 21 Electron tests.
 
-No current automated-verification blocker. P7.3 decoration/settlement suggestions and P7.4 re-climate transfers have **not been started**.
+No current automated-verification blocker. P7.3 decoration and settlement suggestions are verified. P7.4 re-climate transfers have **not been started**.
 
 ## Last completed phase-6 verification
 

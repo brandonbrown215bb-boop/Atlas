@@ -121,6 +121,7 @@ export const PropEntitySchema = z.object({
   flipX: z.boolean(),
   w: z.number().positive().finite().optional(),
   h: z.number().positive().finite().optional(),
+  suggestedSettlement: z.boolean().optional(),
 });
 
 export const LightEntitySchema = z.object({
