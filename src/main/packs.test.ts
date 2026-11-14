@@ -45,4 +45,16 @@ describe('asset folder indexing', () => {
     expect(imageDimensions(webp)).toEqual({ width: 200, height: 100 });
     expect(imageDimensions(Buffer.from('garbage'))).toBeNull();
   });
+  it('pages 50,000 assets without returning the entire library and filters folders/tags', () => {
+    const lib = new PackLibrary('unused');
+    lib.packs = [{ id: 'p', name: 'Huge', root: 'unused', pxPerSquare: 200, skipped: 0,
+      assets: Array.from({ length: 50_000 }, (_, i) => ({ id: String(i), name: `Oak ${i}.png`,
+        relativePath: `Trees/Oak ${i}.png`, tags: ['trees','oak'], size: 10, mtimeMs: 1, width: 200, height: 400 })) }];
+    const result = lib.search({ query: 'oak', tag: 'trees', folder: 'Trees', offset: 49_900 });
+    expect(result.total).toBe(50_000);
+    expect(result.assets).toHaveLength(100);
+    expect(result.assets[0]!.id).toBe('49900');
+    expect(lib.search().folders).toEqual(['Trees']);
+    expect(lib.search({ tag: 'rock' }).total).toBe(0);
+  });
 });

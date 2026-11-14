@@ -84,3 +84,13 @@ button:disabled {
 .measure-controls input[type='time'] { width: 105px; }
 .measure-results strong { color: var(--atlas-accent); }
 .measure-bar small { color: var(--atlas-text-muted); line-height: 1.5; }
+/* Pack browsing renders only one page; offscreen thumbnails are requested on demand. */
+.assets-panel { height: 100%; overflow: auto; padding: 10px; box-sizing: border-box; font-size: 12px; }
+.asset-filters { display: flex; flex-wrap: wrap; gap: 6px; }
+.asset-filters input { min-width: 80px; flex: 1; }
+.asset-folders { display: flex; flex-wrap: wrap; gap: 4px; margin: 8px 0; max-height: 120px; overflow: auto; }
+.asset-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(90px,1fr)); gap: 6px; margin: 8px 0; }
+.asset-card { display: flex; flex-direction: column; align-items: center; min-width: 0; padding: 6px; }
+.asset-card img { object-fit: contain; }
+.asset-card span:last-child { overflow: hidden; text-overflow: ellipsis; width: 100%; white-space: nowrap; }
+.asset-thumbnail-placeholder { width: 64px; height: 64px; display: grid; place-items: center; }

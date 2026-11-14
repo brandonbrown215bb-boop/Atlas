@@ -1,9 +1,10 @@
 import { existsSync, mkdirSync, readFileSync } from 'node:fs';
-import { readFile, stat } from 'node:fs/promises';
+import { readFile, stat, mkdir, writeFile } from 'node:fs/promises';
 import { basename, join, resolve } from 'node:path';
 import { app, dialog, ipcMain, nativeImage, type BrowserWindow } from 'electron';
 import type { MapDoc, WorldMeta } from '../renderer/model/schema';
 import { PackLibrary } from './packs';
+import type { AssetQuery } from '../renderer/model/packs';
 import {
   addRecentWorld,
   atomicWriteFile,
@@ -33,6 +34,32 @@ export function registerWorldIpc(getMainWindow: () => BrowserWindow | null): Wor
   const userDataDir = () => app.getPath('userData');
   const library = new PackLibrary(userDataDir());
   const libraryReady = library.load();
+  ipcMain.handle('atlas:asset-search', async (_event, query: AssetQuery) => { await libraryReady; return library.search(query); });
+  // Decode thumbnails one at a time, and reuse the disk cache next time.
+  const thumbnailJobs = new Map<string, Promise<string>>();
+  let thumbnailQueue = Promise.resolve();
+  ipcMain.handle('atlas:asset-thumbnail', async (_event, id: string) => {
+    await libraryReady;
+    const { asset, path } = library.findAsset(id);
+    const key = `${id}-${asset.size}-${asset.mtimeMs}`;
+    let job = thumbnailJobs.get(key);
+    if (!job) {
+      job = thumbnailQueue.then(async () => {
+        const target = join(userDataDir(), 'thumbnails', `${key}.png`);
+        if (!existsSync(target)) {
+          const image = await nativeImage.createThumbnailFromPath(path, { width: 96, height: 96 });
+          if (image.isEmpty()) throw new Error('Cannot read image thumbnail.');
+          await mkdir(join(userDataDir(), 'thumbnails'), { recursive: true });
+          await writeFile(target, image.toPNG());
+        }
+        return `atlas-file://local/${target.replace(/\\/g, '/').split('/').map(encodeURIComponent).join('/')}`;
+      });
+      thumbnailJobs.set(key, job);
+      thumbnailQueue = job.then(() => undefined, () => undefined);
+      void job.finally(() => thumbnailJobs.delete(key)).catch(() => {});
+    }
+    return job;
+  });
   ipcMain.handle('atlas:packs-list', async () => { await libraryReady; return library.packs; });
   ipcMain.handle('atlas:packs-register', async (event, root: string) => {
     await libraryReady;

@@ -4,7 +4,7 @@ Written for an implementing agent. Read sections 1–5 fully before writing any 
 
 Source material: `MAP_EDITOR_BRIEF.md` (what the user wants), `TECH_STACK_AND_OPEN_QUESTIONS.md`, `reference-maps/`. Where this plan and the brief disagree, this plan wins: it records decisions made after the brief.
 
-Implementation progress: completed through **P3.1 Register loose folders**. Next slice: **P3.2 Assets panel**. Human visual/second-machine checks remain in `USER_CHECKS.md`.
+Implementation progress: completed through **P3.2 Assets panel**. Next slice: **P3.3 Place and paint with assets**. Human visual/second-machine checks remain in `USER_CHECKS.md`.
 
 ---
 

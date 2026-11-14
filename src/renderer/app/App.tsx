@@ -384,6 +384,13 @@ export function App() {
         </button>
         <button
           type="button"
+          data-testid="btn-assets"
+          onClick={() => openOrFocusPanel('assets', 'Assets')}
+        >
+          Assets
+        </button>
+        <button
+          type="button"
           data-testid="btn-settings"
           onClick={() => openOrFocusPanel('settings', 'Settings')}
         >

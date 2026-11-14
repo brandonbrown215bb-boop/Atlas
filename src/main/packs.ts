@@ -1,7 +1,7 @@
 import { createHash } from 'node:crypto';
 import { mkdir, open, readFile, readdir, stat, writeFile, rename } from 'node:fs/promises';
 import { basename, extname, join, relative, resolve } from 'node:path';
-import { PackSchema, PacksSchema, type Pack, type PackProgress } from '../renderer/model/packs';
+import { PackSchema, PacksSchema, type Pack, type PackProgress, type AssetQuery, type AssetPage } from '../renderer/model/packs';
 import { resolveAllowedPath } from './pathSecurity';
 
 const imageExtensions = new Set(['.png', '.jpg', '.jpeg', '.webp', '.bmp']);
@@ -88,6 +88,39 @@ export class PackLibrary {
   packs: Pack[] = [];
   private busy = false;
   constructor(private readonly userData: string) {}
+  findAsset(id: string) {
+    for (const pack of this.packs) {
+      const asset = pack.assets.find(a => a.id === id);
+      if (!asset) continue;
+      const path = resolveAllowedPath(join(pack.root, asset.relativePath), [pack.root]);
+      if (!path) throw new Error('Asset is outside its registered folder.');
+      return { pack, asset, path };
+    }
+    throw new Error('Asset not found. Reindex its folder.');
+  }
+  search(options: AssetQuery = {}): AssetPage {
+    const words = (options.query ?? '').toLowerCase().trim().split(/\s+/).filter(Boolean);
+    const tag = options.tag?.toLowerCase().trim();
+    const folder = (options.folder ?? '').replace(/\/$/, '');
+    const prefix = folder ? `${folder}/` : '';
+    const folders = new Set<string>();
+    const result: AssetPage = { total: 0, assets: [], folders: [], packs: this.packs.map(p => ({ id: p.id, name: p.name, count: p.assets.length })) };
+    const offset = Math.max(0, Math.floor(options.offset ?? 0));
+    for (const pack of this.packs) {
+      if (options.packId && options.packId !== pack.id) continue;
+      for (const asset of pack.assets) {
+        if (!asset.relativePath.startsWith(prefix)) continue;
+        const rest = asset.relativePath.slice(prefix.length);
+        if (rest.includes('/')) folders.add(prefix + rest.split('/')[0]);
+        if (tag && !asset.tags.includes(tag)) continue;
+        if (!words.every(w => asset.relativePath.toLowerCase().includes(w) || asset.tags.some(t => t.includes(w)))) continue;
+        if (result.total >= offset && result.assets.length < 100) result.assets.push({ ...asset, packId: pack.id, packName: pack.name, pxPerSquare: pack.pxPerSquare });
+        result.total++;
+      }
+    }
+    result.folders = [...folders].sort();
+    return result;
+  }
   async load(): Promise<void> {
     try { this.packs = PacksSchema.parse(JSON.parse(await readFile(join(this.userData, 'packs.json'), 'utf8'))); }
     catch { this.packs = []; }

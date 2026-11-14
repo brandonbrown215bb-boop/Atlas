@@ -1,6 +1,6 @@
 import { contextBridge, ipcRenderer } from 'electron';
 import type { AssetsIndex, MapDoc, WorldMeta } from '../renderer/model/schema';
-import type { Pack, PackProgress } from '../renderer/model/packs';
+import type { Pack, PackProgress, AssetQuery, AssetPage } from '../renderer/model/packs';
 
 export interface RecentWorldInfo {
   id: string;
@@ -27,6 +27,8 @@ export interface AgentServerInfo {
 }
 
 export interface AtlasApi {
+  searchAssets: (query: AssetQuery) => Promise<AssetPage>;
+  getAssetThumbnail: (id: string) => Promise<string>;
   listPacks: () => Promise<Pack[]>;
   registerPack: (root: string) => Promise<Pack[]>;
   setPackScale: (id: string, pxPerSquare: number) => Promise<Pack[]>;
@@ -69,6 +71,8 @@ export interface AtlasApi {
 }
 
 const api: AtlasApi = {
+  searchAssets: query => ipcRenderer.invoke('atlas:asset-search', query),
+  getAssetThumbnail: id => ipcRenderer.invoke('atlas:asset-thumbnail', id),
   listPacks: () => ipcRenderer.invoke('atlas:packs-list'),
   registerPack: root => ipcRenderer.invoke('atlas:packs-register', root),
   setPackScale: (id, pxPerSquare) => ipcRenderer.invoke('atlas:packs-scale', id, pxPerSquare),

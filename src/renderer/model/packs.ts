@@ -14,3 +14,9 @@ export const PacksSchema = z.array(PackSchema);
 export type PackAsset = z.infer<typeof PackAssetSchema>;
 export type Pack = z.infer<typeof PackSchema>;
 export interface PackProgress { scanned: number; indexed: number; path: string }
+export interface AssetQuery { query?: string; tag?: string; packId?: string; folder?: string; offset?: number }
+export interface AssetResult extends PackAsset { packId: string; packName: string; pxPerSquare: number }
+export interface AssetPage {
+  total: number; assets: AssetResult[]; folders: string[];
+  packs: Array<{ id: string; name: string; count: number }>;
+}
