@@ -1,5 +1,6 @@
 import { planSync } from './sync';
 import { runGenerator } from '../gen/framework';
+import '../gen/dungeon/layout';
 import { validateWorld, WorldDocumentSchema } from './transfer';
 import { paintFog, rectRing } from '../geom/fog';
 import { z } from 'zod';

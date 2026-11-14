@@ -2,6 +2,7 @@ import { useState } from 'react';
 import { useStore } from 'zustand';
 import type { IDockviewPanelProps } from 'dockview-react';
 import { listGenerators } from '../gen/framework';
+import { DungeonParamsSchema } from '../gen/dungeon/layout';
 import { worldStore } from '../model/store';
 import { viewStore } from '../model/viewStore';
 import { PanelHeaderBar } from './PanelHeaderBar';
@@ -14,7 +15,7 @@ export function GeneratorPanel(props: IDockviewPanelProps) {
   const definitions = listGenerators();
   const [type, setType] = useState(definitions[0]?.type ?? '');
   const [seed, setSeed] = useState(1);
-  const [params, setParams] = useState('{}');
+  const [params, setParams] = useState(DungeonParamsSchema.parse({}));
   const [runId, setRunId] = useState('');
   const [error, setError] = useState('');
   const map = mapId ? world?.maps[mapId] : undefined;
@@ -28,7 +29,7 @@ export function GeneratorPanel(props: IDockviewPanelProps) {
   };
   const reroll = (dressingOnly: boolean) => {
     const nextSeed = (seed + 1) >>> 0; setSeed(nextSeed);
-    try { call('generator.reroll', { genId: runId, seed: nextSeed, params: JSON.parse(params), dressingOnly }); }
+    try { call('generator.reroll', { genId: runId, seed: nextSeed, params, dressingOnly }); }
     catch (e) { setError(String(e)); }
   };
   return <div data-testid={`panel-${props.api.id}`} style={{ height: '100%', overflow: 'auto', fontSize: 12 }}>
@@ -39,14 +40,18 @@ export function GeneratorPanel(props: IDockviewPanelProps) {
         {definitions.map(g => <option key={g.type} value={g.type}>{g.title}</option>)}
       </select></label>
       <label>Seed <input aria-label="Generator seed" type="number" value={seed} onChange={e => setSeed(Number(e.target.value))} /></label>
-      <label>Parameters <textarea aria-label="Generator parameters" rows={5} value={params} onChange={e => setParams(e.target.value)} /></label>
+      <label>Layout <select aria-label="Layout mode" value={params.mode} onChange={e=>setParams({...params,mode:e.target.value as typeof params.mode})}>
+        <option value="building">Building rooms</option><option value="dungeon">Dungeon and corridors</option><option value="chamber">Chamber and alcoves</option>
+      </select></label>
+      <label>Rooms <input aria-label="Room count" type="number" min={1} max={20} value={params.rooms} onChange={e=>setParams({...params,rooms:Number(e.target.value)})} /></label>
+      <label><input type="checkbox" checked={params.mirror} onChange={e=>setParams({...params,mirror:e.target.checked})} />Mirror left/right</label>
       <button disabled={!map || !regionId || !type} onClick={() => {
-        try { call('generator.run', { type, seed, params: JSON.parse(params), regionEntityId: regionId, layerId: layerId ?? map?.layers[0]?.id }); }
+        try { call('generator.run', { type, seed, params, regionEntityId: regionId, layerId: layerId ?? map?.layers[0]?.id }); }
         catch (e) { setError(String(e)); }
       }}>Generate</button>
       <label>Existing run <select aria-label="Generator run" value={record ? runId : ''} onChange={e => {
         setRunId(e.target.value); const r = map?.generators[e.target.value];
-        if (r) { setType(r.type); setSeed(r.seed); setParams(JSON.stringify(r.params, null, 2)); }
+        if (r) { setType(r.type); setSeed(r.seed); setParams(DungeonParamsSchema.parse(r.params)); }
       }}><option value="">Choose a run</option>{Object.entries(map?.generators ?? {}).map(([id, r]) => <option key={id} value={id}>{r.type} · {r.seed}</option>)}</select></label>
       <button disabled={!record} onClick={() => reroll(false)}>Reroll</button>
       <button disabled={!record} onClick={() => reroll(true)}>Reroll dressing only</button>
