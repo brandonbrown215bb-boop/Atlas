@@ -1,3 +1,4 @@
+import { ExportPanel } from '../panels/ExportPanel';
 import { PlayerControls } from '../panels/PlayerControls';
 import { useEffect, useRef, useState } from 'react';
 import {
@@ -406,6 +407,7 @@ export function App() {
       </header>
 
       <PlayerControls />
+      <ExportPanel />
       <div
         data-testid="tool-bar"
         style={{

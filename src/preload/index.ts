@@ -27,6 +27,7 @@ export interface AgentServerInfo {
 }
 
 export interface AtlasApi {
+  saveExport: (name: string, extension: 'png' | 'dd2vtt', data: string) => Promise<string | null>;
   listDisplays: () => Promise<Array<{ id: number; label: string }>>;
   playerFullscreen: (displayId: number | null) => Promise<void>;
   importDungeondraftPack: (source?: string) => Promise<Pack[] | null>;
@@ -75,6 +76,7 @@ export interface AtlasApi {
 }
 
 const api: AtlasApi = {
+  saveExport: (name, extension, data) => ipcRenderer.invoke('atlas:save-export', name, extension, data),
   listDisplays: () => ipcRenderer.invoke('atlas:displays'),
   playerFullscreen: id => ipcRenderer.invoke('atlas:player-fullscreen', id),
   importDungeondraftPack: source => ipcRenderer.invoke('atlas:pack-import', source),

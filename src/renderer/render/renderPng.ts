@@ -23,8 +23,8 @@ export interface RenderPngOptions {
 export async function renderMapToPngBase64(
   options: RenderPngOptions,
 ): Promise<string> {
-  const width = Math.min(2048, Math.max(64, Math.floor(options.width ?? 800)));
-  const height = Math.min(2048, Math.max(64, Math.floor(options.height ?? 600)));
+  const width = Math.min(8192, Math.max(1, Math.floor(options.width ?? 800)));
+  const height = Math.min(8192, Math.max(1, Math.floor(options.height ?? 600)));
   const view = options.view ?? 'gm';
   const targetRect = options.rect ?? options.map.bounds;
 

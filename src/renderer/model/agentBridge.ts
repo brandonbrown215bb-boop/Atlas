@@ -1,3 +1,4 @@
+import { exportPlayerImage } from '../export/playerImage';
 import { z } from 'zod';
 import { listCommands } from './commands';
 import { EntitySchema, MapDocSchema, type Entity, type MapDoc, type WorldMeta } from './schema';
@@ -149,6 +150,12 @@ export async function handleAgentCall(
       };
     }
 
+    case 'export_player_image': {
+      const state=worldStore.getState();
+      const map=state.world?.maps[String(params.mapId ?? state.activeMapId ?? '')];
+      if(!map) throw new Error('Map not found');
+      return exportPlayerImage(map, params.pixelsPerSquare as number | undefined, params.rect as {x:number;y:number;w:number;h:number}|undefined);
+    }
     case 'render_png': {
       const s = worldStore.getState();
       if (!s.world) throw new Error('No world is open');

@@ -224,6 +224,10 @@ export async function startAgentServer(
       },
     );
 
+    server.registerTool('export_player_image', {
+      description:'Export a player-safe PNG without fog or private content. Returns base64 image and dimensions; caps each side at 8192 pixels.',
+      inputSchema:{mapId:z.string().optional(),pixelsPerSquare:z.number().positive().finite().optional(),rect:z.object({x:z.number().finite(),y:z.number().finite(),w:z.number().positive().finite(),h:z.number().positive().finite()}).optional()},
+    },async args=>{try {return jsonText(await callRenderer('export_player_image',args));}catch(e){return errorResult(e);}});
     server.registerTool('asset_search', {
       description: 'Search registered pack assets by name/tag and folder. Returns at most 100 matches and total count; use offset to page.',
       inputSchema: { query: z.string().optional(), tag: z.string().optional(), packId: z.string().optional(), folder: z.string().optional(), offset: z.number().int().nonnegative().optional() },

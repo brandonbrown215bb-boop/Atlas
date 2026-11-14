@@ -1,5 +1,6 @@
 import { existsSync, mkdirSync, readFileSync } from 'node:fs';
-import { readFile, stat, mkdir, writeFile } from 'node:fs/promises';
+import { readFile, stat, mkdir, writeFile, rename } from 'node:fs/promises';
+import { z } from 'zod';
 import { basename, join, resolve } from 'node:path';
 import { app, dialog, ipcMain, nativeImage, type BrowserWindow } from 'electron';
 import type { MapDoc, WorldMeta } from '../renderer/model/schema';
@@ -109,6 +110,18 @@ export function registerWorldIpc(getMainWindow: () => BrowserWindow | null): Wor
       lastOpenedAt: new Date().toISOString(),
     });
   };
+
+  ipcMain.handle('atlas:save-export', async (_event, name: string, extension: 'png'|'dd2vtt', data: string) => {
+    z.enum(['png','dd2vtt']).parse(extension);
+    z.string().max(400_000_000).parse(data);
+    const options = { title:'Export map', defaultPath:`${String(name).replace(/[^a-zA-Z0-9 _-]/g,'_')}.${extension}`, filters:[{name:extension.toUpperCase(),extensions:[extension]}] };
+    const win=getMainWindow();
+    const result=win ? await dialog.showSaveDialog(win,options) : await dialog.showSaveDialog(options);
+    if(result.canceled || !result.filePath) return null;
+    await writeFile(`${result.filePath}.tmp`,extension==='png'?Buffer.from(data,'base64'):data);
+    await rename(`${result.filePath}.tmp`,result.filePath);
+    return result.filePath;
+  });
 
   ipcMain.handle('atlas:pick-folder', async (_event, title?: string) => {
     const win = getMainWindow();
