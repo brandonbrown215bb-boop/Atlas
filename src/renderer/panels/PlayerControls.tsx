@@ -30,6 +30,8 @@ function PlayerScreen({ mapId, labels, grid, camera, owner }: { mapId: string; l
 
 export function PlayerControls() {
   const world = useStore(worldStore, s => s.world);
+  const fogRadius = useStore(viewStore, s => s.fogRadius);
+  const fogMode = useStore(viewStore, s => s.fogMode);
   const activeMap = useStore(worldStore, s => s.activeMapId);
   const [chosen, setChosen] = useState('');
   const mapId = chosen && world?.maps[chosen] ? chosen : activeMap ?? '';
@@ -71,6 +73,11 @@ export function PlayerControls() {
     <label><input type="checkbox" checked={grid} onChange={e => setGrid(e.target.checked)} />Player grid</label>
     <select aria-label="Player monitor" value={display} onChange={e => setDisplay(e.target.value)} onFocus={() => void window.atlasApi.listDisplays().then(setDisplays)}><option value="">Windowed</option>{displays.map(d => <option key={d.id} value={d.id}>{d.label}</option>)}</select>
     <button onClick={() => void window.atlasApi.playerFullscreen(display ? Number(display) : null).catch(e => setError(String(e)))}>Apply display</button>
+    <label><input type="checkbox" checked={world?.maps[mapId]?.fog.enabled ?? false} onChange={e => worldStore.getState().execute('fog.paint',{mapId,mode:e.target.checked?'enable':'disable'})} disabled={!world} />Fog</label>
+    <select aria-label="Fog brush mode" value={fogMode} onChange={e => viewStore.setState({fogMode:e.target.value as 'reveal'|'hide'})}><option value="reveal">Reveal</option><option value="hide">Hide</option></select>
+    <label>Brush radius (m) <input aria-label="Fog brush radius" type="number" min="0.1" value={fogRadius} style={{width:55}} onChange={e => {const n=Number(e.target.value); if(n>0 && Number.isFinite(n)) viewStore.setState({fogRadius:n});}} /></label>
+    <button disabled={!world} onClick={() => worldStore.getState().execute('fog.paint',{mapId,mode:'revealAll'})}>Reveal all</button>
+    <button disabled={!world} onClick={() => worldStore.getState().execute('fog.paint',{mapId,mode:'hideAll'})}>Hide all</button>
     {error && <span role="alert">{error}</span>}
   </div>;
 }

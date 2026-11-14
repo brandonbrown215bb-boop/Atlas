@@ -1,3 +1,5 @@
+import { createFogTool } from '../tools/fogTool';
+import { drawFog } from './drawFog';
 import { useEffect, useRef, useState } from 'react';
 import { Application, Container, Graphics, Text, type Texture } from 'pixi.js';
 import type { IDockviewPanelProps } from 'dockview-react';
@@ -182,6 +184,8 @@ export function MapView(props: IDockviewPanelProps<MapPanelParams>) {
     const measureGfx = new Graphics();
     measureGfx.eventMode = 'none';
 
+    const fogGfx = new Graphics();
+    const fogTool = createFogTool();
     const selectTool = createSelectTool();
     const propTool = createPropTool();
     const areaTool = createAreaTool();
@@ -196,6 +200,7 @@ export function MapView(props: IDockviewPanelProps<MapPanelParams>) {
     const measureTool = createMeasureTool();
     const getActiveTool = (): MapTool => {
       switch (activeToolIdRef.current) {
+        case 'fog': return fogTool;
         case 'prop': return propTool;
         case 'area':
           return areaTool;
@@ -297,6 +302,7 @@ export function MapView(props: IDockviewPanelProps<MapPanelParams>) {
         entitiesRoot.removeChildren();
         childMapsContainer.removeChildren().forEach((c) => c.destroy({ children: true }));
         placeOverlayContainer.removeChildren().forEach((c) => c.destroy({ children: true }));
+        fogGfx.clear();
         gridGfx.clear();
         overlayGfx.clear();
         measureGfx.clear();
@@ -307,6 +313,7 @@ export function MapView(props: IDockviewPanelProps<MapPanelParams>) {
       }
 
       const cam = getCamera();
+      drawFog(fogGfx, m, {x:-cam.x/cam.zoom,y:-cam.y/cam.zoom,w:host.clientWidth/cam.zoom,h:host.clientHeight/cam.zoom},0.5);
       const usedTextures = new Set<string>();
       const textureFor = (entity: Entity): Texture | undefined => {
         const id = entityAssetId(entity);
@@ -798,6 +805,7 @@ export function MapView(props: IDockviewPanelProps<MapPanelParams>) {
         worldLayer.addChild(entitiesRoot);
         worldLayer.addChild(childMapsContainer);
         worldLayer.addChild(placeOverlayContainer);
+        worldLayer.addChild(fogGfx);
         worldLayer.addChild(overlayGfx);
         worldLayer.addChild(measureGfx);
         app.stage.addChild(worldLayer);

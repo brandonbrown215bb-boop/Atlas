@@ -30,6 +30,18 @@ test('player window shares live map state and hides private content', async () =
       state.execute('entity.add',{mapId:map.id, entity:{id:'private',type:'label',origin:'manual',rev:0,layerId:map.layers[0].id,gmOnly:true,x:10,y:10,text:'SECRET',size:120}});
     });
     await expect(player.getByTestId('player-image')).toHaveAttribute('src', publicImage!);
+    await main.getByRole('button',{name:'Hide all',exact:true}).click();
+    await expect.poll(async () => {
+      const src = await player.getByTestId('player-image').getAttribute('src');
+      if (!src) return false;
+      return app.evaluate(({nativeImage}, data) => {
+        const pixels=nativeImage.createFromDataURL(data).toBitmap();
+        for(let i=0;i<pixels.length;i+=4) if(pixels[i] || pixels[i+1] || pixels[i+2]) return false;
+        return true;
+      },src);
+    }).toBe(true);
+    await main.getByRole('button',{name:'Reveal all',exact:true}).click();
+    await expect.poll(() => player.getByTestId('player-image').getAttribute('src')).not.toBeNull();
     await player.close();
     const again = app.waitForEvent('window');
     await main.getByTestId('btn-player-window').click();

@@ -1,3 +1,4 @@
+import { drawFog } from './drawFog';
 import { Application, Container, Graphics } from 'pixi.js';
 import type { Entity, MapDoc } from '../model/schema';
 import type { CameraState } from './camera';
@@ -94,6 +95,11 @@ export async function renderMapToPngBase64(
         grid.stroke({ color: 0xffffff, alpha: 0.2, width: 1 / cam.zoom });
       }
       worldLayer.addChild(grid);
+    }
+    if (view === 'player' && options.map.fog.enabled) {
+      const fog = new Graphics();
+      drawFog(fog, options.map, {x:-cam.x/cam.zoom,y:-cam.y/cam.zoom,w:width/cam.zoom,h:height/cam.zoom},1);
+      worldLayer.addChild(fog);
     }
     app.stage.addChild(worldLayer);
     app.render();

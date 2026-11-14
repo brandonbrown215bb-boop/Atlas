@@ -3,6 +3,7 @@ import type { AreaRole, AssetsIndex, MapKind, PathRole, Point } from './schema';
 import type { CameraState } from '../render/camera';
 
 export type ToolId =
+  | 'fog'
   | 'select'
   | 'prop'
   | 'area'
@@ -39,6 +40,8 @@ export interface MeasurementRoute {
 }
 
 export interface ViewStoreState {
+  fogMode: 'reveal' | 'hide';
+  fogRadius: number;
   panels: Record<string, PanelViewState>;
   activeMapPanelId: string | null;
   activeTool: ToolId;
@@ -119,6 +122,8 @@ export interface ViewStoreState {
 }
 
 export const viewStore = createStore<ViewStoreState>((set) => ({
+  fogMode: 'reveal',
+  fogRadius: 3,
   panels: {},
   activeMapPanelId: null,
   activeTool: 'select',

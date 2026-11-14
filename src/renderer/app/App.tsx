@@ -420,7 +420,7 @@ export function App() {
         }}
       >
         <span style={{ color: 'var(--atlas-text-muted)' }}>Tool:</span>
-        {(['select', 'prop', 'area', 'path', 'pointEdit', 'wall', 'door', 'light', 'label', 'portal', 'developArea', 'measure'] as ToolId[]).map((tool) => (
+        {(['select', 'prop', 'area', 'path', 'pointEdit', 'wall', 'door', 'light', 'label', 'portal', 'developArea', 'measure', 'fog'] as ToolId[]).map((tool) => (
           <button
             key={tool}
             type="button"

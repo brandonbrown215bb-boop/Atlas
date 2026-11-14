@@ -1,3 +1,4 @@
+import { paintFog, rectRing } from '../geom/fog';
 import { z } from 'zod';
 import { clipAndInheritEntities } from '../geom/clipInherit';
 import { getPlaceBounds } from '../geom/places';
@@ -753,5 +754,21 @@ registerCommand({
       addedCount,
       keptEdited,
     };
+  },
+});
+
+registerCommand({
+  name:'fog.paint', description:'Enable/disable fog, reveal/hide a brush stroke (radius in metres), or reveal/hide the whole map. One stroke is one undo step.',
+  input:z.object({mapId:z.string().min(1),mode:z.enum(['enable','disable','reveal','hide','revealAll','hideAll']),points:z.array(PointSchema).max(10000).default([]),radius:z.number().positive().finite().default(3)}),
+  run(draft,input) {
+    const map = getMapOrThrow(draft,input.mapId);
+    if (input.mode === 'enable' || input.mode === 'disable') map.fog.enabled = input.mode === 'enable';
+    else {
+      map.fog.enabled = true;
+      if (input.mode === 'revealAll') map.fog.revealed = [[rectRing(map.bounds)]];
+      else if (input.mode === 'hideAll') map.fog.revealed = [];
+      else map.fog.revealed = paintFog(map.fog.revealed,input.points,input.radius,input.mode === 'hide');
+    }
+    map.revision++;
   },
 });

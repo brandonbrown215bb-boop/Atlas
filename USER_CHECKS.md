@@ -20,3 +20,4 @@
 ## Phase 4 — Outputs
 
 - Open the player window on your TV/second monitor. Try map selection, Send my view, labels/grid and fullscreen. Check that private layers, notes and secret-door markers never appear.
+- Enable Fog, select the Fog tool, and paint Reveal/Hide with different brush sizes. Check the solid player cover and half-transparent GM cover, including holes and undo/redo.
