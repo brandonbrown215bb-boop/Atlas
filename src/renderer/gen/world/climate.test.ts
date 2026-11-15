@@ -41,3 +41,43 @@ it('uses parent-world latitude for child regions and persists climate through un
   store.getState().undo(); expect(store.getState().world!.meta.climate).toBeUndefined();
   store.getState().redo(); expect(ClimateSchema.parse(store.getState().world!.meta.climate).temperature).toBe(-.4);
 });
+
+it('uses the repaired 839 by 558 km extent across negative coordinates without forcing snow',()=>{
+  const extent={x:-500000,y:-300000,w:839000,h:558000};
+  const values=Array.from({length:11},(_,i)=>climateAt({x:extent.x+extent.w/2,y:extent.y+extent.h*i/10},.5,9,{bounds:extent,transforms:[]}));
+  expect(new Set(values.map(v=>v.rule.name)).size).toBeGreaterThan(2);
+  expect(Math.max(...values.map(v=>v.temperature))).toBeGreaterThan(.8);
+  const a=climateAt({x:0,y:0},.5,9,{bounds:extent,transforms:[{x:100,y:200,rotation:0},{x:-100,y:-200,rotation:0}]});
+  expect(a).toEqual(climateAt({x:0,y:0},.5,9,{bounds:extent,transforms:[]}));
+  const cold=climateAt({x:0,y:0},.5,9,{bounds:extent,transforms:[],settings:ClimateSchema.parse({temperature:-.8,northLatitude:90,southLatitude:90})});
+  expect(cold.temperature).toBe(0);
+});
+
+it('produces wetter windward slopes and drier leeward rain shadows across a mountain ridge', () => {
+  const source = input();
+  const terrain = buildTerrain(source);
+  // Force a mid-latitude westerly belt (35..55 deg) with ocean on the west, ridge in center, plain on the east.
+  for (const c of terrain.cells) {
+    const xNorm = c.point.x / bounds.w;
+    if (xNorm < 0.2) {
+      c.elevation = 0.25;
+      c.land = false;
+    } else if (xNorm > 0.42 && xNorm < 0.54) {
+      c.elevation = 0.85;
+      c.land = true;
+    } else {
+      c.elevation = 0.52;
+      c.land = true;
+    }
+  }
+  const climate = {
+    bounds,
+    transforms: [],
+    settings: ClimateSchema.parse({ northLatitude: 55, southLatitude: 35, moisture: 0 }),
+  };
+  const built = buildClimate(terrain, { ...source, climate });
+  const windward = terrain.cells.map((c, i) => ({ c, m: built.values[i]!.moisture })).filter(({ c }) => c.point.x > 350000 && c.point.x < 480000);
+  const leeward = terrain.cells.map((c, i) => ({ c, m: built.values[i]!.moisture })).filter(({ c }) => c.point.x > 600000 && c.point.x < 800000);
+  const avg = (arr: Array<{ m: number }>) => arr.reduce((s, v) => s + v.m, 0) / arr.length;
+  expect(avg(windward)).toBeGreaterThan(avg(leeward) + 0.08);
+});

@@ -8,6 +8,7 @@ import { app, dialog, ipcMain, nativeImage, type BrowserWindow } from 'electron'
 import type { MapDoc, WorldMeta } from '../renderer/model/schema';
 import { PackLibrary } from './packs';
 import type { AssetQuery } from '../renderer/model/packs';
+import type { AssetTagOverride } from '../renderer/model/assetTags';
 import { extractDungeondraft } from './dungeondraft';
 import {
   addRecentWorld,
@@ -58,6 +59,10 @@ export function registerWorldIpc(getMainWindow: () => BrowserWindow | null): Wor
     } finally { importingPack = false; }
   });
   ipcMain.handle('atlas:asset-search', async (_event, query: AssetQuery) => { await libraryReady; return library.search(query); });
+  ipcMain.handle('atlas:asset-set-tags', async (_event, id: string, tags: AssetTagOverride) => {
+    await libraryReady;
+    return library.setAssetTags(id, tags);
+  });
   ipcMain.handle('atlas:asset-use', async (_event, worldDir: string, id: string) => {
     await libraryReady;
     if (resolve(worldDir) !== currentWorldDir) throw new Error('The world is no longer open.');

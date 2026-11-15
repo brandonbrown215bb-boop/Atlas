@@ -1,4 +1,5 @@
-import clipping, { type MultiPolygon, type Ring } from 'polygon-clipping';
+import type { MultiPolygon, Ring } from 'polygon-clipping';
+import clipping from './polygonClipping';
 import type { Point } from '../model/schema';
 
 /** Turn SVG contours into separate areas, preserving holes and islands. */

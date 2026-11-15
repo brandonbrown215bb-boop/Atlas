@@ -1,3 +1,4 @@
+import { chooseTool } from './context-helpers';
 import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
@@ -44,14 +45,14 @@ test('Phase 2: draws and edits an area with undo/redo, then measures a route and
     const canvas = panel.locator('canvas');
     await expect(panel).toContainText('Drawing (site)');
     await expect.poll(async () => Number(await panel.getAttribute('data-render-count'))).toBeGreaterThan(0);
-    await win.getByTestId('tool-btn-area').click();
+    await chooseTool(win,'area');
     let box = (await canvas.boundingBox())!;
     for (const [x, y] of [[80, 80], [240, 80], [240, 240], [80, 240]]) await win.mouse.click(box.x + x!, box.y + y!);
     await canvas.press('Enter');
     await expect(panel).toHaveAttribute('data-entity-count', '1');
     const siteSnapshot = () => win.evaluate(() => (window as unknown as TestWindow).__atlasWorldStore.getState().world.maps['site']!);
     const drawn = await siteSnapshot();
-    await win.getByTestId('tool-btn-pointEdit').click();
+    await chooseTool(win,'pointEdit');
     box = (await canvas.boundingBox())!;
     await win.mouse.move(box.x + 240, box.y + 80);
     await win.mouse.down();
@@ -95,12 +96,21 @@ test('Phase 2: draws and edits an area with undo/redo, then measures a route and
     await win.getByTestId('measure-speed').fill('3');
     expect(await snapshot()).toEqual(before);
     await win.screenshot({ path: testInfo.outputPath('measure-route.png') });
+    await win.getByLabel('Daily travel schedule',{exact:true}).check();
+    await win.getByTestId('measure-departure').fill('08:00');
+    await win.getByLabel('Travel hours per day',{exact:true}).fill('0.25');
+    await win.getByLabel('Show travel markers',{exact:true}).check();
+    await expect(win.getByTestId('measure-arrival')).toHaveText('Arrive: 08:10 (+1 day)');
+    await expect(win.getByTestId('measure-elapsed')).toHaveText('Elapsed: 1 d 10 min · 1 rest stop');
+    expect(await snapshot()).toEqual(before);
+    await win.screenshot({ path: testInfo.outputPath('scheduled-route.png') });
 
     // Moving the panel into another window keeps the route and its readout.
     const popupPromise = win.waitForEvent('popup');
     await win.getByTestId('popout-btn-map-main').click();
     const popup = await popupPromise;
     await expect(popup.getByTestId('measure-distance')).toHaveText('1.24 mi');
+    await expect(popup.getByTestId('measure-arrival')).toHaveText('Arrive: 08:10 (+1 day)');
     await popup.getByTestId('dockback-btn-map-main').click();
     await expect(win.getByTestId('measure-distance')).toHaveText('1.24 mi');
     // A different map does not inherit the old route.

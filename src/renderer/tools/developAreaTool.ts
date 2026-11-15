@@ -52,6 +52,11 @@ export function createDevelopAreaTool(): MapTool {
 
     onKey(e, ctx) {
       if (e.key === 'Escape') {
+        const hasPending =
+          dragStart !== null ||
+          dragCurrent !== null ||
+          viewStore.getState().pendingDevelopRect !== null;
+        if (!hasPending) return false;
         dragStart = null;
         dragCurrent = null;
         viewStore.getState().setPendingDevelopRect(null);

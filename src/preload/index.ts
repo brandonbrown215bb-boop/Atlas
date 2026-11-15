@@ -1,6 +1,19 @@
 import { contextBridge, ipcRenderer } from 'electron';
 import type { AssetsIndex, MapDoc, WorldMeta } from '../renderer/model/schema';
-import type { Pack, PackProgress, AssetQuery, AssetPage } from '../renderer/model/packs';
+import type { Pack, PackAsset, PackProgress, AssetQuery, AssetPage } from '../renderer/model/packs';
+import type { AssetTagOverride } from '../renderer/model/assetTags';
+
+// Native menu and accelerators enter the same draft-first keyboard path as canvas input.
+ipcRenderer.on('atlas:history', (_event, action: 'undo' | 'redo') => {
+  const target = document.activeElement;
+  if (target?.matches('input, textarea, [contenteditable="true"]')) {
+    ipcRenderer.send('atlas:history-text', action);
+    return;
+  }
+  (target ?? document).dispatchEvent(new KeyboardEvent('keydown', {
+    key: action === 'undo' ? 'z' : 'y', ctrlKey: true, bubbles: true, cancelable: true,
+  }));
+});
 
 export interface RecentWorldInfo {
   id: string;
@@ -40,6 +53,7 @@ export interface AtlasApi {
   importDungeondraftPack: (source?: string) => Promise<Pack[] | null>;
   usePackAsset: (worldDir: string, id: string) => Promise<{ assetId: string; index: AssetsIndex; w: number; h: number; metersPerPixel: number }>;
   searchAssets: (query: AssetQuery) => Promise<AssetPage>;
+  setAssetTags: (id: string, tags: AssetTagOverride) => Promise<PackAsset>;
   getAssetThumbnail: (id: string) => Promise<string>;
   listPacks: () => Promise<Pack[]>;
   registerPack: (root: string) => Promise<Pack[]>;
@@ -96,6 +110,7 @@ const api: AtlasApi = {
   importDungeondraftPack: source => ipcRenderer.invoke('atlas:pack-import', source),
   usePackAsset: (worldDir, id) => ipcRenderer.invoke('atlas:asset-use', worldDir, id),
   searchAssets: query => ipcRenderer.invoke('atlas:asset-search', query),
+  setAssetTags: (id, tags) => ipcRenderer.invoke('atlas:asset-set-tags', id, tags),
   getAssetThumbnail: id => ipcRenderer.invoke('atlas:asset-thumbnail', id),
   listPacks: () => ipcRenderer.invoke('atlas:packs-list'),
   registerPack: root => ipcRenderer.invoke('atlas:packs-register', root),

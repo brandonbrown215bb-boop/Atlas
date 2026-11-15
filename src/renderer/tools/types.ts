@@ -46,4 +46,6 @@ export interface MapTool {
   onKey: (e: KeyboardEvent, ctx: ToolContext) => boolean;
   drawOverlay: (gfx: Graphics, ctx: ToolContext) => void;
   getPreviewEntities?: () => ReadonlyMap<string, Entity> | null;
+  draftState?: () => { undo: boolean; redo: boolean };
+  extentPreview?: () => { w:number; h:number } | null;
 }

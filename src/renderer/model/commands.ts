@@ -1,8 +1,13 @@
+import { cityDiagnostics } from '../gen/city/diagnostics';
+import { restoreMissingLayers } from './migrate';
+import { affineFromRings, inheritTerrain, transformChildren } from '../geom/groupTransform';
+import { defaultBounds } from './mapDefaults';
 import { planSync } from './sync';
 import { getGenerator, regionConstraints, runGenerator } from '../gen/framework';
 import '../gen/dungeon/layout';
 import '../gen/glade/outdoor';
 import '../gen/world/world';
+import '../gen/city/city';
 import { climateContext } from '../gen/world/context';
 import { previewInterior } from '../gen/dungeon/interior';
 import { pointInPolygon } from '../geom/hitTest';
@@ -13,6 +18,9 @@ import { clipAndInheritEntities } from '../geom/clipInherit';
 import { getPlaceBounds } from '../geom/places';
 import { getChildRectInParent, listKeptEditedEntities } from '../geom/pullFromParent';
 import { translateEntityPatch } from '../geom/transform';
+import { resolveGeography, geographicEntities, isOcean, polygonArea } from '../geom/geography';
+import { fromPolygons, toPolygons } from '../geom/fog';
+import clipping from '../geom/polygonClipping';
 import { CLOCK_TIME, measureRoute } from '../geom/measure';
 import {
   EntitySchema,
@@ -27,6 +35,7 @@ import {
   type Layer,
   type MapDoc,
   type WorldMeta,
+  type Point,
 } from './schema';
 
 export interface WorldDocument {
@@ -91,13 +100,35 @@ registerCommand({
   name: 'generator.run',
   description: 'Generate world/continent terrain, climate, rivers and themed symbols (world/region maps), dungeon/interior or glade woodland inside an area. One undo step; manual edits survive. World params: cells (8000), seaLevel, ruggedness, rivers, riverThreshold, density (0–3), settlements (0–50). Settlement suggestions are GM-only until settlement.resolveSuggestion accepts them. Climate comes from world.setClimate.',
   input: z.object({ mapId: z.string().min(1), genId: z.string().min(1).optional(), type: z.string().min(1),
-    seed: z.number().int(), params: z.record(z.string(), z.unknown()).default({}), regionEntityId: z.string().min(1),
+    seed: z.number().int(), params: z.record(z.string(), z.unknown()).default({}), regionEntityId: z.string().min(1).optional(),
+    entireMap: z.boolean().default(false), useBoundaryAsExtent: z.boolean().default(false),
     layerId: z.string().min(1), themeName: z.string().min(1).default('default') }),
   run(draft, input) {
     const map = getMapOrThrow(draft, input.mapId);
     const genId = input.genId ?? crypto.randomUUID();
     if (map.generators[genId]) throw new Error('Use generator.reroll for an existing run.');
-    const ids = runGenerator(map, { ...input, genId, theme: draft.meta.themes[input.themeName] ?? {}, climate: climateContext(draft, map) });
+    let regionEntityId = input.entireMap ? undefined : input.regionEntityId;
+    if (!regionEntityId && (input.entireMap || input.type === 'world')) {
+      regionEntityId = `boundary-${genId}`;
+      map.entities[regionEntityId] = { id: regionEntityId, type: 'area', role: 'land', usage: 'boundary', layerId: input.layerId, origin: 'manual', rev: map.revision, rings: [rectRing(map.bounds)] };
+    }
+    if (!regionEntityId) throw new Error('Select a generation area.');
+    const source = map.entities[regionEntityId];
+    if (input.type === 'world' && input.params.mode === 'populate' && source?.type === 'area' && source.usage !== 'boundary') {
+      // Keep authored coastlines (and their existing groups) intact. The generated
+      // detail needs its own movable boundary rather than borrowing that entity.
+      regionEntityId = `boundary-${genId}`;
+      if (map.entities[regionEntityId]) throw new Error('Generation boundary id already exists.');
+      map.entities[regionEntityId] = { id: regionEntityId, type: 'area', role: 'land', usage: 'boundary', name: source.name,
+        layerId: input.layerId, origin: 'manual', rev: map.revision, rings: source.rings.map(r => r.map(p => ({ ...p }))) };
+    }
+    const boundary = map.entities[regionEntityId];
+    if (input.useBoundaryAsExtent && !map.parent && boundary?.type === 'area') {
+      const p = boundary.rings[0]!;
+      const x = Math.min(...p.map(q=>q.x)), y = Math.min(...p.map(q=>q.y));
+      map.bounds = { x, y, w: Math.max(...p.map(q=>q.x))-x, h: Math.max(...p.map(q=>q.y))-y };
+    }
+    const ids = runGenerator(map, { ...input, regionEntityId, genId, theme: draft.meta.themes[input.themeName] ?? {}, climate: climateContext(draft, map) });
     return { genId, ids };
   },
 });
@@ -105,12 +136,18 @@ registerCommand({
   name: 'generator.reroll',
   description: 'Reroll untouched generated content, or dressing only, preserving all manual edits. Supply the new seed.',
   input: z.object({ mapId: z.string().min(1), genId: z.string().min(1), seed: z.number().int(),
-    params: z.record(z.string(), z.unknown()).optional(), themeName:z.string().min(1).optional(), dressingOnly: z.boolean().default(false) }),
+    params: z.record(z.string(), z.unknown()).optional(), themeName:z.string().min(1).optional(), dressingOnly: z.boolean().default(false), entireMap: z.boolean().default(false) }),
   run(draft, input) {
     const map = getMapOrThrow(draft, input.mapId), record = map.generators[input.genId];
     if (!record) throw new Error('Generator run not found.');
+    let regionEntityId = record.regionEntityId;
+    if (input.entireMap && record.type === 'world') {
+      regionEntityId = `boundary-${input.genId}`;
+      map.entities[regionEntityId] = { id: regionEntityId, type: 'area', role: 'land', usage: 'boundary',
+        layerId: record.layerId ?? map.layers[0]!.id, origin: 'manual', rev: map.revision, rings: [rectRing(map.bounds)] };
+    }
     const themeName = input.themeName ?? record.themeName ?? 'default';
-    const ids = runGenerator(map, { ...record, ...input, params: input.params ?? record.params,
+    const ids = runGenerator(map, { ...record, ...input, regionEntityId, params: input.params ?? record.params,
       layerId: record.layerId ?? map.layers[0]!.id, themeName, theme: draft.meta.themes[themeName] ?? {}, climate: climateContext(draft, map) });
     return { genId: input.genId, ids };
   },
@@ -183,19 +220,22 @@ registerCommand({
     const removeIds=new Set(removed.map(e=>e.id));
     const seed=input.seed??((record.seed+1)>>>0);
     const params=definition.params.parse(input.params??record.params),themeName=input.themeName??record.themeName??'default';
+    const roomPurposes = new Map(Object.values(map.entities).filter(e => e.type === 'area').map(e => [e.id, e.type === 'area' ? e.roomPurpose : undefined]));
     const output=input.action==='thin'?[]:definition.dress({seed,params,region:footprint.rings,
       constraints:[...regionConstraints(map,footprint.rings,footprint.id),...Object.values(map.entities).filter(e=>e.type==='prop'&&e.origin==='generated'&&!removeIds.has(e.id))],
       theme:draft.meta.themes[themeName]??{},grid:map.grid.size},
       Object.values(map.entities).filter(e=>e.genId===input.genId&&e.type!=='prop'))
       .filter(e=>e.type==='prop'&&pointInPolygon(e,area.rings));
-    if(!removed.length&&!output.length) return {ids:[],removed:[]};
+    const purposeChanged = Object.values(map.entities).some(e => e.type === 'area' && e.roomPurpose !== roomPurposes.get(e.id));
+    if(!removed.length&&!output.length&&!purposeChanged) return {ids:[],removed:[]};
     map.revision++;
-    record.params=params;record.themeName=themeName;
+    record.params=params;record.themeName=themeName;record.seed=seed;
+    for (const e of Object.values(map.entities)) if (e.type === 'area' && e.roomPurpose !== roomPurposes.get(e.id)) e.rev = map.revision;
     for(const e of removed) {delete map.entities[e.id];map.deleted[e.id]=map.revision;}
     const ids=output.map(e=>{
       const id=`${input.genId}:${map.revision}:${e.id}`;
       if(map.entities[id]) throw new Error(`Generated id already exists: ${id}`);
-      map.entities[id]=EntitySchema.parse({...e,id,genId:input.genId,layerId:layer.id,rev:map.revision});
+      map.entities[id]=EntitySchema.parse({...e,id,genId:input.genId,groupId:record.groupId??input.genId,layerId:layer.id,rev:map.revision});
       return id;
     });
     for(const e of Object.values(map.entities)) if(e.type==='place'&&e.entityIds.some(id=>removeIds.has(id))) {
@@ -230,7 +270,7 @@ registerCommand({
     draft.maps[id]=child;
     draft.meta.maps.push({id,name:child.name,kind:'interior',parentId:parent.id});
     parent.revision++;
-    if(building.origin==='generated') {building.origin='manual';building.rev=parent.revision;}
+    if(building.origin==='generated') {building.origin='manual';}
     if(place?.type==='place') {place.childMapId=id;place.rev=parent.revision;}
     else {
       const placeId=crypto.randomUUID();
@@ -345,6 +385,16 @@ registerCommand({
     };
     const validated = EntitySchema.parse(candidate);
     map.entities[existing.id] = validated;
+    if(validated.type==='path'&&validated.role==='river'){
+      map.riverNodes??={};
+      for(const [nodeId,p] of [[validated.startNodeId,validated.points[0]!],[validated.endNodeId,validated.points[validated.points.length-1]!]] as const)if(nodeId){
+        map.riverNodes[nodeId]={...p};
+        for(const other of Object.values(map.entities))if(other.type==='path'&&other.role==='river'&&other.id!==validated.id){
+          if(other.startNodeId===nodeId){other.points[0]={...p};other.origin='manual';other.rev=map.revision;}
+          if(other.endNodeId===nodeId){other.points[other.points.length-1]={...p};other.origin='manual';other.rev=map.revision;}
+        }
+      }
+    }
     return { id: validated.id };
   },
 });
@@ -391,12 +441,18 @@ registerCommand({
     const map = getMapOrThrow(draft, input.mapId);
     const createdIds: string[] = [];
     map.revision += 1;
+      const idMap=new Map(input.entityIds.map(id=>[id,crypto.randomUUID()]));
+      const groupMap=new Map<string,string>(),nodeMap=new Map<string,string>();
+      for(const e of Object.values(map.entities))if(input.entityIds.includes(e.id)&&e.groupId&&Object.values(map.entities).filter(p=>p.groupId===e.groupId).every(p=>input.entityIds.includes(p.id))){
+        if(!groupMap.has(e.groupId)){const id=crypto.randomUUID();groupMap.set(e.groupId,id);map.groups??={};const g=map.groups[e.groupId];map.groups[id]={name:`${g?.name??'Group'} copy`,boundary:g?.boundary?.map(r=>r.map(p=>({x:p.x+input.dx,y:p.y+input.dy})))};}
+      }
+      const cloneNode=(id:string|undefined,p:Point)=>{if(!id)return undefined;if(!nodeMap.has(id))nodeMap.set(id,crypto.randomUUID());map.riverNodes??={};const key=nodeMap.get(id)!;map.riverNodes[key]={x:p.x+input.dx,y:p.y+input.dy};return key;};
     for (const sourceId of input.entityIds) {
       const existing = map.entities[sourceId];
       if (!existing) {
         throw new Error(`Entity not found: ${sourceId}`);
       }
-      const newId = crypto.randomUUID();
+        const newId = idMap.get(sourceId)!;
       const offsetPatch = translateEntityPatch(existing, input.dx, input.dy);
       const clone = EntitySchema.parse({
         ...existing,
@@ -404,9 +460,12 @@ registerCommand({
         id: newId,
         origin: 'manual',
         genId: undefined,
+          groupId: existing.groupId?groupMap.get(existing.groupId):undefined,
         inheritedFrom: undefined,
         rev: map.revision,
       });
+        if(clone.type==='path'&&existing.type==='path'){clone.startNodeId=cloneNode(existing.startNodeId,existing.points[0]!);clone.endNodeId=cloneNode(existing.endNodeId,existing.points[existing.points.length-1]!);}
+        if(clone.type==='place')clone.entityIds=clone.entityIds.map(id=>idMap.get(id)??id);
       map.entities[newId] = clone;
       createdIds.push(newId);
     }
@@ -510,6 +569,9 @@ registerCommand({
     if (map.layers.length <= 1) {
       throw new Error('Cannot delete the last layer of a map');
     }
+    if (Object.values(map.entities).some(entity => entity.layerId === input.layerId)) {
+      throw new Error('Move this layer’s contents to another layer before deleting it.');
+    }
     map.revision += 1;
     map.layers.splice(idx, 1);
     return { id: input.layerId };
@@ -547,16 +609,17 @@ registerCommand({
 
 registerCommand({
   name: 'map.measureRoute',
-  description: 'Measure a route in metre coordinates. Returns feet/miles, optional constant-speed travel duration and 24-hour arrival with day offset. Speed is miles/hour; departure is HH:MM. Read-only: creates no undo step or dirty files.',
+  description: 'Measure a route in metres. Speed is mph; departure/startTime are HH:MM. Optional schedule sets a daily travel window (hoursPerDay up to 24). Returns moving/elapsed seconds, rest stops and arrival. Read-only; no undo or dirty files.',
   input: z.object({
     mapId: z.string().min(1),
     points: z.array(PointSchema).min(2).max(10000),
     speedMph: z.number().positive().finite().optional(),
     departure: z.string().regex(CLOCK_TIME).optional(),
+    schedule: z.object({ startTime: z.string().regex(CLOCK_TIME), hoursPerDay: z.number().positive().max(24).finite() }).optional(),
   }),
   run(draft, input) {
     getMapOrThrow(draft, input.mapId);
-    return measureRoute(input.points, input.speedMph, input.departure);
+    return measureRoute(input.points, input.speedMph, input.departure, input.schedule);
   },
 });
 
@@ -587,14 +650,14 @@ registerCommand({
     const defaultGrid =
       input.kind === 'interior' || input.kind === 'site' ? 1.524 : 100;
     const map = MapDocSchema.parse({
-      formatVersion: 1,
+      formatVersion: 2,
       id: input.id,
       name: input.name,
       kind: input.kind,
       parent: input.parentId
         ? { mapId: input.parentId, x: 0, y: 0, rotation: 0 }
         : undefined,
-      bounds: input.bounds ?? { x: 0, y: 0, w: 1000, h: 1000 },
+      bounds: input.bounds ?? defaultBounds(input.kind),
       grid: {
         size: input.gridSize ?? defaultGrid,
         visible: input.kind === 'interior' || input.kind === 'site',
@@ -684,10 +747,21 @@ registerCommand({
       if (target.type === 'place') {
         throw new Error(`Cannot link a place to another place: ${eid}`);
       }
+      if (target.origin === 'generated' && map.layers.find(l => l.id === target.layerId)?.locked) {
+        throw new Error('Unlock the linked generated objects before creating a place.');
+      }
       seen.add(eid);
       uniqueEntityIds.push(eid);
     }
     map.revision += 1;
+    // Naming generated scenery makes it deliberate work, just like opening its interior.
+    for (const eid of uniqueEntityIds) {
+      const target = map.entities[eid]!;
+      if (target.origin === 'generated') {
+        target.origin = 'manual';
+        target.rev = map.revision;
+      }
+    }
     const place = EntitySchema.parse({
       id,
       type: 'place',
@@ -737,10 +811,11 @@ function buildChildMapDoc(
   const inherited = clipAndInheritEntities(parentMap, rect, 'layer-base');
   const entities: Record<string, Entity> = {};
   for (const ent of inherited) {
+    ent.groupId='inherited';
     entities[ent.id] = ent;
   }
   return MapDocSchema.parse({
-    formatVersion: 1,
+    formatVersion: 2,
     id,
     name,
     kind,
@@ -765,6 +840,10 @@ function buildChildMapDoc(
       },
     ],
     entities,
+    groups: { inherited: { name: 'Inherited geography', boundary: [rectRing({x:0,y:0,w:rect.w,h:rect.h})] } },
+    terrain: inheritTerrain(parentMap,rect),
+    riverNodes: Object.fromEntries(inherited.flatMap(e=>e.type==='path'&&e.role==='river'?[[e.startNodeId,e.points[0]],[e.endNodeId,e.points[e.points.length-1]]].filter(([id])=>!!id):[])),
+    outsideLandIsWater: parentMap.outsideLandIsWater ?? ['world','region'].includes(parentMap.kind),
     generators: {},
     revision: 1,
     deleted: {},
@@ -843,6 +922,9 @@ registerCommand({
           w: input.w ?? 30,
           h: input.h ?? 30,
         };
+    parentMap.revision += 1;
+    place.childMapId = id;
+    place.rev = parentMap.revision;
     const childMap = buildChildMapDoc(
       id,
       input.name ?? `${place.name} Interior`,
@@ -857,9 +939,6 @@ registerCommand({
       kind: 'interior',
       parentId: parentMap.id,
     });
-    parentMap.revision += 1;
-    place.childMapId = childMap.id;
-    place.rev = parentMap.revision;
     return { id: childMap.id, created: true };
   },
 });
@@ -906,11 +985,15 @@ registerCommand({
       if (ent.inheritedFrom && editedParentIds.has(ent.inheritedFrom.entityId)) {
         continue;
       }
-      const next = { ...ent, rev: childMap.revision };
+      const next = { ...ent, groupId:'inherited', rev: childMap.revision };
       childMap.entities[next.id] = next;
       delete childMap.deleted[next.id];
       addedCount += 1;
     }
+
+    childMap.groups??={};childMap.groups.inherited??={name:'Inherited geography',boundary:[rectRing(childMap.bounds)]};
+    childMap.terrain=inheritTerrain(parentMap,rect);
+    childMap.riverNodes=Object.fromEntries(Object.values(childMap.entities).flatMap(e=>e.type==='path'&&e.role==='river'?[[e.startNodeId,e.points[0]],[e.endNodeId,e.points[e.points.length-1]]].filter(([id])=>!!id):[]));
 
     return {
       mapId: childMap.id,
@@ -963,3 +1046,127 @@ registerCommand({
     return {conflicts:result.conflicts,taken:result.taken,updated:result.updated};
   },
 });
+
+
+registerCommand({
+  name: 'map.setExtent', description: 'Set the physical map extent in metres without moving its contents.',
+  input: z.object({ mapId: z.string(), bounds: z.object({ x: z.number().finite(), y: z.number().finite(), w: z.number().positive().finite(), h: z.number().positive().finite() }) }),
+  run(draft, input) { const map = getMapOrThrow(draft, input.mapId); map.bounds = input.bounds; map.revision++; return map.bounds; },
+});
+registerCommand({
+  name: 'map.setGeographyOptions', description: 'Set implicit ocean and river display options.',
+  input: z.object({ mapId: z.string(), outsideLandIsWater: z.boolean().optional(), riverWidthMode: z.enum(['cartographic','physical']).optional() }),
+  run(draft, input) { const map = getMapOrThrow(draft, input.mapId); if(input.outsideLandIsWater!==undefined)map.outsideLandIsWater=input.outsideLandIsWater; if(input.riverWidthMode)map.riverWidthMode=input.riverWidthMode; map.revision++; },
+});
+registerCommand({
+  name: 'group.applyTransform', description: 'Transform a complete group while retaining generator ownership and its boundary. One undo step.',
+  input: z.object({mapId:z.string(),groupId:z.string(),changes:z.array(z.object({entityId:z.string(),patch:z.record(z.string(),z.unknown())}))}),
+  run(draft,input) {
+    const map=getMapOrThrow(draft,input.mapId), members=Object.values(map.entities).filter(e=>e.groupId===input.groupId);
+    if(members.some(e=>map.layers.find(l=>l.id===e.layerId)?.locked))throw new Error('Unlock all group layers before transforming this result.');
+    if(members.some(e=>!input.changes.some(c=>c.entityId===e.id)))throw new Error('Select the complete group before transforming it.');
+    const oldBoundary=map.groups?.[input.groupId]?.boundary?.map(r=>r.map(p=>({...p})));
+      const reference=members.find(e=>e.type==='area'&&e.rings[0]!.length>=3);
+      const changedReference=reference&&input.changes.find(c=>c.entityId===reference.id);
+      const memberTransform=reference?.type==='area'&&changedReference?.patch.rings
+        ?affineFromRings(reference.rings,changedReference.patch.rings as Point[][]):null;
+    map.revision++;
+    for(const c of input.changes){const e=map.entities[c.entityId];if(!e||e.groupId!==input.groupId)throw new Error('Group membership changed.');map.entities[e.id]=EntitySchema.parse({...e,...c.patch,id:e.id,type:e.type,origin:e.origin==='inherited'?'manual':e.origin,rev:map.revision});}
+    for(const record of Object.values(map.generators)) if(record.groupId===input.groupId){const boundary=map.entities[record.regionEntityId];if(boundary?.type==='area'){record.boundary=boundary.rings;if(map.groups?.[input.groupId])map.groups[input.groupId]!.boundary=boundary.rings;
+      if(record.type==='world'&&!map.parent){const p=boundary.rings[0]!;const x=Math.min(...p.map(q=>q.x)),y=Math.min(...p.map(q=>q.y));map.bounds={x,y,w:Math.max(...p.map(q=>q.x))-x,h:Math.max(...p.map(q=>q.y))-y};}
+    }}
+      if(memberTransform&&oldBoundary&&map.groups?.[input.groupId])map.groups[input.groupId]!.boundary=oldBoundary.map(r=>r.map(memberTransform.point));
+      const nextBoundary=map.groups?.[input.groupId]?.boundary;
+      const transform=memberTransform??(oldBoundary&&nextBoundary?affineFromRings(oldBoundary,nextBoundary):null);
+    if(transform){
+      for(const [id,record]of Object.entries(map.generators))if(record.groupId===input.groupId){const model=map.terrain?.[id];if(model){model.cells=model.cells.map(c=>({...c,...transform.point(c)}));model.bounds={...map.bounds};}}
+      transformChildren(draft.maps,map.id,transform,child=>child.parent?.footprintEntityId?members.some(e=>e.id===child.parent!.footprintEntityId):!!oldBoundary&&pointInPolygon({x:child.parent!.x+child.bounds.w/2,y:child.parent!.y+child.bounds.h/2},oldBoundary));
+      for(const e of Object.values(map.entities))if(e.type==='path'){map.riverNodes??={};if(e.startNodeId)map.riverNodes[e.startNodeId]=e.points[0]!;if(e.endNodeId)map.riverNodes[e.endNodeId]=e.points[e.points.length-1]!;}
+    }
+    return {groupId:input.groupId};
+  },
+});
+registerCommand({
+  name: 'entity.returnToGenerated', description: 'Allow a deliberately edited generator feature to be replaced on the next reroll.',
+  input:z.object({mapId:z.string(),entityIds:z.array(z.string())}),
+  run(draft,input){const map=getMapOrThrow(draft,input.mapId);map.revision++;for(const id of input.entityIds){const e=map.entities[id];if(e?.genId&&map.generators[e.genId]){e.origin='generated';e.rev=map.revision;}}},
+});
+registerCommand({
+  name:'map.paintBiome', description:'Paint or erase a biome stroke, clipped to land and outside water. One stroke is one undo step.',
+  input:z.object({mapId:z.string(),biome:z.string().min(1),points:z.array(PointSchema).min(1),radius:z.number().positive(),erase:z.boolean().default(false),layerId:z.string()}),
+  run(draft,input){
+    const map=getMapOrThrow(draft,input.mapId),geo=resolveGeography(map);
+    if(!map.layers.some(l=>l.id===input.layerId&&l.visible&&!l.locked))throw new Error('Choose a visible unlocked layer.');
+    if(!geo.land.length)throw new Error('Define land before painting biomes.');
+    const stroke=paintFog([],input.points,input.radius,false);
+    const brush=clipping.intersection(toPolygons(stroke),toPolygons(geo.land));
+    if(!brush.length)return;
+    map.revision++;
+    for(const e of Object.values(map.entities))if(e.type==='area'&&e.role.startsWith('biome:')&&(!input.erase||e.origin==='manual')){
+      const pieces=fromPolygons(clipping.difference(toPolygons([e.rings]),brush));
+      if(!pieces.length){delete map.entities[e.id];map.deleted[e.id]=map.revision;}else{e.rings=pieces[0]!;e.rev=map.revision;for(const rings of pieces.slice(1)){const id=crypto.randomUUID();map.entities[id]={...e,id,rings};}}
+    }
+    if(!input.erase){const rule=draft.meta.climate?.biomes.find(b=>b.name===input.biome);for(const rings of fromPolygons(brush)){const id=crypto.randomUUID();map.entities[id]={id,type:'area',role:`biome:${input.biome}`,name:input.biome,fill:rule?.color,layerId:input.layerId,origin:'manual',rev:map.revision,rings};}}
+  },
+});
+registerCommand({
+  name:'map.applyTrace',description:'Accept reviewed backdrop geography. Trace pixels are converted to world coordinates before this command.',
+  input:z.object({mapId:z.string(),sourceImageId:z.string(),layerId:z.string(),entities:z.array(EntitySchema),sourceRevision:z.number().optional()}),
+  run(draft,input){const map=getMapOrThrow(draft,input.mapId);if(input.sourceRevision!==undefined&&map.revision!==input.sourceRevision)throw new Error('The map changed. Review the trace again.');if(map.entities[input.sourceImageId]?.type!=='image')throw new Error('Backdrop is missing.');map.revision++;const groupId=crypto.randomUUID();map.groups??={};map.groups[groupId]={name:'Traced geography'};for(const e of input.entities){if(map.entities[e.id])throw new Error('Trace entity id already exists.');map.entities[e.id]={...e,groupId,layerId:input.layerId,origin:'manual',rev:map.revision};}map.outsideLandIsWater=true;map.riverNodes??={};for(const e of input.entities)if(e.type==='path'){if(e.startNodeId)map.riverNodes[e.startNodeId]=e.points[0]!;if(e.endNodeId)map.riverNodes[e.endNodeId]=e.points[e.points.length-1]!;}return {groupId};},
+});
+registerCommand({
+  name:'map.repair',description:'Apply reviewed, non-destructive repairs: recover explicit world extent and generator boundaries; preserve all geometry.',
+  input:z.object({mapId:z.string(),reassign:z.record(z.string(),z.string()).optional()}),
+  run(draft,input){const map=getMapOrThrow(draft,input.mapId);map.revision++;restoreMissingLayers(map);for(const [id,r]of Object.entries(map.generators)){const source=map.entities[input.reassign?.[id]??r.regionEntityId];if(source?.type==='area'){r.regionEntityId=source.id;r.boundary=source.rings;}}
+    if(!map.parent){const points=Object.values(map.generators).flatMap(r=>r.type==='world'?(r.boundary?.[0]??[]):[]);if(points.length){const x=Math.min(...points.map(p=>p.x)),y=Math.min(...points.map(p=>p.y));map.bounds={x,y,w:Math.max(...points.map(p=>p.x))-x,h:Math.max(...points.map(p=>p.y))-y};}}
+    return {unresolved:Object.entries(map.generators).filter(([,r])=>!r.boundary&&map.entities[r.regionEntityId]?.type!=='area').map(([id])=>id)};
+  },
+});
+
+registerCommand({
+  name:'world.applyGenerated',description:'Apply a worker generation result only if the source world is unchanged. One undo step.',
+  input:z.object({source:WorldDocumentSchema,after:WorldDocumentSchema}),
+  run(draft,input){
+    const current=WorldDocumentSchema.parse(draft);
+    if(JSON.stringify(current)!==JSON.stringify(input.source))throw new Error('The world changed while generating. Generate again to use the latest edits.');
+    const after=validateWorld(input.after);
+    if(JSON.stringify(current.meta)!==JSON.stringify(after.meta))draft.meta=after.meta;
+    // Keep untouched maps alive, including their expensive resolved-geography caches.
+    for(const id of Object.keys(draft.maps))if(!after.maps[id])delete draft.maps[id];
+    for(const [id,map]of Object.entries(after.maps))if(JSON.stringify(current.maps[id])!==JSON.stringify(map))draft.maps[id]=map;
+  },
+});
+
+registerCommand({
+  name:'river.add',description:'Add a river with shared endpoint junctions. A tributary meeting a river splits that path at its junction.',
+  input:z.object({mapId:z.string(),entity:PathEntitySchema,snapDistance:z.number().positive()}),
+  run(draft,input){
+    const map=getMapOrThrow(draft,input.mapId);if(input.entity.role!=='river')throw new Error('Choose the river role.');
+    if(map.entities[input.entity.id])throw new Error('River already exists.');
+    map.revision++;map.riverNodes??={};
+    const attach=(p:{x:number;y:number})=>{
+      let best:{river:Extract<Entity,{type:'path'}>;index:number;point:{x:number;y:number};distance:number}|undefined;
+      for(const river of Object.values(map.entities))if(river.type==='path'&&river.role==='river')for(let i=0;i<river.points.length-1;i++){
+        const a=river.points[i]!,b=river.points[i+1]!,dx=b.x-a.x,dy=b.y-a.y,len=dx*dx+dy*dy;
+        const t=len?Math.max(0,Math.min(1,((p.x-a.x)*dx+(p.y-a.y)*dy)/len)):0;
+        const point={x:a.x+t*dx,y:a.y+t*dy},distance=Math.hypot(point.x-p.x,point.y-p.y);
+        if(distance<input.snapDistance&&(!best||distance<best.distance))best={river,index:i,point,distance};
+      }
+      if(best){const r=best.river,q=best.point;
+        if(Math.hypot(q.x-r.points[0]!.x,q.y-r.points[0]!.y)<1e-7){r.startNodeId??=crypto.randomUUID();map.riverNodes![r.startNodeId]={...r.points[0]!};return{id:r.startNodeId,point:r.points[0]!};}
+        if(Math.hypot(q.x-r.points[r.points.length-1]!.x,q.y-r.points[r.points.length-1]!.y)<1e-7){r.endNodeId??=crypto.randomUUID();map.riverNodes![r.endNodeId]={...r.points[r.points.length-1]!};return{id:r.endNodeId,point:r.points[r.points.length-1]!};}
+        const nodeId=crypto.randomUUID(),id=crypto.randomUUID(),oldEnd=r.endNodeId;
+        const left=[...r.points.slice(0,best.index+1),q],right=[q,...r.points.slice(best.index+1)];
+        map.entities[id]={...r,id,points:right,startNodeId:nodeId,endNodeId:oldEnd,origin:'manual',rev:map.revision};
+        r.points=left;r.endNodeId=nodeId;r.origin='manual';r.rev=map.revision;map.riverNodes![nodeId]={...q};return{id:nodeId,point:q};
+      }
+      const existing=Object.entries(map.riverNodes!).find(([,q])=>Math.hypot(q.x-p.x,q.y-p.y)<input.snapDistance);
+      const id=existing?.[0]??crypto.randomUUID(),point=existing?.[1]??p;map.riverNodes![id]={...point};return{id,point};
+    };
+    const a=attach(input.entity.points[0]!),b=attach(input.entity.points[input.entity.points.length-1]!);
+    const points=[...input.entity.points];points[0]={...a.point};points[points.length-1]={...b.point};
+    map.entities[input.entity.id]={...input.entity,points,startNodeId:a.id,endNodeId:b.id,origin:'manual',rev:map.revision};return{id:input.entity.id};
+  },
+});
+
+registerCommand({name:'map.cityDiagnostics',description:'Read district area, buildable area, water coverage and blocking entity ids in square metres. Does not change the world.',input:z.object({mapId:z.string(),areaId:z.string()}),run(draft,input){return cityDiagnostics(getMapOrThrow(draft,input.mapId),input.areaId);}});

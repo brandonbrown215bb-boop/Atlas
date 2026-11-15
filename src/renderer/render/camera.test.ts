@@ -33,14 +33,14 @@ describe('P1.4 camera maths', () => {
 
   it('clamps zoom per map kind', () => {
     const cam: CameraState = { x: 0, y: 0, zoom: 0.01 };
-    const zoomedInWorld = zoomAtCursor(cam, 100, 100, 1000, 'world');
+    const zoomedInWorld = zoomAtCursor(cam, 100, 100, 1e9, 'world');
     expect(zoomedInWorld.zoom).toBe(ZOOM_LIMITS.world.max);
 
     const zoomedOutInterior = zoomAtCursor(
       { x: 0, y: 0, zoom: 10 },
       100,
       100,
-      0.0001,
+      1e-12,
       'interior',
     );
     expect(zoomedOutInterior.zoom).toBe(ZOOM_LIMITS.interior.min);

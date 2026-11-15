@@ -27,3 +27,20 @@ it('accumulates flow downhill and rounds river bends without crossing higher cel
     expect(buildRivers(terrain, rain, 100000)).toEqual([]);
   }
 });
+
+it('every drainage chain reaches water or the boundary and every confluence is exact',()=>{
+  for(const seed of [1,11,28]){
+    const input={seed,params:TerrainParamsSchema.parse({cells:450}),region:[rectRing({x:-400000,y:-250000,w:839000,h:558000})],constraints:[],theme:{},grid:100};
+    const t=buildTerrain(input),routes=buildRivers(t,t.cells.map(()=>.7),3);
+    for(let i=0;i<t.cells.length;i++){
+      const seen=new Set<number>();let at=i;
+      while(t.cells[at]!.downstream!>=0){expect(seen.has(at)).toBe(false);seen.add(at);at=t.cells[at]!.downstream!;}
+      const c=t.cells[at]!;
+      expect(!c.land||c.ring.some(p=>p.x<1e-9||p.y<1e-9||p.x>=1-1e-9||p.y>=558/839-1e-9)).toBe(true);
+    }
+    for(const route of routes){
+      const last=route.cells[route.cells.length-1]!,downstream=routes.find(r=>r.cells[0]===last);
+      if(downstream)expect(route.points[route.points.length-1]).toEqual(downstream.points[0]);
+    }
+  }
+});

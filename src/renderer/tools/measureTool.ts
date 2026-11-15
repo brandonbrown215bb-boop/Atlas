@@ -1,6 +1,7 @@
 import type { Graphics } from 'pixi.js';
 import { viewStore, type MeasurementRoute } from '../model/viewStore';
 import type { MapTool, ToolContext } from './types';
+import { travelMarkers } from '../geom/measure';
 
 export function getMeasurement(ctx: Pick<ToolContext, 'panelId' | 'worldId' | 'map'>): MeasurementRoute | null {
   const route = viewStore.getState().measurements[ctx.panelId];
@@ -50,7 +51,7 @@ export function createMeasureTool(): MapTool {
       const route = getMeasurement(ctx);
       const origin = route?.points[0];
       if (!route || !origin) return;
-      const zoom = Math.max(0.0005, ctx.camera.zoom);
+      const zoom = Math.max(1e-8, ctx.camera.zoom);
       // Keep GPU coordinates near zero even when measuring across a world map.
       gfx.position.set(origin.x, origin.y);
       gfx.moveTo(0, 0);
@@ -58,6 +59,17 @@ export function createMeasureTool(): MapTool {
       if (!route.finished && route.hover) gfx.lineTo(route.hover.x - origin.x, route.hover.y - origin.y);
       gfx.stroke({ color: 0xfbbf24, width: 2 / zoom, cap: 'round', join: 'round' });
       for (const point of route.points) gfx.circle(point.x - origin.x, point.y - origin.y, 4 / zoom).fill({ color: 0xfbbf24 });
+      const state = viewStore.getState();
+      if (state.measureMarkers) {
+        try {
+          const points = [...route.points, ...(!route.finished && route.hover ? [route.hover] : [])];
+          for (const p of travelMarkers(points, Number(state.measureSpeedMph), state.measureDeparture, state.measureSchedule ?? undefined)) {
+            const x = p.x - origin.x, y = p.y - origin.y, r = (p.kind === 'camp' ? 7 : 4) / zoom;
+            if (p.kind === 'camp') gfx.moveTo(x, y-r).lineTo(x+r, y+r).lineTo(x-r, y+r).closePath().fill({color:0xfb923c});
+            else gfx.moveTo(x-r, y-r).lineTo(x+r, y+r).stroke({color:0xfef3c7,width:2/zoom});
+          }
+        } catch { /* Incomplete travel controls have no markers. The bar shows the error. */ }
+      }
     },
   };
 }

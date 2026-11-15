@@ -41,9 +41,28 @@ button:hover:not(:disabled) {
   border-color: var(--atlas-accent);
 }
 
+button[aria-pressed='true'] {
+  background: var(--atlas-accent);
+  color: var(--atlas-bg);
+  border-color: var(--atlas-accent);
+  font-weight: 600;
+}
+
 button:disabled {
   opacity: 0.45;
   cursor: default;
+}
+
+.top-drawer-row {
+  order: 2;
+  flex-basis: 100%;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  padding-top: 6px;
+  margin-top: 2px;
+  border-top: 1px solid var(--atlas-border);
 }
 
 .svg-import-dialog {
@@ -96,4 +115,32 @@ button:disabled {
 .asset-thumbnail-placeholder { width: 64px; height: 64px; display: grid; place-items: center; }
 .asset-actions { display: flex; flex-wrap: wrap; gap: 6px; margin: 10px 0; }
 .asset-actions input[type=number] { width: 60px; }
+.asset-selected-meta { margin-top: 8px; display: flex; flex-direction: column; gap: 6px; }
+.asset-tag-editor { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; }
+.asset-tag-editor label { display: inline-flex; align-items: center; gap: 4px; }
+.asset-tag-editor input { width: 120px; }
 .theme-editor { border-top: 1px solid var(--atlas-border); margin-top: 12px; padding-top: 10px; display: flex; flex-direction: column; gap: 8px; }
+.generation-strip {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px 10px;
+  padding: 8px 10px;
+  border-bottom: 1px solid var(--atlas-border);
+  background: var(--atlas-surface);
+  font-size: 12px;
+}
+.generation-strip > strong { color: var(--atlas-text-muted); font-weight: 500; }
+.generation-field { display: inline-flex; align-items: center; gap: 5px; }
+.generation-field input[type=number] { width: 64px; }
+.generation-field input[type=range] { width: 80px; }
+.generation-settings { display: flex; flex-direction: column; gap: 10px; padding: 12px; font-size: 12px; }
+.generation-settings > label { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; }
+.generation-settings input:not([type=checkbox]):not([type=range]), .generation-settings select { max-width: 100%; min-width: 0; }
+.generation-error { flex-basis: 100%; color: var(--atlas-text); padding: 8px; border: 1px solid #b45309; border-radius: 4px; }
+.context-menu { position: relative; font-size: 12px; }
+.context-menu > summary { cursor: pointer; padding: 4px 7px; border: 1px solid var(--atlas-border); border-radius: 4px; list-style: none; }
+.context-menu > div { position: absolute; top: 100%; left: 0; z-index: 100; display: flex; flex-direction: column; align-items: stretch; gap: 6px; min-width: 180px; max-width: min(300px, 80vw); padding: 10px; background: var(--atlas-surface); border: 1px solid var(--atlas-border); border-radius: 5px; box-shadow: 0 6px 18px #0005; }
+.context-menu > div button { text-align: left; }
+.context-menu:not([open]) > div { display: none; }
+.generation-settings .context-menu > div { position: static; box-shadow: none; max-width: 100%; }

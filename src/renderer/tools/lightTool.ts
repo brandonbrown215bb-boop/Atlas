@@ -65,7 +65,7 @@ export function createLightTool(): MapTool {
       if (!hoverPt) {
         return;
       }
-      const zoom = Math.max(0.0005, ctx.camera.zoom);
+      const zoom = Math.max(1e-8, ctx.camera.zoom);
       const strokeW = 1.5 / zoom;
       const vs = viewStore.getState();
       const colorNum = /^#[0-9a-fA-F]{6}$/.test(vs.lightColor)

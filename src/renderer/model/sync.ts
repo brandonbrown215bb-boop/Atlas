@@ -47,6 +47,20 @@ export function planSync(mine:MapDoc,theirs:MapDoc,choices:SyncChoices={}) {
     e.entityIds=e.entityIds.filter(id=>map.entities[id]);e.rev=revision;
   }
   const changed=taken.length>0 || contentMapPlaces(mine)!==contentMapPlaces(map);
+  const localPoint=(p:{x:number;y:number})=>{
+    const t=link.transform;if(!t)return {...p};
+    return{x:t.x+t.scale*(p.x*Math.cos(t.rotation)-p.y*Math.sin(t.rotation)),y:t.y+t.scale*(p.x*Math.sin(t.rotation)+p.y*Math.cos(t.rotation))};
+  };
+  const rings=(r:NonNullable<MapDoc['groups']>[string]['boundary'])=>r?.map(ring=>ring.map(localPoint));
+  const rect=(b:MapDoc['bounds'])=>{const points=[b,{x:b.x+b.w,y:b.y},{x:b.x+b.w,y:b.y+b.h},{x:b.x,y:b.y+b.h}].map(localPoint),x=Math.min(...points.map(p=>p.x)),y=Math.min(...points.map(p=>p.y));return{x,y,w:Math.max(...points.map(p=>p.x))-x,h:Math.max(...points.map(p=>p.y))-y};};
+  for(const id of taken){const e=map.entities[id];if(!e)continue;
+    if(e.groupId&&theirs.groups?.[e.groupId]){map.groups??={};const g=theirs.groups[e.groupId]!;map.groups[e.groupId]={...structuredClone(g),boundary:rings(g.boundary)};}
+    if(e.genId&&theirs.generators[e.genId]){const r=theirs.generators[e.genId]!;map.generators[e.genId]={...structuredClone(r),boundary:rings(r.boundary)};
+      const model=theirs.terrain?.[e.genId];if(model){map.terrain??={};map.terrain[e.genId]={...structuredClone(model),bounds:rect(model.bounds),cells:model.cells.map(c=>({...c,...localPoint(c)}))};}
+    }
+  }
+  // Keep junction positions consistent with the chosen entity revisions, including local edits.
+  if(Object.values(map.entities).some(e=>e.type==='path'&&(e.startNodeId||e.endNodeId))){map.riverNodes={};for(const e of Object.values(map.entities))if(e.type==='path'){if(e.startNodeId)map.riverNodes[e.startNodeId]=e.points[0]!;if(e.endNodeId)map.riverNodes[e.endNodeId]=e.points[e.points.length-1]!;}}
   if(changed)map.revision=revision;
   map.link!.syncedMyRev=map.revision;map.link!.syncedTheirRev=theirs.revision;
   const updated=JSON.stringify(map)!==JSON.stringify(mine);

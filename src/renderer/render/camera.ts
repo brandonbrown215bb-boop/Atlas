@@ -10,11 +10,11 @@ export interface CameraState {
 }
 
 export const ZOOM_LIMITS: Record<MapKind, { min: number; max: number }> = {
-  world: { min: 0.0005, max: 1 / 50 },
-  region: { min: 0.002, max: 1 / 5 },
-  settlement: { min: 0.02, max: 1 / 0.25 },
-  site: { min: 0.2, max: 1 / 0.01 },
-  interior: { min: 0.2, max: 1 / 0.01 },
+  world: { min: 1e-8, max: 10000 },
+  region: { min: 1e-8, max: 10000 },
+  settlement: { min: 1e-8, max: 10000 },
+  site: { min: 1e-8, max: 10000 },
+  interior: { min: 1e-8, max: 10000 },
 };
 
 export function clampZoom(zoom: number, kind: MapKind): number {

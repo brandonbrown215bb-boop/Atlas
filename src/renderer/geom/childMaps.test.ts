@@ -55,7 +55,7 @@ describe('childMaps continuous zoom and inline helpers', () => {
     expect(childScreen.y).toBeCloseTo(parentScreen.y, 6);
 
     const back = childToParentCamera(childCam, childParent, 'region');
-    expect(back.zoom).toBe(0.2); // clamped to region max (1/5 = 0.2)
+    expect(back.zoom).toBe(parentCam.zoom);
   });
 
   it('detects zoom-in child when covering most of viewport and zoom-out when smaller than bounds', () => {

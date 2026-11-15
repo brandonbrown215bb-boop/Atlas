@@ -170,8 +170,8 @@ describe('P1.1 schema, store, commands, history, and migrate', () => {
     const roundTrippedMeta = migrateWorldData(JSON.parse(JSON.stringify(meta)));
     const roundTrippedMap = migrateMapData(JSON.parse(JSON.stringify(sampleMap)));
 
-    expect(roundTrippedMeta).toEqual(meta);
-    expect(roundTrippedMap).toEqual(sampleMap);
+    expect(roundTrippedMeta).toEqual({...meta,formatVersion:2});
+    expect(roundTrippedMap).toEqual({...sampleMap,formatVersion:2,groups:{}});
 
     expect(() =>
       migrateMapData({ ...sampleMap, formatVersion: 999 }),

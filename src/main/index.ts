@@ -1,5 +1,5 @@
 import { join } from 'node:path';
-import { app, BrowserWindow, ipcMain, screen } from 'electron';
+import { app, BrowserWindow, ipcMain, Menu, screen } from 'electron';
 import { startAgentServer, type AgentServerHandle } from './agent';
 import { registerWorldIpc } from './ipc';
 import { registerAtlasSchemes, setupProtocolHandlers } from './protocol';
@@ -97,6 +97,21 @@ function createMainWindow(): BrowserWindow {
 let agentServer: AgentServerHandle | null = null;
 
 void app.whenReady().then(async () => {
+  const history = (action: 'undo' | 'redo') => BrowserWindow.getFocusedWindow()?.webContents.send('atlas:history', action);
+  Menu.setApplicationMenu(Menu.buildFromTemplate([
+    { label: 'File', submenu: [{ role: 'quit' }] },
+    { label: 'Edit', submenu: [
+      { label: 'Undo', accelerator: 'CommandOrControl+Z', click: () => history('undo') },
+      { label: 'Redo', accelerator: 'CommandOrControl+Y', click: () => history('redo') },
+      { label: 'Redo', accelerator: 'CommandOrControl+Shift+Z', visible: false, click: () => history('redo') },
+      { type: 'separator' }, { role: 'cut' }, { role: 'copy' }, { role: 'paste' }, { role: 'selectAll' },
+    ] },
+    { role: 'viewMenu' }, { role: 'windowMenu' },
+  ]));
+  ipcMain.on('atlas:history-text', (event, action: unknown) => {
+    if (action === 'undo') event.sender.undo();
+    if (action === 'redo') event.sender.redo();
+  });
   const worldIpc = registerWorldIpc(() => mainWindow);
 
   agentServer = await startAgentServer({

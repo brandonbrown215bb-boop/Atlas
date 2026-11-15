@@ -65,7 +65,7 @@ export function createLabelTool(): MapTool {
       if (!hoverPt) {
         return;
       }
-      const zoom = Math.max(0.0005, ctx.camera.zoom);
+      const zoom = Math.max(1e-8, ctx.camera.zoom);
       const r = 4 / zoom;
       gfx.circle(hoverPt.x, hoverPt.y, r).fill({ color: 0xfbbf24, alpha: 0.8 });
     },

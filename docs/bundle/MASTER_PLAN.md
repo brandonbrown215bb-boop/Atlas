@@ -4,7 +4,7 @@ Written for an implementing agent. Read sections 1–5 fully before writing any 
 
 Source material: `MAP_EDITOR_BRIEF.md` (what the user wants), `TECH_STACK_AND_OPEN_QUESTIONS.md`, `reference-maps/`. Where this plan and the brief disagree, this plan wins: it records decisions made after the brief.
 
-Implementation progress: completed through **P7.4 Re-climate on arrival (Phase 7)**. Verification passes: 147 unit tests, production build and all 22 Electron tests. Phase 8 has not been started. Human continent/forest/pyramid comparisons, real-art, second-machine and Foundry checks remain in `USER_CHECKS.md`.
+Implementation progress: completed through **Phase 8 city/district generation**. The user also approved the notebook follow-up: Place preservation and scheduled travel are implemented. Verification passes: 157 unit tests, production build and all 25 Electron tests. City districts use independent footprint runs, density/wealth/activity/access profiles, drawn constraints and fitted roof art. See `README.md` and `BLOCKERS.md` for usage and evidence. Human city/continent/forest/pyramid preferences, real-art, second-machine and Foundry checks remain in `USER_CHECKS.md`.
 
 ---
 

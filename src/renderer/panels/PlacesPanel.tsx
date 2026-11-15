@@ -1,8 +1,16 @@
+import { activateMapPanel, navigateToMap } from '../model/navigation';
 import { useEffect, useState } from 'react';
 import type { IDockviewPanelProps } from 'dockview-react';
 import { useStore } from 'zustand';
 import { filterPlaces, listPlaceCategories } from '../geom/places';
-import type { PlaceEntity } from '../model/schema';
+import { resolveGenerationContext } from '../model/generationContext';
+import {
+  defaultGenerationDraft,
+  draftKey,
+  generateFromContext,
+  generationState,
+} from '../model/generationState';
+import type { Entity, PlaceEntity } from '../model/schema';
 import { worldStore } from '../model/store';
 import { viewStore } from '../model/viewStore';
 import { PanelHeaderBar } from './PanelHeaderBar';
@@ -88,8 +96,10 @@ export function PlacesPanel(props: IDockviewPanelProps) {
   const world = useStore(worldStore, (s) => s.world);
   const activeMapId = useStore(worldStore, (s) => s.activeMapId);
   const selectedIds = useStore(viewStore, (s) => s.selectedEntityIds);
+  const editParts = useStore(viewStore, (s) => s.editParts);
   const activeLayerId = useStore(viewStore, (s) => s.activeLayerId);
   const showOverlay = useStore(viewStore, (s) => s.showPlaceCategoryOverlay);
+  const job = useStore(generationState, (s) => s.job);
 
   const [newName, setNewName] = useState('');
   const [newCategory, setNewCategory] = useState('');
@@ -394,23 +404,92 @@ export function PlacesPanel(props: IDockviewPanelProps) {
                   />
                   <span>GM Only</span>
                 </label>
-                <button
-                  type="button"
-                  data-testid="btn-open-interior"
-                  onClick={() => {
-                    const res = worldStore.getState().execute('map.openInterior', {
-                      parentMapId: map.id,
-                      placeId: selectedPlace.id,
-                    }) as { id: string };
-                    const vs = viewStore.getState();
-                    const targetPanelId = vs.activeMapPanelId ?? 'map-main';
-                    vs.setPanelMap(targetPanelId, res.id);
-                    vs.setSelection([]);
-                    worldStore.getState().setActiveMap(res.id);
-                  }}
-                >
-                  {selectedPlace.childMapId ? 'Open Interior' : 'Create & Open Interior'}
-                </button>
+                {(() => {
+                  const linkedBuilding =
+                    map.kind === 'settlement'
+                      ? selectedPlace.entityIds
+                          .map((id) => map.entities[id])
+                          .find(
+                            (e): e is Entity =>
+                              Boolean(e) &&
+                              e!.type === 'area' &&
+                              e!.role === 'building',
+                          )
+                      : undefined;
+                  const hasChildMap = Boolean(
+                    selectedPlace.childMapId &&
+                      world?.maps[selectedPlace.childMapId],
+                  );
+                  return (
+                    <>
+                      {linkedBuilding && !hasChildMap && (
+                        <button
+                          type="button"
+                          data-testid="btn-generate-place-interior"
+                          disabled={Boolean(job)}
+                          onClick={() => {
+                            const ctx = resolveGenerationContext(
+                              map,
+                              [selectedPlace.id],
+                              editParts,
+                            );
+                            if (!world || !ctx.kind) return;
+                            const draft =
+                              generationState.getState().drafts[
+                                draftKey(world.meta.id, map.id, ctx)
+                              ] ?? defaultGenerationDraft(map, ctx);
+                            const panelId =
+                              viewStore.getState().activeMapPanelId ??
+                              'map-main';
+                            activateMapPanel(panelId, map.id);
+                            props.containerApi
+                              .getPanel('inspector')
+                              ?.api.setActive();
+                            props.containerApi
+                              .getPanel(panelId)
+                              ?.api.setActive();
+                            void generateFromContext(
+                              map,
+                              ctx,
+                              { ...draft, placeId: selectedPlace.id },
+                              panelId,
+                            );
+                          }}
+                        >
+                          {job?.mapId === map.id
+                            ? 'Generating…'
+                            : 'Generate Interior'}
+                        </button>
+                      )}
+                      <button
+                        type="button"
+                        data-testid="btn-open-interior"
+                        onClick={() => {
+                          const res = worldStore
+                            .getState()
+                            .execute('map.openInterior', {
+                              parentMapId: map.id,
+                              placeId: selectedPlace.id,
+                            }) as { id: string };
+                          const vs = viewStore.getState();
+                          const targetPanelId =
+                            vs.activeMapPanelId ?? 'map-main';
+                          vs.setPanelMap(targetPanelId, res.id);
+                          vs.setSelection([]);
+                          navigateToMap(res.id);
+                          props.containerApi
+                            .getPanel('inspector')
+                            ?.api.setActive();
+                          props.containerApi
+                            .getPanel(targetPanelId)
+                            ?.api.setActive();
+                        }}
+                      >
+                        {hasChildMap ? 'Open Interior' : 'Create & Open Interior'}
+                      </button>
+                    </>
+                  );
+                })()}
               </div>
             )}
           </>

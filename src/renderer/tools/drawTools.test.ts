@@ -9,6 +9,7 @@ import { createLightTool } from './lightTool';
 import { createPathTool } from './pathTool';
 import { createPointEditTool } from './pointEditTool';
 import { createWallTool } from './wallTool';
+import { createSelectTool } from './selectTool';
 import type { ToolContext, ToolPointerEvent } from './types';
 
 function makePointer(overrides: Partial<ToolPointerEvent> = {}): ToolPointerEvent {
@@ -68,6 +69,69 @@ function makeFixture() {
 }
 
 describe('AreaTool & PathTool', () => {
+  it('selects an individual building after entering Edit parts with the whole group selected', () => {
+    const f = makeFixture();
+    for (const [id, x] of [['left', 10], ['right', 50]] as const) f.store.getState().execute('entity.add', { mapId: 'm1', entity: {
+      id, type: 'area', role: 'building', groupId: 'town', layerId: 'l1', origin: 'generated', rev: 0,
+      rings: [[{ x, y: 10 }, { x: x + 20, y: 10 }, { x: x + 20, y: 30 }, { x, y: 30 }]],
+    } });
+    f.makeCtx().setSelectedIds(['left', 'right']);
+    viewStore.setState({ editParts: true });
+    try {
+      createSelectTool().onPointerDown({ x: 20, y: 20 }, makePointer(), f.makeCtx());
+      expect(f.getSelected()).toEqual(['left']);
+    } finally { viewStore.setState({ editParts: false }); }
+  });
+  it.each([
+    ['area', createAreaTool, 3],
+    ['path', createPathTool, 2],
+    ['wall', createWallTool, 2],
+  ] as const)('%s undoes draft points, redoes them, and protects map history until finished or cancelled', (_name, createTool, minimum) => {
+    viewStore.getState().setDrawMode('click');
+    viewStore.getState().setSnapToGrid(false);
+    viewStore.getState().setWallSnapToGrid(false);
+    const { store, makeCtx } = makeFixture();
+    store.getState().execute('layer.add', { mapId: 'm1', layer: {
+      id: 'land', name: 'Land', visible: true, locked: false, gmOnly: false,
+    } });
+    const before = store.getState();
+    const tool = createTool();
+    const key = (value: string, ctrlKey = true, shiftKey = false) => {
+      let prevented = false;
+      const handled = tool.onKey({ key: value, ctrlKey, shiftKey,
+        preventDefault() { prevented = true; },
+      } as KeyboardEvent, makeCtx());
+      if (handled && ctrlKey) expect(prevented).toBe(true);
+      return handled;
+    };
+    const points = [{ x: 0, y: 0 }, { x: 20, y: 0 }, { x: 20, y: 20 }];
+    for (const point of points) tool.onPointerDown(point, makePointer(), makeCtx());
+    for (let i = 0; i < points.length + 2; i++) expect(key('z')).toBe(true);
+    expect(key('Enter', false)).toBe(false);
+    expect(store.getState().world).toBe(before.world);
+    expect(store.getState().history).toBe(before.history);
+    // Both redo shortcuts restore points; a new point discards the old branch.
+    expect(key('y')).toBe(true);
+    expect(key('Z', true, true)).toBe(true);
+    expect(key('Backspace', false)).toBe(true);
+    tool.onPointerDown({ x: 40, y: 0 }, makePointer(), makeCtx());
+    expect(key('y')).toBe(true);
+    if (minimum === 3) tool.onPointerDown({ x: 40, y: 40 }, makePointer(), makeCtx());
+    expect(key('Enter', false)).toBe(true);
+    const entity = Object.values(store.getState().world!.maps.m1!.entities)[0]!;
+    const drawnPoints = entity.type === 'area' ? entity.rings[0] :
+      entity.type === 'path' || entity.type === 'wall' ? entity.points : [];
+    expect(drawnPoints).toEqual(minimum === 3 ?
+      [points[0], { x: 40, y: 0 }, { x: 40, y: 40 }] :
+      [points[0], { x: 40, y: 0 }]);
+    expect(key('z')).toBe(false); // Finished drawing returns to world Undo.
+    tool.onPointerDown({ x: 60, y: 60 }, makePointer(), makeCtx());
+    expect(key('z')).toBe(true);
+    expect(key('Escape', false)).toBe(true);
+    expect(key('z')).toBe(false);
+    viewStore.getState().setWallSnapToGrid(true);
+  });
+
   it('areaTool places points, snaps to grid, and finishes on double-click', () => {
     viewStore.getState().setDrawMode('click');
     viewStore.getState().setSnapToGrid(true);
@@ -168,6 +232,11 @@ describe('AreaTool & PathTool', () => {
     pointEdit.onPointerDown({ x: 15, y: 5 }, makePointer(), makeCtx());
     pointEdit.onPointerDown({ x: 15, y: 15 }, makePointer(), makeCtx());
     pointEdit.onPointerDown({ x: 5, y: 15 }, makePointer(), makeCtx());
+    const beforeCarve = store.getState();
+    expect(pointEdit.onKey({ key: 'z', ctrlKey: true, preventDefault() {} } as KeyboardEvent, makeCtx())).toBe(true);
+    expect(store.getState().world).toBe(beforeCarve.world);
+    expect(store.getState().history).toBe(beforeCarve.history);
+    expect(pointEdit.onKey({ key: 'y', ctrlKey: true, preventDefault() {} } as KeyboardEvent, makeCtx())).toBe(true);
     pointEdit.onPointerDown({ x: 5, y: 15 }, makePointer({ detail: 2 }), makeCtx());
 
     ent = store.getState().world!.maps['m1']!.entities[areaId]!;

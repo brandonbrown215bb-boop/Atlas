@@ -1,12 +1,33 @@
+import { geographicEntities } from '../geom/geography';
 import { drawFog } from './drawFog';
-import { Application, Container, Graphics } from 'pixi.js';
+import { Application, Container, Graphics, Sprite, TilingSprite } from 'pixi.js';
 import type { Entity, MapDoc } from '../model/schema';
 import type { CameraState } from './camera';
 import { playerRenderList } from '../model/player';
 import { buildEntityDisplay } from './drawEntity';
+import { getProceduralTexture } from './proceduralTextures';
 import { entityAssetId, loadAssetTexture, resolveWorldAssetUrl, updateTextureUsage } from './textures';
 import { worldStore } from '../model/store';
 import { viewStore } from '../model/viewStore';
+
+function mapBackdropStyle(map: MapDoc): { color: number; texKind: 'water' | 'grass' | 'stone' | 'parchment'; texAlpha: number } {
+  if (map.kind === 'world' || map.kind === 'region') {
+    return { color: 0x3a5c68, texKind: 'water', texAlpha: 0.45 };
+  }
+  if (map.kind === 'settlement') {
+    return { color: 0xc8ba9b, texKind: 'grass', texAlpha: 0.24 };
+  }
+  if (map.kind === 'site') {
+    const hasTrees = Object.values(map.entities).some(
+      (e) => e.type === 'prop' && (e.builtin === 'tree' || e.builtin === 'builtin:tree'),
+    );
+    if (hasTrees) {
+      return { color: 0x67754f, texKind: 'grass', texAlpha: 0.55 };
+    }
+    return { color: 0x2b221a, texKind: 'parchment', texAlpha: 0.08 };
+  }
+  return { color: 0x2b221a, texKind: 'parchment', texAlpha: 0.08 };
+}
 
 export interface RenderPngOptions {
   map: MapDoc;
@@ -35,13 +56,14 @@ export async function renderMapToPngBase64(
   const app = new Application();
   const textureOwner = {};
   const urls = new Set<string>();
+  const backdrop = mapBackdropStyle(options.map);
   await app.init({
     canvas,
     preference: 'webgl',
     autoStart: false,
     antialias: true,
     preserveDrawingBuffer: true,
-    backgroundColor: 0x0d1117,
+    backgroundColor: backdrop.color,
     width,
     height,
     resolution: 1,
@@ -49,11 +71,23 @@ export async function renderMapToPngBase64(
 
   try {
     app.stage.eventMode = 'none';
+    const bgTex = getProceduralTexture(backdrop.texKind);
+    if (bgTex) {
+      const bgTile = new TilingSprite({ texture: bgTex, width, height });
+      bgTile.eventMode = 'none';
+      bgTile.alpha = backdrop.texAlpha;
+      app.stage.addChild(bgTile);
+    }
+
     const worldLayer = new Container();
     worldLayer.eventMode = 'none';
 
     const zoom = Math.min(width / targetRect.w, height / targetRect.h);
-    const cam = options.camera ?? { x: -targetRect.x * zoom, y: -targetRect.y * zoom, zoom };
+    const cam = options.camera ?? {
+      x: (width - targetRect.w * zoom) / 2 - targetRect.x * zoom,
+      y: (height - targetRect.h * zoom) / 2 - targetRect.y * zoom,
+      zoom,
+    };
     worldLayer.position.set(cam.x, cam.y);
     worldLayer.scale.set(cam.zoom);
 
@@ -67,7 +101,7 @@ export async function renderMapToPngBase64(
       worldLayer.addChild(lc);
     }
 
-    for (const entity of (view === 'player' ? playerRenderList(options.map, options.labels) : Object.values(options.map.entities)) as Entity[]) {
+    for (const entity of (view === 'player' ? playerRenderList(options.map, options.labels) : geographicEntities(options.map)) as Entity[]) {
       if (view === 'player' && entity.gmOnly) continue;
       const lc = layerMap.get(entity.layerId);
       if (!lc) continue;
@@ -78,7 +112,9 @@ export async function renderMapToPngBase64(
       const display = buildEntityDisplay(entity, {
         selected: false,
         zoom: cam.zoom,
+        cartographicRivers: (options.map.riverWidthMode ?? (['world','region'].includes(options.map.kind)?'cartographic':'physical'))==='cartographic',
         texture: texture ?? undefined,
+        mapKind: options.map.kind,
       });
       lc.addChild(display);
     }
@@ -102,12 +138,60 @@ export async function renderMapToPngBase64(
       worldLayer.addChild(fog);
     }
     app.stage.addChild(worldLayer);
+    if (options.map.parent) {
+      const b = options.map.bounds;
+      const mask = new Graphics().rect(b.x, b.y, b.w, b.h).fill(0xffffff);
+      mask.position.set(cam.x, cam.y);
+      mask.scale.set(cam.zoom);
+      app.stage.addChild(mask);
+      worldLayer.mask = mask;
+    }
+
+    // Subtle parchment grain + warm sepia edge vignette for cohesive cartographic finish
+    const parchmentTex = getProceduralTexture('parchment');
+    if (parchmentTex) {
+      const grain = new TilingSprite({ texture: parchmentTex, width, height });
+      grain.eventMode = 'none';
+      grain.alpha = 0.12;
+      app.stage.addChild(grain);
+    }
+    const vignetteTex = getProceduralTexture('vignette');
+    if (vignetteTex) {
+      const vig = new Sprite(vignetteTex);
+      vig.eventMode = 'none';
+      vig.width = width;
+      vig.height = height;
+      app.stage.addChild(vig);
+    }
+
+    if ((options.map.kind === 'world' || options.map.kind === 'region' || options.map.kind === 'settlement') && width >= 400 && height >= 400) {
+      const chrome = new Graphics();
+      chrome.eventMode = 'none';
+      const pad = 10;
+      chrome.rect(pad, pad, width - pad * 2, height - pad * 2).stroke({ color: 0x3b2a1a, width: 2, alpha: 0.55 });
+      chrome.rect(pad + 5, pad + 5, width - (pad + 5) * 2, height - (pad + 5) * 2).stroke({ color: 0x3b2a1a, width: 1, alpha: 0.35 });
+      // Compass rose in bottom-right corner
+      const rx = width - 58, ry = height - 58, rad = 26;
+      chrome.circle(rx, ry, rad).fill({ color: 0xf0e4c8, alpha: 0.72 }).stroke({ color: 0x3b2a1a, width: 1.5, alpha: 0.75 });
+      chrome.circle(rx, ry, rad * 0.76).stroke({ color: 0x3b2a1a, width: 0.8, alpha: 0.45 });
+      for (let i = 0; i < 4; i++) {
+        const a = (i * Math.PI) / 2 - Math.PI / 2;
+        const p1 = { x: rx + Math.cos(a) * rad * 0.92, y: ry + Math.sin(a) * rad * 0.92 };
+        const p2 = { x: rx + Math.cos(a + 0.38) * rad * 0.25, y: ry + Math.sin(a + 0.38) * rad * 0.25 };
+        const p3 = { x: rx + Math.cos(a - 0.38) * rad * 0.25, y: ry + Math.sin(a - 0.38) * rad * 0.25 };
+        chrome.moveTo(rx, ry).lineTo(p1.x, p1.y).lineTo(p2.x, p2.y).closePath().fill({ color: i === 0 ? 0x8f3328 : 0x3b2a1a, alpha: 0.85 });
+        chrome.moveTo(rx, ry).lineTo(p1.x, p1.y).lineTo(p3.x, p3.y).closePath().fill({ color: i === 0 ? 0xc8634a : 0x7c6852, alpha: 0.85 });
+      }
+      app.stage.addChild(chrome);
+    }
+
     app.render();
 
     const dataUrl = canvas.toDataURL('image/png');
     return dataUrl.replace(/^data:image\/png;base64,/, '');
   } finally {
-    app.destroy(true, { children: true });
+    app.stage.destroy({ children: true });
+    app.destroy(false);
     updateTextureUsage(textureOwner, new Set());
   }
 }

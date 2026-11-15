@@ -1,3 +1,4 @@
+import { generationSettings } from './context-helpers';
 import { mkdtempSync, readFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
@@ -40,12 +41,11 @@ test('phase 7: continent commands, UI settings, manual lake reroll, undo and sav
       w.__atlasViewStore.getState().setPanelMap('map-main', 'continent');
       w.__atlasViewStore.getState().setSelection(['footprint']);
     });
-    await main.getByTestId('btn-generator').click();
-    await main.getByLabel('Generator run').selectOption('terrain');
-    await expect(main.getByLabel('Generator type')).toHaveValue('world');
+    await generationSettings(main);
     await expect(main.getByLabel('Sea level')).toHaveValue('0.45');
     await expect(main.getByLabel('World decoration density')).toHaveValue('1');
     await expect(main.getByLabel('Settlement suggestion count')).toHaveValue('12');
+    await main.getByTestId('generation-settings').getByText('Settlement suggestions',{exact:true}).click();
     const suggestions = main.getByTestId('settlement-suggestion');
     await expect(suggestions).toHaveCount(12);
     await suggestions.first().getByLabel('Settlement name').fill('Rookhaven');
@@ -63,12 +63,13 @@ test('phase 7: continent commands, UI settings, manual lake reroll, undo and sav
     await main.getByRole('button', { name: 'Add custom biome rule', exact: true }).click();
     await main.getByLabel('Biome 1 name', { exact: true }).fill('crystal wastes');
     await main.getByRole('button', { name: 'Apply world climate', exact: true }).click();
-    await expect(main.getByTestId('panel-generator').getByRole('alert')).toHaveCount(0);
+    await expect(main.getByTestId('generation-settings').getByRole('alert')).toHaveCount(0);
     // The climate command is a separate undo step from the terrain reroll.
     await main.getByLabel('Sea level').fill('0.5');
     await main.getByText('World climate and biome table', { exact: true }).click();
-    await main.getByRole('button', { name: 'Reroll', exact: true }).click();
-    await expect(main.getByTestId('panel-generator').getByRole('alert')).toHaveCount(0);
+    await main.getByTestId('generation-strip').getByRole('button', { name: 'Try another', exact: true }).click();
+    await expect(main.getByTestId('generation-settings')).toHaveAttribute('aria-busy','false');
+    await expect(main.getByTestId('generation-settings').getByRole('alert')).toHaveCount(0);
     const rerolled: MapDoc = await call('map_get', { mapId: 'continent' });
     expect(rerolled.entities.lake).toEqual(before.entities.lake);
     expect(rerolled.generators.terrain).toMatchObject({ type: 'world', seed: 10, params: { seaLevel: .5 } });

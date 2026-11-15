@@ -1,9 +1,11 @@
 import { createStore } from 'zustand/vanilla';
 import type { AreaRole, AssetsIndex, MapKind, PathRole, Point } from './schema';
 import type { CameraState } from '../render/camera';
+import type { TravelSchedule } from '../geom/measure';
 
 export type ToolId =
   | 'fog'
+  | 'biome'
   | 'select'
   | 'prop'
   | 'area'
@@ -40,6 +42,16 @@ export interface MeasurementRoute {
 }
 
 export interface ViewStoreState {
+  interactionMessage: string;
+  diagnosticEntityIds: string[];
+  biomeName: string;
+  biomeRadius: number;
+  biomeErase: boolean;
+  zoomThrough: boolean;
+  editParts: boolean;
+  fitRequest: { panelId: string; bounds?: { x: number; y: number; w: number; h: number }; nonce: number } | null;
+  draftUndo: boolean;
+  draftRedo: boolean;
   fogMode: 'reveal' | 'hide';
   fogRadius: number;
   panels: Record<string, PanelViewState>;
@@ -81,6 +93,8 @@ export interface ViewStoreState {
   measurements: Record<string, MeasurementRoute>;
   measureSpeedMph: string;
   measureDeparture: string;
+  measureSchedule: TravelSchedule | null;
+  measureMarkers: boolean;
 
   setPanelMap: (panelId: string, mapId: string | null) => void;
   setPanelCamera: (panelId: string, camera: CameraState) => void;
@@ -119,9 +133,19 @@ export interface ViewStoreState {
   setMeasurement: (panelId: string, route: MeasurementRoute | null) => void;
   setMeasureSpeedMph: (speed: string) => void;
   setMeasureDeparture: (departure: string) => void;
+  setMeasureSchedule: (schedule: TravelSchedule | null) => void;
+  setMeasureMarkers: (show: boolean) => void;
 }
 
 export const viewStore = createStore<ViewStoreState>((set) => ({
+  interactionMessage: '',
+  diagnosticEntityIds: [],
+  biomeName: 'forest', biomeRadius: 1000, biomeErase: false,
+  zoomThrough: true,
+  editParts: false,
+  fitRequest: null,
+  draftUndo: false,
+  draftRedo: false,
   fogMode: 'reveal',
   fogRadius: 3,
   panels: {},
@@ -160,6 +184,8 @@ export const viewStore = createStore<ViewStoreState>((set) => ({
   measurements: {},
   measureSpeedMph: '3',
   measureDeparture: '08:00',
+  measureSchedule: null,
+  measureMarkers: false,
 
   setPanelMap(panelId, mapId) {
     set((state) => {
@@ -323,4 +349,6 @@ export const viewStore = createStore<ViewStoreState>((set) => ({
   },
   setMeasureSpeedMph(measureSpeedMph) { set({ measureSpeedMph }); },
   setMeasureDeparture(measureDeparture) { set({ measureDeparture }); },
+  setMeasureSchedule(measureSchedule) { set({ measureSchedule }); },
+  setMeasureMarkers(measureMarkers) { set({ measureMarkers }); },
 }));

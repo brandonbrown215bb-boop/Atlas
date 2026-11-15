@@ -2,6 +2,7 @@ import type { Graphics } from 'pixi.js';
 import { snapPointToGrid } from '../geom/simplify';
 import type { Point } from '../model/schema';
 import { viewStore } from '../model/viewStore';
+import { handleDraftHistory } from './draftHistory';
 import {
   resolveTargetLayerId,
   type MapTool,
@@ -10,12 +11,14 @@ import {
 
 export function createWallTool(): MapTool {
   let points: Point[] = [];
+  const removedPoints: Point[] = [];
   let hoverPt: Point | null = null;
   let lastClickTime = 0;
   let lastClickPt: Point | null = null;
 
   const reset = () => {
     points = [];
+    removedPoints.length = 0;
     lastClickTime = 0;
     lastClickPt = null;
   };
@@ -53,6 +56,7 @@ export function createWallTool(): MapTool {
   };
 
   return {
+    draftState: () => ({ undo: points.length > 0 || removedPoints.length > 0, redo: removedPoints.length > 0 }),
     id: 'wall',
 
     onPointerDown(pt, e, ctx) {
@@ -63,7 +67,7 @@ export function createWallTool(): MapTool {
       hoverPt = snapped;
 
       const now = Date.now();
-      const tol = 8 / Math.max(0.0005, ctx.camera.zoom);
+      const tol = 8 / Math.max(1e-8, ctx.camera.zoom);
       const isDoubleClick =
         (e.detail !== undefined && e.detail >= 2) ||
         (lastClickPt !== null &&
@@ -83,6 +87,7 @@ export function createWallTool(): MapTool {
 
       const prev = points[points.length - 1];
       if (!prev || prev.x !== snapped.x || prev.y !== snapped.y) {
+        removedPoints.length = 0;
         points.push(snapped);
       }
       ctx.requestRedraw();
@@ -101,7 +106,13 @@ export function createWallTool(): MapTool {
     },
 
     onKey(e, ctx) {
-      if (e.key === 'Escape' && points.length > 0) {
+      if (handleDraftHistory(e, points, removedPoints)) {
+        lastClickTime = 0;
+        lastClickPt = null;
+        ctx.requestRedraw();
+        return true;
+      }
+      if (e.key === 'Escape' && (points.length > 0 || removedPoints.length > 0)) {
         reset();
         ctx.requestRedraw();
         return true;
@@ -114,17 +125,11 @@ export function createWallTool(): MapTool {
         ctx.requestRedraw();
         return true;
       }
-      if (e.key === 'Backspace' && points.length > 0) {
-        e.preventDefault();
-        points.pop();
-        ctx.requestRedraw();
-        return true;
-      }
       return false;
     },
 
     drawOverlay(gfx: Graphics, ctx: ToolContext) {
-      const zoom = Math.max(0.0005, ctx.camera.zoom);
+      const zoom = Math.max(1e-8, ctx.camera.zoom);
       const strokeW = Math.max(0.2, 2 / zoom);
       const dotR = 4 / zoom;
 

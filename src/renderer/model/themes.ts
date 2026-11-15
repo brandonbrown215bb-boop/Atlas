@@ -1,6 +1,6 @@
 import type { Theme } from './schema';
 
-export const THEME_ROLES = ['tree','rock','table','bed','chair','barrel','crate','door','bridge','roof','mountain','hill','forest','settlement','floorTexture','wallTexture','pathTexture'] as const;
+export const THEME_ROLES = ['tree','rock','altar','table','bed','chair','barrel','crate','door','bridge','roof','mountain','hill','forest','settlement','floorTexture','wallTexture','pathTexture'] as const;
 
 export function themeAssets(theme: Theme | undefined, role: string): string[] {
   const assets = theme?.[role];

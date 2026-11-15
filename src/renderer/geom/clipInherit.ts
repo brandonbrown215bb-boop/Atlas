@@ -1,4 +1,6 @@
-import polygonClipping, { type MultiPolygon, type Ring } from 'polygon-clipping';
+import { geographicEntities, isWorldSymbol } from './geography';
+import type { MultiPolygon, Ring } from 'polygon-clipping';
+import polygonClipping from './polygonClipping';
 import type { Entity, MapDoc, Point } from '../model/schema';
 
 export interface RectBounds {
@@ -122,6 +124,8 @@ export function clipAndInheritEntities(
   createId: () => string = () => crypto.randomUUID(),
 ): Entity[] {
   const result: Entity[] = [];
+  const junctions=new Map<string,string>();
+  const junction=(p:Point)=>{const key=`${p.x.toFixed(6)},${p.y.toFixed(6)}`;if(!junctions.has(key))junctions.set(key,createId());return junctions.get(key)!;};
   const rectPoly: MultiPolygon = [
     [
       [
@@ -134,8 +138,9 @@ export function clipAndInheritEntities(
     ],
   ];
 
-  for (const entity of Object.values(parentMap.entities)) {
-    const inheritedFrom = { entityId: entity.id, parentRev: entity.rev };
+  for (const entity of geographicEntities(parentMap)) {
+    if(entity.id.startsWith('implicit-ocean-'))continue;
+    const inheritedFrom = { entityId: parentMap.entities[entity.id]?entity.id:entity.id.replace(/:resolved-\d+$|:part-\d+$/,''), parentRev: entity.rev };
 
     switch (entity.type) {
       case 'area': {
@@ -156,6 +161,7 @@ export function clipAndInheritEntities(
             gmOnly: entity.gmOnly,
             name: entity.name,
             role: entity.role,
+            waterKind: entity.waterKind,
             rings,
             elevation: entity.elevation,
             fill: entity.fill,
@@ -180,6 +186,8 @@ export function clipAndInheritEntities(
             name: entity.name,
             role: entity.role,
             points: chain.map((p) => translatePoint(p, rect)),
+            startNodeId: entity.role==='river'?junction(chain[0]!):undefined,
+            endNodeId: entity.role==='river'?junction(chain[chain.length-1]!):undefined,
             width: entity.width,
             closed: entity.closed && allInside,
           });
@@ -236,6 +244,7 @@ export function clipAndInheritEntities(
           const translated = translatePoint(entity, rect);
           result.push({
             ...entity,
+            genId: undefined, groupId: undefined,
             id: createId(),
             layerId: targetLayerId,
             origin: 'inherited',

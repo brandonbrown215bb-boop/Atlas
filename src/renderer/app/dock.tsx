@@ -1,4 +1,5 @@
 import type { DockviewApi } from 'dockview-react';
+import { recoverablePanel } from './PanelErrorBoundary';
 import { InspectorPanel } from '../panels/InspectorPanel';
 import { LayersPanel } from '../panels/LayersPanel';
 import { MapsPanel } from '../panels/MapsPanel';
@@ -13,14 +14,14 @@ export interface MapPanelParams {
 }
 
 export const panelComponents = {
-  map: MapView,
-  maps: MapsPanel,
-  layers: LayersPanel,
-  inspector: InspectorPanel,
-  places: PlacesPanel,
-  settings: SettingsPanel,
-  assets: AssetsPanel,
-  generator: GeneratorPanel,
+  map: recoverablePanel(MapView),
+  maps: recoverablePanel(MapsPanel),
+  layers: recoverablePanel(LayersPanel),
+  inspector: recoverablePanel(InspectorPanel),
+  places: recoverablePanel(PlacesPanel),
+  settings: recoverablePanel(SettingsPanel),
+  assets: recoverablePanel(AssetsPanel),
+  generator: recoverablePanel(GeneratorPanel),
 };
 
 export type PanelComponentKey = keyof typeof panelComponents;

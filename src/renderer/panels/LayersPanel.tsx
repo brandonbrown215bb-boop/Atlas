@@ -1,3 +1,4 @@
+import { viewStore } from '../model/viewStore';
 import { useState } from 'react';
 import type { IDockviewPanelProps } from 'dockview-react';
 import { useStore } from 'zustand';
@@ -28,6 +29,7 @@ export function LayersPanel(props: IDockviewPanelProps) {
         gmOnly: false,
       },
     });
+    viewStore.getState().setActiveLayerId(id);
     setNewLayerName('');
   };
 
@@ -162,7 +164,8 @@ export function LayersPanel(props: IDockviewPanelProps) {
                 ) : (
                   <span
                     data-testid={`layer-name-${layer.id}`}
-                    title="Double-click to rename"
+                    title="Click to make active; double-click to rename"
+                    onClick={() => viewStore.getState().setActiveLayerId(layer.id)}
                     onDoubleClick={() => {
                       setEditingId(layer.id);
                       setEditingName(layer.name);
@@ -242,8 +245,8 @@ export function LayersPanel(props: IDockviewPanelProps) {
                 <button
                   type="button"
                   data-testid={`layer-delete-${layer.id}`}
-                  title="Delete layer"
-                  disabled={map.layers.length <= 1}
+                  title={Object.values(map.entities).some(e=>e.layerId===layer.id) ? 'Move this layer’s contents to another layer before deleting it' : 'Delete empty layer'}
+                  disabled={map.layers.length <= 1 || Object.values(map.entities).some(e=>e.layerId===layer.id)}
                   onClick={() => deleteLayer(layer.id)}
                 >
                   ×

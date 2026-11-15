@@ -117,7 +117,7 @@ export function createWorldFolder(worldDir: string, name: string): LoadedWorld {
   const mapId = 'map-1';
 
   const meta = WorldMetaSchema.parse({
-    formatVersion: 1,
+    formatVersion: 2,
     id: worldId,
     name: name.trim() || 'Untitled World',
     maps: [{ id: mapId, name: 'Overworld', kind: 'world' }],
@@ -125,11 +125,11 @@ export function createWorldFolder(worldDir: string, name: string): LoadedWorld {
   });
 
   const initialMap = MapDocSchema.parse({
-    formatVersion: 1,
+    formatVersion: 2,
     id: mapId,
     name: 'Overworld',
     kind: 'world',
-    bounds: { x: 0, y: 0, w: 5000, h: 5000 },
+    bounds: { x: 0, y: 0, w: 1609344, h: 1609344 },
     grid: { size: 100, visible: false },
     layers: [
       {

@@ -7,7 +7,7 @@ export function createDoorTool(): MapTool {
   let hoverPlacement: WallDoorPlacement | null = null;
 
   const computePlacement = (pt: { x: number; y: number }, ctx: ToolContext) => {
-    const tol = Math.max(0.5, 12 / Math.max(0.0005, ctx.camera.zoom));
+    const tol = Math.max(0.5, 12 / Math.max(1e-8, ctx.camera.zoom));
     const doorWidth = ctx.map.grid.size > 0 ? ctx.map.grid.size : 1.524;
     return findDoorPlacementOnWall(ctx.map, pt, tol, doorWidth);
   };
@@ -61,7 +61,7 @@ export function createDoorTool(): MapTool {
       if (!hoverPlacement) {
         return;
       }
-      const zoom = Math.max(0.0005, ctx.camera.zoom);
+      const zoom = Math.max(1e-8, ctx.camera.zoom);
       const strokeW = Math.max(0.25, 3 / zoom);
       const kind = viewStore.getState().doorKind;
       const color = kind === 'secret' ? 0xc084fc : 0xd97706;

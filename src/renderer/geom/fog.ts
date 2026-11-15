@@ -1,4 +1,5 @@
-import clipping, { type MultiPolygon } from 'polygon-clipping';
+import type { MultiPolygon } from 'polygon-clipping';
+import clipping from './polygonClipping';
 import type { Point, MapDoc } from '../model/schema';
 
 export type Rect = {x:number;y:number;w:number;h:number};

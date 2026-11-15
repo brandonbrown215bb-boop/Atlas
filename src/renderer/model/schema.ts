@@ -47,6 +47,8 @@ const EntityBaseShape = {
   layerId: z.string().min(1),
   origin: EntityOriginSchema,
   genId: z.string().optional(),
+  groupId: z.string().optional(),
+  usage: z.enum(['boundary','reference']).optional(),
   gmOnly: z.boolean().optional(),
   name: z.string().optional(),
   rev: z.number().int().nonnegative(),
@@ -69,22 +71,35 @@ export const ImageEntitySchema = z.object({
   rotation: z.number().finite(),
 });
 
-const TextureFillSchema = z.object({ assetId: z.string().min(1), metersPerPixel: z.number().positive().finite() });
+const TextureFillSchema = z.object({ assetId: z.string().min(1), metersPerPixel: z.number().positive().finite(), fitToArea: z.boolean().optional() });
+export const DistrictProfileSchema = z.object({
+  density: z.number().min(0).max(1).default(.65),
+  wealth: z.number().min(0).max(1).default(.5),
+  activity: z.number().min(0).max(1).default(.5),
+  access: z.enum(['open', 'restricted', 'gated']).default('open'),
+});
+export type DistrictProfile = z.infer<typeof DistrictProfileSchema>;
 
 export const AreaEntitySchema = z.object({
   ...EntityBaseShape,
   type: z.literal('area'),
   role: AreaRoleSchema,
+  waterKind: z.enum(['ocean', 'lake']).optional(),
+  roomPurpose: z.string().optional(),
   rings: z.array(z.array(PointSchema).min(3)).min(1),
   elevation: z.number().finite().optional(),
   fill: z.string().optional(),
   texture: TextureFillSchema.optional(),
+  district: DistrictProfileSchema.optional(),
 });
 
 export const PathEntitySchema = z.object({
   ...EntityBaseShape,
   type: z.literal('path'),
   role: PathRoleSchema,
+  startNodeId: z.string().optional(),
+  endNodeId: z.string().optional(),
+  outlet: z.enum(['water','junction','boundary','authored']).optional(),
   points: z.array(PointSchema).min(2),
   width: z.number().positive().finite(),
   closed: z.boolean(),
@@ -122,6 +137,7 @@ export const PropEntitySchema = z.object({
   w: z.number().positive().finite().optional(),
   h: z.number().positive().finite().optional(),
   suggestedSettlement: z.boolean().optional(),
+  symbolKind: z.enum(['mountain', 'hill', 'forest', 'settlement']).optional(),
 });
 
 export const LightEntitySchema = z.object({
@@ -183,13 +199,16 @@ export const GeneratorRecordSchema = z.object({
   seed: z.number().int(),
   params: z.record(z.string(), z.unknown()),
   regionEntityId: z.string().min(1),
+  boundary: z.array(z.array(PointSchema).min(3)).optional(),
+  groupId: z.string().optional(),
+  algorithmVersion: z.number().int().positive().optional(),
   layerId: z.string().min(1).optional(),
   themeName: z.string().min(1).optional(),
 });
 export type GeneratorRecord = z.infer<typeof GeneratorRecordSchema>;
 
 export const MapDocSchema = z.object({
-  formatVersion: z.number().int().positive().default(1),
+  formatVersion: z.number().int().positive().default(2),
   id: z.string().min(1),
   name: z.string().min(1),
   kind: MapKindSchema,
@@ -215,6 +234,16 @@ export const MapDocSchema = z.object({
   layers: z.array(LayerSchema),
   entities: z.record(z.string(), EntitySchema),
   generators: z.record(z.string(), GeneratorRecordSchema),
+  groups: z.record(z.string(), z.object({ name: z.string(), genId: z.string().optional(), boundary: z.array(z.array(PointSchema)).optional() })).optional(),
+  riverNodes: z.record(z.string(), PointSchema).optional(),
+  outsideLandIsWater: z.boolean().optional(),
+  riverWidthMode: z.enum(['cartographic', 'physical']).optional(),
+  terrain: z.record(z.string(), z.object({
+    algorithmVersion: z.number().int(), seed: z.number().int(),
+    bounds: z.object({ x: z.number(), y: z.number(), w: z.number(), h: z.number() }),
+    plates: z.array(z.object({ x: z.number(), y: z.number(), vx: z.number(), vy: z.number(), oceanic: z.boolean() })),
+    cells: z.array(z.object({ x: z.number(), y: z.number(), elevation: z.number(), land: z.boolean(), plate: z.number(), downstream: z.number().int().optional() })),
+  })).optional(),
   revision: z.number().int().nonnegative(),
   deleted: z.record(z.string(), z.number().int().nonnegative()),
   link: z

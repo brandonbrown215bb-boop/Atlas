@@ -48,30 +48,33 @@ export function TransferPanel() {
     if(!preview)return;setBusy(true);setReport('');
     try {await syncLinkedMap(preview.mapId,preview.path,choices,preview);setReport('Linked map synced. One undo restores the previous version.');setPreview(null);}catch(e){setReport((e as Error).message);}finally{setBusy(false);}
   };
-  return <div style={{padding:'4px 10px',fontSize:12}}>
-    <button disabled={!world} onClick={()=>setOpen(!open)}>World transfers</button>
-    {open&&<div style={{display:'flex',gap:8,alignItems:'center',flexWrap:'wrap'}}>
-      <button disabled={busy} onClick={()=>void fork()}>Fork world</button>
-      <select aria-label="Transfer mode" value={mode} onChange={e=>setMode(e.target.value as typeof mode)}><option value="copy">Copy map tree</option><option value="move">Move map tree</option><option value="linked">Linked copy</option></select>
-      <button disabled={busy} onClick={()=>void pick()}>Choose target world</button><span>{targetWorld?.meta.name}</span>
-      <select aria-label="Target parent map" value={parent} onChange={e=>setParent(e.target.value)}><option value="">Independent map</option>{targetWorld?.meta.maps.map(m=><option key={m.id} value={m.id}>{m.name}</option>)}</select>
-      {parent&&<>
-        {([['X (m)',x,setX],['Y (m)',y,setY],['Rotation (degrees)',rotation,setRotation],['Scale',scale,setScale],['Seam margin (m)',margin,setMargin]] as const).map(([label,value,setter])=><label key={label}>{label}<input aria-label={label} type="number" style={{width:65}} value={value} onChange={e=>setter(Number(e.target.value))}/></label>)}
-        <select aria-label="Underlying geography" value={underneath} onChange={e=>setUnderneath(e.target.value as typeof underneath)}><option value="replace">Replace underneath</option><option value="merge">Merge land</option></select>
-        <label><input aria-label="Re-climate on arrival" type="checkbox" checked={reClimate} onChange={e=>setReClimate(e.target.checked)} />Re-climate on arrival</label>
-        {reClimate&&<span>Repaint generated world/region biomes using the target climate. Manual work and developed locations are kept.</span>}
-        <span>Interior dimensions stay fixed.</span>
-      </>}
-      <button disabled={busy||!target||!mapId} onClick={()=>void transfer()}>Transfer map tree</button>
-    </div>}
-    {open&&world?.maps[mapId??'']?.link&&<div>
-      <button disabled={busy} onClick={()=>void previewSync()}>Preview linked sync</button>
-      {preview&&<div>
-        <p>{preview.taken.length} incoming entity changes; {preview.conflicts.length} conflicts. Mine is kept unless you choose theirs.</p>
-        {preview.conflicts.map(c=><label key={c.id} style={{display:'block'}}>{c.name}: {c.reason} ({describe(c.mine)} / {describe(c.theirs)}) <select aria-label={`Resolve ${c.id}`} value={choices[c.id]??'mine'} onChange={e=>setChoices({...choices,[c.id]:e.target.value as 'mine'|'theirs'})}><option value="mine">Mine</option><option value="theirs">Theirs</option></select></label>)}
-        <button disabled={busy} onClick={()=>void applySync()}>Apply linked sync</button>
+  return <>
+    <button type="button" disabled={!world} aria-expanded={open} onClick={()=>setOpen(!open)}>World transfers</button>
+    {(open || report) && <div className="top-drawer-row">
+      {open && <div style={{display:'flex',gap:8,alignItems:'center',flexWrap:'wrap',flex:1}}>
+        <button type="button" disabled={busy} onClick={()=>void fork()}>Fork world</button>
+        <select aria-label="Transfer mode" value={mode} onChange={e=>setMode(e.target.value as typeof mode)}><option value="copy">Copy map tree</option><option value="move">Move map tree</option><option value="linked">Linked copy</option></select>
+        <button type="button" disabled={busy} onClick={()=>void pick()}>Choose target world</button><span>{targetWorld?.meta.name}</span>
+        <select aria-label="Target parent map" value={parent} onChange={e=>setParent(e.target.value)}><option value="">Independent map</option>{targetWorld?.meta.maps.map(m=><option key={m.id} value={m.id}>{m.name}</option>)}</select>
+        {parent&&<>
+          {([['X (m)',x,setX],['Y (m)',y,setY],['Rotation (degrees)',rotation,setRotation],['Scale',scale,setScale],['Seam margin (m)',margin,setMargin]] as const).map(([label,value,setter])=><label key={label}>{label}<input aria-label={label} type="number" style={{width:65}} value={value} onChange={e=>setter(Number(e.target.value))}/></label>)}
+          <select aria-label="Underlying geography" value={underneath} onChange={e=>setUnderneath(e.target.value as typeof underneath)}><option value="replace">Replace underneath</option><option value="merge">Merge land</option></select>
+          <label><input aria-label="Re-climate on arrival" type="checkbox" checked={reClimate} onChange={e=>setReClimate(e.target.checked)} />Re-climate on arrival</label>
+          {reClimate&&<span>Repaint generated world/region biomes using the target climate. Manual work and developed locations are kept.</span>}
+          <span>Interior dimensions stay fixed.</span>
+        </>}
+        <button type="button" disabled={busy||!target||!mapId} onClick={()=>void transfer()}>Transfer map tree</button>
       </div>}
+      {open&&world?.maps[mapId??'']?.link&&<div style={{flexBasis:'100%',display:'flex',flexWrap:'wrap',gap:8,alignItems:'center'}}>
+        <button type="button" disabled={busy} onClick={()=>void previewSync()}>Preview linked sync</button>
+        {preview&&<div>
+          <p>{preview.taken.length} incoming entity changes; {preview.conflicts.length} conflicts. Mine is kept unless you choose theirs.</p>
+          {preview.conflicts.map(c=><label key={c.id} style={{display:'block'}}>{c.name}: {c.reason} ({describe(c.mine)} / {describe(c.theirs)}) <select aria-label={`Resolve ${c.id}`} value={choices[c.id]??'mine'} onChange={e=>setChoices({...choices,[c.id]:e.target.value as 'mine'|'theirs'})}><option value="mine">Mine</option><option value="theirs">Theirs</option></select></label>)}
+          <button type="button" disabled={busy} onClick={()=>void applySync()}>Apply linked sync</button>
+        </div>}
+      </div>}
+      {report&&<div role="status" aria-label="Transfer result">{report}</div>}
+      <button type="button" aria-label="Close transfer controls" onClick={() => { setOpen(false); setReport(''); }} style={{marginLeft:'auto'}}>×</button>
     </div>}
-    {report&&<div role="status" aria-label="Transfer result">{report}</div>}
-  </div>;
+  </>;
 }

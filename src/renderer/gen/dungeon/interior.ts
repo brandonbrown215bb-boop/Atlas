@@ -16,13 +16,14 @@ export function previewInterior(parent: MapDoc, options: {
   const footprint:Entity={...building,id:'interior-footprint',layerId:'layer-base',origin:'inherited',rev:0,
     rings:building.rings.map(r=>r.map(local)),inheritedFrom:{entityId:building.id,parentRev:building.rev}};
   delete footprint.genId;
+  delete footprint.groupId;
   const entities:Record<string,Entity>={[footprint.id]:footprint};
   for(const e of Object.values(parent.entities)) if(e.type==='door') {
     const mid={x:(e.a.x+e.b.x)/2,y:(e.a.y+e.b.y)/2};
     const onBoundary=building.rings.some(r=>r.some((a,i)=>distanceToSegment(mid,a,r[(i+1)%r.length]!)<0.05));
     if(!onBoundary&&!pointInPolygon(mid,building.rings)) continue;
     const id=`inherited-door:${e.id}`;
-    entities[id]={...e,id,genId:undefined,layerId:'layer-base',origin:'inherited',rev:0,a:local(e.a),b:local(e.b),inheritedFrom:{entityId:e.id,parentRev:e.rev}};
+    entities[id]={...e,id,genId:undefined,groupId:undefined,layerId:'layer-base',origin:'inherited',rev:0,a:local(e.a),b:local(e.b),inheritedFrom:{entityId:e.id,parentRev:e.rev}};
   }
   const map=MapDocSchema.parse({id:options.childMapId,name:options.name,kind:'interior',
     parent:{mapId:parent.id,x:bounds.minX,y:bounds.minY,rotation:0,footprintEntityId:building.id},

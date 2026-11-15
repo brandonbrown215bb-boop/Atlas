@@ -1,3 +1,5 @@
+import { executeGeneration } from '../render/generationJob';
+import { prepareBackdropTrace } from '../render/traceBackdrop';
 import { copyMapToWorld, forkOpenWorld, previewLinkedSync, syncLinkedMap } from '../export/transferActions';
 import { TransferInputSchema } from './transfer';
 import { exportUvtt } from '../export/uvtt';
@@ -52,6 +54,7 @@ export async function handleAgentCall(
   params: Record<string, unknown>,
 ): Promise<unknown> {
   switch (method) {
+    case 'trace_backdrop': return prepareBackdropTrace(params as unknown as Parameters<typeof prepareBackdropTrace>[0]);
     case 'world_loaded': {
       const { meta, maps, worldDir, assetsIndex } = params as {
         meta: WorldMeta;
@@ -106,7 +109,7 @@ export async function handleAgentCall(
       const label =
         typeof params['label'] === 'string' ? params['label'] : undefined;
       const results = commands.some(c => ['prop.stamp','entity.setTexture','theme.setRole'].includes(c.name))
-        ? await executeAssetCommands(commands, label) : worldStore.getState().executeBatch(commands, label);
+        ? await executeAssetCommands(commands, label) : commands.some(c=>['generator.run','generator.reroll','generator.dressArea'].includes(c.name)) ? await executeGeneration(commands) : worldStore.getState().executeBatch(commands,label);
       return { results };
     }
 

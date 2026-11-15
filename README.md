@@ -2,9 +2,11 @@
 
 Offline Windows desktop worldbuilding editor built with Electron, React, TypeScript, Dockview, and PixiJS.
 
+**Using Atlas:** start with the [instruction guide](docs/USER_GUIDE.md) for the world → town → interior walkthrough, existing-image workflow, and explanations of the changing controls.
+
 ## Current Status
 
-- **Implemented (Phases 0–7):**
+- **Implemented (Phases 0–8):**
   - Electron + `electron-vite` + React 19 + strict TypeScript shell
   - Custom `app://` (production bundle) and `atlas-file://` (allowed-root-restricted asset loading) schemes
   - Dockview workspace with real popout windows, per-world layout persistence, off-screen display recovery, and light/dark theme syncing across all windows
@@ -30,15 +32,20 @@ Offline Windows desktop worldbuilding editor built with Electron, React, TypeScr
   - Whole-world forks, portable map-tree copies/moves, placement transforms and replace/merge land; target verification and backups protect source maps
   - Linked copies, manual sync with per-entity Mine/Theirs conflicts, one-step undo, new asset copying and machine-local world-folder lookup
 
-  - Seeded building, dungeon/corridor and chamber/alcove generators; connected rooms, inherited entrances, manual-wall constraints, left/right mirroring and one-step undo
-  - Room-purpose dressing using theme art or built-in props, door and route clearance, dressing-only rerolls, and selected-area thin/add/reroll controls
+  - Seeded building, dungeon/corridor (default 10 ft / 2-square corridors, adjustable 1–6 squares) and chamber/alcove generators; connected rooms, corridor-contact doors, inherited entrances, manual-wall connectivity validation, left/right mirroring and one-step undo
+  - Room-purpose dressing with shuffled non-repeating room purposes, distinct built-in prop/terrain glyphs, door and route clearance, dressing-only rerolls, and selected-area thin/add/reroll controls
   - Settlement building interiors with disposable previews, reroll/cancel, and one-command acceptance into a child map linked to the building's place
   - Outdoor woodland generator with numbered connected clearings, winding entrance trails, boundary trees and scattered trees, optional stream/pond, and themed bridges; manual areas, paths and props survive rerolls
-  - Seeded world/continent terrain with roughly 8,000 Voronoi cells, traced coastlines and holes, exact manual land/water overrides, editable climate/biome tables and downhill rivers
-  - World-scale mountains, forests and hills from theme roles; unevenly spaced GM-only settlement suggestions with undoable accept/dismiss controls and permanent named places
+  - Local backdrop tracing (`Trace Geography` in Maps and MCP `trace_backdrop`) with worker-based water/land/lake/river extraction, interactive review brushes, water-colour sampling, and one-step `map.applyTrace`
+  - Seeded 12-plate tectonic world/continent terrain (contextual **Generate terrain** or **Add terrain detail**), shared geography resolver (`Outside land is water`, implicit ocean, lake masks), biome brush/picker (`map.paintBiome`), shared river junctions (`river.add`), cartographic/physical river widths, and Priority-Flood outlet-rooted rivers
+  - Saved group selection (`Edit Parts`, `group.applyTransform`, `Return to generated`), legacy world repair (`Repair Existing World…`), and reviewed tectonic terrain upgrade previews
+  - World-scale mountains, forests and hills from theme roles (suppressed as physical obstacles in settlement/site/interior views); unevenly spaced GM-only settlement suggestions with undoable accept/dismiss controls and permanent named places
   - Optional re-climate on arrival for copied, moved or linked regions; generated biomes adapt to the target climate while manual work, coastline, rivers and developed locations are preserved
+  - Seeded city/district generation around drawn roads, walls, gates, water, cliffs, plateaus and fixed buildings; polygon-area 16 km² limit, buildable-area readout and obstacle highlighting (`map.cityDiagnostics`), street-facing rectangular lots, courtyards, gardens and sparse outskirts
+  - Independent district density, wealth, activity and access profiles, named district runs, roof art fitted to building footprints, and preservation of named buildings/interiors through district rerolls
+  - Optional daily travel windows with rest stops, elapsed time and watch/camp annotations; creating a Place protects its linked generated scenery
 
-- **Completed through Phase 7.** All 147 unit tests, the production build and all 22 Electron tests pass; see `BLOCKERS.md`. Human visual comparisons, real-art, Foundry, TV and second-PC checks remain in `USER_CHECKS.md`.
+- **Completed through Phase 8 + Workflow Repair.** All 48 unit test files (178 unit tests), the production build and all 28 Electron E2E tests pass. Ten original user-check entries and the full workflow repair suite are verified; see `docs/SELF_CHECKS.md` and `docs/WORKFLOW_REPAIR.md`. Remaining visual preferences, real-art, Foundry, TV and second-PC checks are in `USER_CHECKS.md`.
 
 ## Development
 
@@ -70,15 +77,17 @@ In **Settings**, choose **Register folder** for loose PNG/JPEG/WebP/BMP art, or 
 
 Open **Assets**, browse folders or search names/tags, and select an image. **Stamp on map** places it on clicks using the current scale, rotation and flip. Select areas, paths or walls and choose **Texture selection** to apply repeating art. All map edits undo normally. **Built-in flat props** work without a pack.
 
-The **World theme** editor in Assets assigns the selected art to a named theme and role. Multiple assets can fill a role; removing the last assignment restores its flat placeholder. Assignments copy art into the world immediately. The source pack is not needed on another machine. Choose the theme in Generator to use its furniture roles.
+The **World theme** editor in Assets assigns the selected art to a named theme and role. Multiple assets can fill a role; removing the last assignment restores its flat placeholder. Assignments copy art into the world immediately. The source pack is not needed on another machine. Choose the theme under **Settings…** beside the map to use its furniture roles.
 
 ## Dungeon and Interior Generators
 
-Open **Generator**. On a site or interior map, select an area footprint, choose Building rooms, Dungeon and corridors, or Chamber and alcoves, then set the seed, room count, purpose, density and optional left/right mirror. **Generate** creates editable floors, walls, doors and furniture. Footprints must be connected and large enough for nine grid squares; a solid manual wall needs a door before generation can connect across it.
+Generation lives beside the map. A blank map needs no footprint or layer setup. A selected area uses its exact shape; the strip names its target. On a site, choose **Woodland** or **Dungeon**. Interior maps offer **Generate rooms**. Layout, rooms and purpose are quick choices; **Settings…** opens seed, theme, corridor width, mirroring and dressing controls in Inspector. Changing settings does not change the map until you generate or apply them. Footprints must be connected and large enough for nine grid squares; a solid manual wall needs a door before generation can connect across it.
 
-**Reroll** changes untouched generated content. Moving or editing an entity makes it manual, so it survives subsequent rerolls. **Reroll dressing only** keeps the layout. Select a floor to assign that room a purpose, or select an area and use **Thin out**, **Add more** or **Reroll area dressing**. Furniture stays clear of doors and straight routes between a room's doors. **Accept** keeps the run as manual content and finishes it; undo restores the run.
+Results are kept immediately. **Try another** changes untouched generated content; moving or editing a part preserves it on later attempts. **Apply changes** uses the same seed with your changed settings. **More… → Rearrange furniture only** keeps the layout. Select the result and choose **Edit parts**, then select a room to change its purpose and use **Furniture… → Fewer / More / Rearrange**. Furniture stays clear of doors and routes. **More… → Make independent** ends the result's ability to regenerate; undo restores it.
 
-On a settlement map, select a building footprint and choose **Preview interior**. Choose its purpose and layout, reroll until satisfied, then **Accept interior**. Previewing and cancelling do not change the world. Acceptance creates and opens an interior at the building's real size and links it to the existing place, keeping its notes, or creates a place if needed. Buildings with an interior offer **Open existing interior**. The accepted interior remains editable and rerollable.
+On a settlement map, select a building (use **Edit parts** for generated towns) and choose **Generate interior**. This directly creates and opens a linked interior at the building's real size, preserving its Place and notes or creating a Place when necessary. **Undo** removes that interior and returns to the parent map. Existing interiors offer **Open interior**.
+
+The toolbar keeps **Select**, **Draw…**, **Objects**, **Label**, **Measure**, and **More tools…** visible. Draw offers choices for the current map; More tools retains every tool. Map size, zoom-through, and geography display options live in **Map… → Map settings…**. A blank world offers **Generate terrain**; existing authored land automatically gets **Add terrain detail**, preserving coastlines. Mixed selections never silently switch to whole-map generation.
 
 MCP uses the same `generator.run`, `generator.reroll`, `generator.dressArea`, `generator.accept` and `map.generateInterior` commands through `command_run`. Every action is one undo step.
 
@@ -86,7 +95,7 @@ Agent commands accept `packAssetId` from `asset_search` for `prop.stamp` and `en
 
 ## Outdoor Locations
 
-On a **site** map, draw/select an area and choose **Outdoor woodland** in Generator. Set the clearing count, tree density and seed. Water can include a stream crossing, a pond, or both. **Generate**, **Reroll** and **Accept** use the same undoable commands as interiors. Trees and bridges use the theme's `tree` and `bridge` roles, with built-in art when those roles are empty.
+On a **site** map, choose **Woodland** beside the map, optionally selecting an area first. Set clearing count and tree density, then choose **Generate woodland**. Settings holds seed, water and entrance controls. Water can include a stream crossing, a pond, or both. Generation and **Try another** use the same undoable commands as interiors. Trees and bridges use the theme's `tree` and `bridge` roles, with built-in art when those roles are empty.
 
 Trails connect the numbered clearings and entrances; bridges cover stream crossings, including crossings of manual trails/roads. Entrances default to the north and south boundary. **Add entrance** supplies custom coordinates in feet; the generator snaps them to the footprint boundary. Existing runs restore those settings. MCP uses `generator.run` with `type: 'glade'` and `params: { clearings, density, water, stream, pond, entrances }`; its entrance points use metres.
 
@@ -106,7 +115,21 @@ When enabled (on by default), the main process serves an MCP Streamable HTTP end
 
 Choose **Measure**, then click along a route. The readout previews the next segment under the cursor. Press **Enter**, double-click, or choose **Finish** to hold the result. **Backspace** removes the last point; **Esc** or **Clear** clears the route. Click after finishing to start another route.
 
-Distance displays feet below one mile and miles above it. Enter speed in miles per hour and a departure time for travel duration and arrival, including any days crossed. Estimates assume continuous travel at that speed; arrival rounds to the nearest minute. Measurements are temporary and stay out of world files, exports and undo history.
+Distance displays feet below one mile and miles above it. Enter speed in miles per hour and a departure time for travel duration and arrival, including any days crossed. Continuous travel is the default. Enable **Daily schedule**, choose a daily **Resume** time and **Hours/day** to include overnight rest. A late departure uses the remaining portion of that day's window; departures outside the window wait for the next opening. Windows can cross midnight. The readout separates moving time from elapsed time and counts rest stops taken along the route. Arrival rounds to the nearest minute.
+
+**Watch/camp marks** adds pale four-hour moving-time ticks and orange camp triangles along the actual route. Camps mark scheduled stops, not astronomical sunset. Marks are capped at 256 for long routes. Measurements and their settings are temporary, shared across map popouts, and stay out of world files, exports and undo history. MCP uses `map.measureRoute` with optional `schedule: { startTime: '08:00', hoursPerDay: 8 }`.
+
+## City and District Generator
+
+On a **settlement** map, choose **Generate town**, or draw/select a land or district area and choose **Generate district**. Draw major roads, water, city walls, gate doors, cliffs, plateaus and landmark buildings first; generation fills around them. Empty standalone towns receive a main street cross. Secondary streets split large blocks; buildings face streets and leave inner courtyards. Houses do not cross water, walls, fixed buildings, plateau edges or footprint holes. Plateaus supply building elevation; draw the actual access roads and ramps yourself.
+
+District profiles have independent **density**, **wealth**, **activity** and **access** settings. Presets are starting points. Access changes building setbacks; it does not create walls automatically. Preset and density are quick choices; wealth, activity and access are under **Settings…** or in the district Inspector. Block size, street width and lot depth display feet. **Gardens and sparse outskirts** reserves some garden blocks and thins development outside drawn closed city-wall paths.
+
+Generate each drawn district separately to use **Try another** on just that district. Selecting a result restores its settings; older results are also listed under Settings. **Try another** preserves edited buildings, Places and interiors. Creating a Place from generated objects now preserves those objects too, and one undo reverses Place creation and preservation together. Choose **Edit parts**, select a building, and choose **Generate interior**.
+
+Theme role `roof` supplies fitted roof art; optional `roofWealthy` overrides it for wealthier districts. The art belongs to the building footprint, so it moves and survives rerolls with that building. Without roof art, buildings use flat hip-roof drawings. All output stays editable. Footprints are limited to a bounding area of 16 square kilometres and 3,000 generated buildings per run.
+
+MCP uses `generator.run` with `type: 'city'`, a settlement `mapId`, `regionEntityId`, `layerId`, seed and optional `params: { density, wealth, activity, access, blockSize, streetWidth, lotDepth, fringe }`. Size parameters use metres; density/wealth/activity range from 0 to 1; access is `open`, `restricted` or `gated`. A saved district profile overrides the run's default profile. Reroll and accept use the existing generator commands.
 
 ## Player Display and Exports
 

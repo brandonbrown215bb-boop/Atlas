@@ -1,4 +1,4 @@
-import clipping from 'polygon-clipping';
+import clipping from '../../geom/polygonClipping';
 import { fromPolygons, rectRing, toPolygons } from '../../geom/fog';
 import { boxesIntersect, getEntityBounds } from '../../geom/hitTest';
 import type { WorldDocument } from '../../model/commands';
@@ -40,8 +40,9 @@ export function reclimateMap(world: WorldDocument, map: MapDoc, createId: () => 
     const footprint = record ? map.entities[record.regionEntityId] : undefined;
     const region = footprint?.type === 'area' ? footprint.rings : [rectRing(map.bounds)];
     const params = TerrainParamsSchema.parse(record?.params ?? {});
-    const input = { seed: record?.seed ?? 0, params, region, constraints: [], grid: map.grid.size, theme: {}, climate: climateContext(world, map) };
+    const input = { seed: record?.seed ?? 0, params: {...params,mode:'new' as const}, region, constraints: [], grid: map.grid.size, theme: {}, climate: climateContext(world, map) };
     const terrain = buildTerrain(input);
+    const saved=map.terrain?.[genId];if(saved?.cells.length===terrain.cells.length)saved.cells.forEach((c,i)=>{terrain.cells[i]!.elevation=c.elevation;});
     // Every cell supplies climate, including those straddling an existing biome edge.
     // Clipping against the saved coverage below keeps every coastline and hole exact.
     terrain.cells.forEach(c => { c.land = true; });

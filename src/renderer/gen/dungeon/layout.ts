@@ -1,4 +1,4 @@
-import clipping from 'polygon-clipping';
+import clipping from '../../geom/polygonClipping';
 import { z } from 'zod';
 import { distanceToSegment, pointInPolygon } from '../../geom/hitTest';
 import { fromPolygons, toPolygons } from '../../geom/fog';
@@ -10,6 +10,7 @@ import { dressDungeon, ROOM_PURPOSES } from './dressing';
 
 export const DungeonParamsSchema = z.object({
   mode: z.enum(['building', 'dungeon', 'chamber']).default('building'),
+  corridorWidth: z.number().int().min(1).max(6).default(2),
   rooms: z.number().int().min(1).max(20).default(6),
   mirror: z.boolean().default(false),
   purpose: z.enum(ROOM_PURPOSES).default('random'),
@@ -81,6 +82,28 @@ export function dungeonLayout(input: GeneratorInput<DungeonParams>): Entity[] {
 
   // The labels describe connected rooms. The corridor is room zero in dungeon mode.
   const labels = new Map<string,number>();
+  const wideCells=(c:Cell):Cell[]=>{
+    const k=params.corridorWidth, result:Cell[]=[];
+    for(let y=0;y<k;y++)for(let x=0;x<k;x++){const n=cells.get(key(c.x+x,c.y+y));if(n)result.push(n);}
+    return result;
+  };
+  const carveRoute=(start:Cell,target:Cell)=>{
+    const k=params.corridorWidth;
+    const anchor=(c:Cell)=>cells.get(key(Math.min(c.x,cols-k),Math.min(c.y,rows-k)))??c;
+    start=anchor(start);target=anchor(target);
+    const allowedLabels=new Set([0,labels.get(start.key),labels.get(target.key)]);
+    const fits=(c:Cell)=>{
+      const block=wideCells(c);if(block.length!==k*k||block.some(n=>labels.has(n.key)&&!allowedLabels.has(labels.get(n.key))))return false;
+      return block.every(n=>[[1,0],[0,1]].every(([dx,dy])=>{const q=cells.get(key(n.x+dx!,n.y+dy!));return !q||!block.includes(q)||neighbors(n).includes(q);}));
+    };
+    const queue=[start],seen=new Map<string,Cell|null>([[start.key,null]]);
+    for(let i=0;i<queue.length;i++){
+      const c=queue[i]!;
+      if(c.key===target.key){let at:Cell|null=c;while(at){for(const n of wideCells(at))if(!labels.has(n.key))labels.set(n.key,0);at=seen.get(at.key)!;}return;}
+      for(const n of neighbors(c))if(!seen.has(n.key)&&fits(n)){seen.set(n.key,c);queue.push(n);}
+    }
+    throw new Error(`No ${k*5} ft wide corridor fits without crossing a room or wall. Reduce corridor width or use a larger footprint.`);
+  };
   const ordered = [...all].sort((a,b) => a.y-b.y || (params.mirror ? b.x-a.x : a.x-b.x));
   if (params.mode === 'building') {
     const groups: Cell[][] = [ordered];
@@ -109,19 +132,53 @@ export function dungeonLayout(input: GeneratorInput<DungeonParams>): Entity[] {
     }
   } else if (params.mode === 'dungeon') {
     const centers: Cell[]=[];
+    const roomScale = Math.max(1, Math.min(3, Math.floor(Math.min(cols, rows) / 24)));
     for (let attempt=0;attempt<params.rooms*80 && centers.length<params.rooms;attempt++) {
       const c=ordered[Math.floor(random()*ordered.length)]!;
-      const w=3+Math.floor(random()*4), h=3+Math.floor(random()*4);
+      const minimum=Math.max(3,params.corridorWidth+1) * roomScale;
+      const w=minimum+Math.floor(random()*(3*roomScale)), h=minimum+Math.floor(random()*(3*roomScale));
       const room: Cell[]=[];
       for (let dy=0;dy<h;dy++) for (let dx=0;dx<w;dx++) {
         const n=cells.get(key(c.x+(params.mirror?-dx:dx),c.y+dy)); if(n) room.push(n);
       }
-      if(room.length!==w*h || room.some(n => directions.some(([dx,dy])=>labels.has(key(n.x+dx,n.y+dy))) || labels.has(n.key))) continue;
+      if(room.length!==w*h || room.some(n => directions.some(([dx,dy])=>Array.from({length:params.corridorWidth},(_,i)=>i+1).some(d=>labels.has(key(n.x+dx*d,n.y+dy*d)))) || labels.has(n.key))) continue;
       centers.push(room[Math.floor(room.length/2)]!);
       for (const n of room) labels.set(n.key,centers.length);
     }
     if(!centers.length) throw new Error('No room fits. Use a larger footprint or Chamber mode.');
-    for(let i=1;i<centers.length;i++) for(const c of path(centers[i-1]!,centers[i]!)) if(!labels.has(c.key)) labels.set(c.key,0);
+    // Connect rooms in nearest-neighbor MST order so corridors stay compact and logical.
+    const linked = [centers[0]!];
+    const unlinked = centers.slice(1);
+    const connectedPairs = new Set<string>();
+    while (unlinked.length) {
+      let bestU = 0, bestL = 0, bestD = Infinity;
+      for (let u = 0; u < unlinked.length; u++) {
+        for (let l = 0; l < linked.length; l++) {
+          const d = Math.hypot(unlinked[u]!.x - linked[l]!.x, unlinked[u]!.y - linked[l]!.y);
+          if (d < bestD) { bestD = d; bestU = u; bestL = l; }
+        }
+      }
+      const next = unlinked.splice(bestU, 1)[0]!;
+      carveRoute(linked[bestL]!, next);
+      connectedPairs.add([linked[bestL]!.key, next.key].sort().join('|'));
+      linked.push(next);
+    }
+    // Add up to 2 extra loop corridors between nearby unlinked rooms for tactical flanking.
+    if (centers.length >= 4) {
+      const pairs: Array<{ a: Cell; b: Cell; d: number }> = [];
+      for (let i = 0; i < centers.length; i++) for (let j = i + 1; j < centers.length; j++) {
+        const a = centers[i]!, b = centers[j]!;
+        if (!connectedPairs.has([a.key, b.key].sort().join('|'))) {
+          pairs.push({ a, b, d: Math.hypot(a.x - b.x, a.y - b.y) });
+        }
+      }
+      pairs.sort((p, q) => p.d - q.d);
+      let loops = 0;
+      for (const { a, b } of pairs) {
+        if (loops >= 2) break;
+        try { carveRoute(a, b); loops++; } catch { /* skip blocked shortcut */ }
+      }
+    }
   } else {
     // A broad central hall with shallow, alternating alcoves around its sides.
     for(const c of ordered) {
@@ -141,7 +198,15 @@ export function dungeonLayout(input: GeneratorInput<DungeonParams>): Entity[] {
     return [...all].sort((a,b)=>Math.hypot(a.center.x-p.x,a.center.y-p.y)-Math.hypot(b.center.x-p.x,b.center.y-p.y))[0]!;
   }) : [boundary[Math.floor(boundary.length/2)]!];
   const start = cells.get(labels.keys().next().value!)!;
-  for(const entrance of entrances) for(const c of path(start,entrance)) if(!labels.has(c.key)) labels.set(c.key,0);
+  for(let i=0;i<entrances.length;i++) {
+    const entrance=entrances[i]!;
+    if(params.mode==='dungeon'){
+      const candidates=exteriorDoors.length?[entrance]:[...boundary].sort((a,b)=>Math.hypot(a.center.x-entrance.center.x,a.center.y-entrance.center.y)-Math.hypot(b.center.x-entrance.center.x,b.center.y-entrance.center.y));
+      let connected=false,lastError:unknown;
+      for(const candidate of candidates){try{carveRoute(start,candidate);entrances[i]=candidate;connected=true;break;}catch(error){lastError=error;}}
+      if(!connected)throw lastError??new Error('No clear entrance fits.');
+    }else for(const c of path(start,entrance))if(!labels.has(c.key))labels.set(c.key,0);
+  }
 
   // A concavity or manual wall can split one label into separate rooms.
   const roomNames=new Map<number,string>();
@@ -212,14 +277,38 @@ export function dungeonLayout(input: GeneratorInput<DungeonParams>): Entity[] {
   while(changed) {changed=false;for(const edge of shuffled) if(edge.right!==undefined && connected.has(edge.left)!==connected.has(edge.right)) {
     doors.add(edge);connected.add(edge.left);connected.add(edge.right);changed=true;
   }}
+  // Each corridor/room contact gets an opening; no hallway is drawn into a solid room wall.
+  if(params.mode==='dungeon'){
+    const contacts=new Map<string,Edge[]>();
+    for(const e of edges)if(e.right!==undefined&&(roomNames.get(e.left)==='Corridor')!==(roomNames.get(e.right)==='Corridor')){
+      const k=[e.left,e.right].sort((a,b)=>a-b).join(':');const list=contacts.get(k)??[];list.push(e);contacts.set(k,list);
+    }
+    for(const list of contacts.values()){
+      const remaining=new Set(list);
+      while(remaining.size){const first=remaining.values().next().value!;remaining.delete(first);const run=[first];
+        for(let i=0;i<run.length;i++)for(const e of [...remaining])if([run[i]!.a,run[i]!.b].some(p=>[e.a,e.b].some(q=>Math.hypot(p.x-q.x,p.y-q.y)<g*.01))){run.push(e);remaining.delete(e);}
+        const chosen=run.slice(Math.max(0,Math.floor((run.length-params.corridorWidth)/2)),Math.max(0,Math.floor((run.length-params.corridorWidth)/2))+params.corridorWidth);chosen.forEach(e=>doors.add(e));
+      }
+    }
+  }
   if(connected.size!==new Set(labels.values()).size) throw new Error('Could not connect rooms around the manual walls.');
   for(const entrance of entrances) {
     const candidates=edges.filter(e=>e.right===undefined && e.left===labels.get(entrance.key) && outerDistance({x:(e.a.x+e.b.x)/2,y:(e.a.y+e.b.y)/2})<g*0.01);
     candidates.sort((a,b)=>Math.hypot((a.a.x+a.b.x)/2-entrance.center.x,(a.a.y+a.b.y)/2-entrance.center.y)-Math.hypot((b.a.x+b.b.x)/2-entrance.center.x,(b.a.y+b.b.y)/2-entrance.center.y));
     const edge=candidates.find(e=>e.manual||!wallAt({x:(e.a.x+e.b.x)/2,y:(e.a.y+e.b.y)/2}));
-    if(edge) doors.add(edge);
+    if(edge) {
+      doors.add(edge);
+      if(params.mode==='dungeon'){
+        const run=[edge];
+        for(let i=0;i<run.length&&run.length<params.corridorWidth;i++)for(const e of candidates){
+          if(run.includes(e)||e.manual||wallAt({x:(e.a.x+e.b.x)/2,y:(e.a.y+e.b.y)/2}))continue;
+          if(Math.abs(cross(edge.a,edge.b,e.a))<g*1e-6&&Math.abs(cross(edge.a,edge.b,e.b))<g*1e-6&&[run[i]!.a,run[i]!.b].some(p=>[e.a,e.b].some(q=>Math.hypot(p.x-q.x,p.y-q.y)<g*.01))){run.push(e);doors.add(e);if(run.length>=params.corridorWidth)break;}
+        }
+      }
+    }
     else throw new Error('No clear entrance fits. Add an entrance door to the footprint.');
   }
+  const rawWalls: Array<[Point, Point]> = [];
   for(const [i,e] of edges.entries()) {
     const mid={x:(e.a.x+e.b.x)/2,y:(e.a.y+e.b.y)/2};
     if(wallAt(mid)) continue;
@@ -238,15 +327,85 @@ export function dungeonLayout(input: GeneratorInput<DungeonParams>): Entity[] {
         pieces=pieces.flatMap(([a,b])=>hi<=a||lo>=b?[[a,b] as [number,number]]:
           [...(lo>a?[[a,lo] as [number,number]]:[]),...(hi<b?[[hi,b] as [number,number]]:[])]);
       }
-      for(const [j,[lo,hi]] of pieces.entries()) if(hi-lo>1e-8) output.push({...base,id:`wall-${i}-${j}`,type:'wall',
-        points:[{x:e.a.x+lo*dx,y:e.a.y+lo*dy},{x:e.a.x+hi*dx,y:e.a.y+hi*dy}],blocksMove:true,blocksSight:true});
+      for(const [lo,hi] of pieces) if(hi-lo>1e-8) rawWalls.push([{x:e.a.x+lo*dx,y:e.a.y+lo*dy},{x:e.a.x+hi*dx,y:e.a.y+hi*dy}]);
     }
+  }
+  // Merge touching collinear wall segments so walls render seamlessly without segment tick marks.
+  const ptKey = (p: Point) => `${Math.round(p.x * 1e4)},${Math.round(p.y * 1e4)}`;
+  const usedWall = new Array(rawWalls.length).fill(false);
+  let wallIdx = 0;
+  for (let i = 0; i < rawWalls.length; i++) {
+    if (usedWall[i]) continue;
+    usedWall[i] = true;
+    let [start, end] = rawWalls[i]!;
+    let merged = true;
+    while (merged) {
+      merged = false;
+      for (let j = 0; j < rawWalls.length; j++) {
+        if (usedWall[j]) continue;
+        const [a, b] = rawWalls[j]!;
+        const collinear = Math.abs(cross(start, end, a)) < g * 1e-4 && Math.abs(cross(start, end, b)) < g * 1e-4;
+        if (!collinear) continue;
+        if (ptKey(end) === ptKey(a)) { end = b; usedWall[j] = true; merged = true; }
+        else if (ptKey(end) === ptKey(b)) { end = a; usedWall[j] = true; merged = true; }
+        else if (ptKey(start) === ptKey(b)) { start = a; usedWall[j] = true; merged = true; }
+        else if (ptKey(start) === ptKey(a)) { start = b; usedWall[j] = true; merged = true; }
+      }
+    }
+    output.push({ ...base, id: `wall-${wallIdx++}`, type: 'wall', points: [start, end], blocksMove: true, blocksSight: true });
+  }
+  // Validate the produced geometry, including actual wall and doorway openings.
+  const finalWalls=[...output,...constraints].filter((e):e is Extract<Entity,{type:'wall'}>=>e.type==='wall');
+  const finalDoors=[...output,...constraints].filter((e):e is Extract<Entity,{type:'door'}>=>e.type==='door');
+  const walkable=new Map([...cells].filter(([,c])=>[...allFloors,...fixedFloors].some(f=>pointInPolygon(c.center,f.rings))));
+  const entranceCell=[...walkable.values()].sort((a,b)=>Math.hypot(a.center.x-entrances[0]!.center.x,a.center.y-entrances[0]!.center.y)-Math.hypot(b.center.x-entrances[0]!.center.x,b.center.y-entrances[0]!.center.y))[0];
+  if(entranceCell){const queue=[entranceCell],seen=new Set([entranceCell.key]);
+    const connections=new Map<string,boolean>();
+    const clear=(a:Cell,b:Cell)=>{const k=[a.key,b.key].sort().join('|');const saved=connections.get(k);if(saved!==undefined)return saved;
+      const mid={x:(a.center.x+b.center.x)/2,y:(a.center.y+b.center.y)/2};
+      const door=finalDoors.some(d=>crossing(a.center,b.center,d.a,d.b));
+      const wall=finalWalls.some(w=>w.points.slice(1).some((p,i)=>crossing(a.center,b.center,w.points[i]!,p)));
+      const value=pointInPolygon(mid,region)&&(!wall||door);connections.set(k,value);return value;
+    };
+    for(let i=0;i<queue.length;i++)for(const [dx,dy]of directions){const a=queue[i]!,n=walkable.get(key(a.x+dx,a.y+dy));if(n&&!seen.has(n.key)&&clear(a,n)){seen.add(n.key);queue.push(n);}}
+    if(seen.size!==walkable.size)throw new Error('Generated dungeon has a blocked floor connection after walls and doors. The result was not applied.');
   }
   return output;
 }
 
 export function generateDungeon(input: GeneratorInput<DungeonParams>): Entity[] {
-  const layout=dungeonLayout(input);
-  return [...layout,...dressDungeon(input,layout)];
+  const layout = dungeonLayout(input);
+  const dressed = dressDungeon(input, layout);
+  const purposeLabel: Record<string, string> = {
+    tavern: 'Taproom',
+    storage: 'Pantry',
+    bedroom: 'Guest Room',
+    shrine: 'Shrine',
+    guardroom: 'Guardroom',
+  };
+  const labels: Entity[] = [];
+  let roomNum = 1;
+  for (const e of layout) {
+    if (e.type !== 'area' || e.role !== 'floor' || e.name === 'Corridor') continue;
+    const ring = e.rings[0];
+    if (!ring || ring.length < 3) continue;
+    const cx = ring.reduce((s, p) => s + p.x, 0) / ring.length;
+    const cy = ring.reduce((s, p) => s + p.y, 0) / ring.length;
+    const text = input.params.mode === 'building'
+      ? (purposeLabel[e.roomPurpose ?? ''] ?? e.name ?? `Room ${roomNum}`)
+      : String(roomNum);
+    labels.push({
+      id: `room-label-${roomNum++}`,
+      type: 'label',
+      layerId: 'generated',
+      origin: 'generated',
+      rev: 0,
+      text,
+      x: cx,
+      y: cy,
+      size: input.params.mode === 'building' ? 15 : 17,
+    });
+  }
+  return [...layout, ...dressed, ...labels];
 }
 registerGenerator({type:'dungeon',title:'Dungeon / interior',params:DungeonParamsSchema,generate:generateDungeon,dress:dressDungeon});

@@ -28,7 +28,7 @@ export function generateOutdoor(input: GeneratorInput<OutdoorParams>): Entity[] 
   const random = mulberry32(input.seed), box = bboxFromPoints(region[0]!)!;
   const cols = Math.ceil((box.maxX - box.minX) / g), rows = Math.ceil((box.maxY - box.minY) / g);
   if (cols * rows > 20000) throw new Error('Outdoor footprint is too large: use at most 20,000 grid squares.');
-  const trailWidth = g * 2.2, trailRadius = trailWidth / 2;
+  const trailWidth = g * 1.15, trailRadius = trailWidth / 2;
   // Developed sites commonly inherit a whole land/biome backdrop; it is ground, not an obstacle.
   const areas = constraints.filter((e): e is Extract<Entity, { type: 'area' }> => e.type === 'area'
     && !(e.origin === 'inherited' && (e.role === 'land' || e.role.startsWith('biome:'))));
@@ -182,15 +182,15 @@ export function generateOutdoor(input: GeneratorInput<OutdoorParams>): Entity[] 
   }
   let pond: Point[][] | undefined;
   if (params.water && params.pond) {
-    const pondRadius = g * 2.2;
+    const pondRadius = g * 2.6;
     const options = all.filter(c => fits(c, pondRadius + g * .2)
       && clearings.every(clear => distance(c, clear.center) > clear.radius + pondRadius + g)
       && trails.every(t => lineDistance(c, t) > pondRadius + trailRadius + g)
       && paths.every(p => lineDistance(c, p.points) > pondRadius + p.width / 2 + g));
     const center = options[Math.floor(random() * options.length)];
     if (!center) throw new Error('No room for a pond beside the paths. Turn it off or enlarge the footprint.');
-    pond = [smoothChaikin(Array.from({ length: 20 }, (_, i) => {
-      const angle = i / 20 * Math.PI * 2, r = pondRadius * (.8 + random() * .2);
+    pond = [smoothChaikin(Array.from({ length: 24 }, (_, i) => {
+      const angle = i / 24 * Math.PI * 2, r = pondRadius * (.78 + random() * .24);
       return { x: center.x + Math.cos(angle) * r, y: center.y + Math.sin(angle) * r };
     }), 2, true)];
     layout.push({ ...base, id: 'pond', name: 'Pond', type: 'area', role: 'water', rings: pond, fill: '#469caa' });
@@ -208,7 +208,7 @@ export function generateOutdoor(input: GeneratorInput<OutdoorParams>): Entity[] 
       const bend = Math.max(...wet.map(p => distanceToSegment(p, a, b)));
       const assets = themeAssets(input.theme, 'bridge'), asset = assets[Math.floor(random() * assets.length)]!;
       bridges.push({ ...base, id: `bridge-${bridges.length}`, type: 'prop', name: 'Stream bridge', x: (a.x + b.x) / 2, y: (a.y + b.y) / 2,
-        w: length + g * .8, h: width + bend * 2, rotation: Math.atan2(b.y - a.y, b.x - a.x), scale: 1, flipX: false,
+        w: length + g * .8, h: Math.min(width * 1.4, width + bend * 1.4), rotation: Math.atan2(b.y - a.y, b.x - a.x), scale: 1, flipX: false,
         ...(asset.startsWith('builtin:') ? { builtin: asset.slice(8) } : { assetId: asset }) });
       wet = [];
     };
@@ -221,6 +221,7 @@ export function generateOutdoor(input: GeneratorInput<OutdoorParams>): Entity[] 
         const crosses = Math.min(lineDistance(previous, stream), lineDistance(p, stream)) <= streamWidth / 2 + width / 2;
         if (crosses) {
           if (!wet.length) wet.push(previous);
+          else if (distance(wet[0]!, p) > g * 7.5) { flush(); wet.push(previous); }
           wet.push(p);
         } else flush();
         previous = p;
@@ -230,24 +231,94 @@ export function generateOutdoor(input: GeneratorInput<OutdoorParams>): Entity[] 
   }
   layout.push(...bridges);
 
-  // A dense band follows the footprint and walkable edges, with lighter scattering elsewhere.
-  const trees: Entity[] = [], spacing = g * 1.6;
+  // A dense band follows the footprint and walkable edges, with organic grove clusters elsewhere.
+  const trees: Extract<Entity, { type: 'prop' }>[] = [], rocks: Entity[] = [], spacing = g * 1.55;
   for (let y = box.minY + spacing / 2; y < box.maxY; y += spacing) for (let x = box.minX + spacing / 2; x < box.maxX; x += spacing) {
     const p = { x: x + (random() - .5) * spacing * .65, y: y + (random() - .5) * spacing * .65 };
-    const size = g * (1.25 + random() * .7), radius = size * Math.SQRT2 / 2;
+    const size = g * (1.25 + random() * .8), radius = size * Math.SQRT2 / 2;
     if (!fits(p, radius) || clearings.some(c => distance(p, c.center) < c.radius + radius)) continue;
     const trailDistance = Math.min(...trails.map(t => lineDistance(p, t)));
     if (trailDistance < trailRadius + radius || paths.some(t => lineDistance(p, t.points) < t.width / 2 + radius)) continue;
-    if (stream.length && lineDistance(p, stream) < streamWidth / 2 + radius) continue;
+    const streamDist = stream.length ? lineDistance(p, stream) : Infinity;
+    if (streamDist < streamWidth / 2 + radius) continue;
     if (pond && (pointInPolygon(p, pond) || ringDistance(p, pond) < radius)) continue;
     if (bridges.some(e => { const b = getEntityBounds(e)!; return p.x + radius > b.minX && p.x - radius < b.maxX && p.y + radius > b.minY && p.y - radius < b.maxY; })) continue;
-    const band = ringDistance(p, region) < g * 4 || trailDistance < trailRadius + g * 4 || clearings.some(c => distance(p, c.center) < c.radius + g * 4);
-    if (random() > Math.min(.95, params.density * (band ? .85 : .18))) continue;
+
+    // Place mossy boulders near stream banks, pond edges, or occasional forest outcrops.
+    const nearWater = (stream.length && streamDist < streamWidth / 2 + g * 1.9) || (pond && ringDistance(p, pond) < g * 1.8);
+    if ((nearWater && random() < Math.min(0.45, 0.22 * params.density)) || (!nearWater && random() < Math.min(0.12, 0.05 * params.density))) {
+      const rockSz = g * (0.55 + random() * 0.45);
+      rocks.push({ ...base, id: `rock-${rocks.length}`, type: 'prop', name: 'Mossy boulder', ...p, w: rockSz, h: rockSz,
+        rotation: random() * Math.PI * 2, scale: 1, flipX: random() < .5, builtin: 'rock' });
+      continue;
+    }
+
+    const band = ringDistance(p, region) < g * 3.5 || trailDistance < trailRadius + g * 3.5 || clearings.some(c => distance(p, c.center) < c.radius + g * 3.5);
+    const grove = 0.5 + 0.5 * Math.sin(p.x * 0.08 + input.seed) * Math.cos(p.y * 0.08 - input.seed * 0.7);
+    const prob = band ? .82 : (.20 + grove * .52);
+    if (random() > Math.min(.95, params.density * prob)) continue;
     const assets = themeAssets(input.theme, 'tree'), asset = assets[Math.floor(random() * assets.length)]!;
     trees.push({ ...base, id: `tree-${trees.length}`, type: 'prop', name: 'Tree', ...p, w: size, h: size, rotation: random() * Math.PI * 2, scale: 1, flipX: random() < .5,
       ...(asset.startsWith('builtin:') ? { builtin: asset.slice(8) } : { assetId: asset }) });
+    // Add an occasional smaller sapling beside dense grove trees for natural thickets.
+    if (!band && grove > 0.68 && random() < 0.35) {
+      const ang = random() * Math.PI * 2, sp = { x: p.x + Math.cos(ang) * g * 0.85, y: p.y + Math.sin(ang) * g * 0.85 };
+      const subSz = size * 0.65, subR = subSz * Math.SQRT2 / 2;
+      if (fits(sp, subR) && clearings.every(c => distance(sp, c.center) >= c.radius + subR)
+        && trails.every(t => lineDistance(sp, t) >= trailRadius + subR)
+        && (!stream.length || lineDistance(sp, stream) >= streamWidth / 2 + subR)
+        && (!pond || (!pointInPolygon(sp, pond) && ringDistance(sp, pond) >= subR))) {
+        trees.push({ ...base, id: `tree-${trees.length}`, type: 'prop', name: 'Tree', ...sp, w: subSz, h: subSz, rotation: random() * Math.PI * 2, scale: 1, flipX: random() < .5,
+          ...(asset.startsWith('builtin:') ? { builtin: asset.slice(8) } : { assetId: asset }) });
+      }
+    }
   }
-  return [...layout, ...trees, ...clearings.map((c, i): Entity => ({ ...base, id: `label-${i}`, type: 'label', name: `Clearing ${i + 1}`, text: String(i + 1), x: c.center.x, y: c.center.y, size: 18 }))];
+  // Place clearing landmarks & undergrowth (campfire + Waystone in clearing 1, outcrop + crates in clearing 2, standing stone in clearing 3).
+  const lights: Entity[] = [];
+  if (clearings.length && params.density > 0) {
+    const c0 = clearings[0]!;
+    for (let a = 0; a < 8; a++) {
+      const ang = (a / 8) * Math.PI * 2 + random() * 0.4;
+      const lp = { x: c0.center.x + Math.cos(ang) * (c0.radius * 0.56), y: c0.center.y + Math.sin(ang) * (c0.radius * 0.56) };
+      const sz = g * 0.9;
+      if (fits(lp, sz) && trails.every(t => lineDistance(lp, t) > trailRadius + sz)) {
+        rocks.push({ ...base, id: `landmark-0`, type: 'prop', name: 'Waystone', ...lp, w: sz, h: sz, rotation: ang, scale: 1, flipX: false, builtin: 'altar' });
+        const firePt = { x: c0.center.x - Math.cos(ang) * (c0.radius * 0.42), y: c0.center.y - Math.sin(ang) * (c0.radius * 0.42) };
+        if (fits(firePt, g * 0.45) && trails.every(t => lineDistance(firePt, t) > trailRadius * 0.7 + g * 0.25)) {
+          rocks.push({ ...base, id: 'landmark-0-fire', type: 'prop', name: 'Campfire', ...firePt, w: g * 0.65, h: g * 0.65, rotation: 0, scale: 1, flipX: false, builtin: 'campfire' });
+          lights.push({ ...base, id: 'landmark-0-light', type: 'light', ...firePt, radius: g * 3.2, color: '#ff9e44' });
+        }
+        break;
+      }
+    }
+    if (clearings.length > 1) {
+      const c1 = clearings[1]!;
+      for (let a = 0; a < 8; a++) {
+        const ang = (a / 8) * Math.PI * 2 + random() * 0.5;
+        const lp = { x: c1.center.x + Math.cos(ang) * (c1.radius * 0.56), y: c1.center.y + Math.sin(ang) * (c1.radius * 0.56) };
+        const sz = g * 0.8;
+        if (fits(lp, sz) && trails.every(t => lineDistance(lp, t) > trailRadius + sz)) {
+          rocks.push({ ...base, id: `landmark-1-rock`, type: 'prop', name: 'Outcrop boulder', ...lp, w: sz, h: sz, rotation: ang, scale: 1, flipX: false, builtin: 'rock' });
+          rocks.push({ ...base, id: `landmark-1-crate`, type: 'prop', name: 'Camp crate', x: lp.x + g * 0.6, y: lp.y + g * 0.25, w: g * 0.5, h: g * 0.5, rotation: ang + 0.4, scale: 1, flipX: false, builtin: 'crate' });
+          rocks.push({ ...base, id: `landmark-1-barrel`, type: 'prop', name: 'Supply barrel', x: lp.x - g * 0.55, y: lp.y + g * 0.35, w: g * 0.45, h: g * 0.45, rotation: ang, scale: 1, flipX: false, builtin: 'barrel' });
+          break;
+        }
+      }
+    }
+    // Add subtle undergrowth bushes near dense trees and pond edges.
+    for (const t of trees) {
+      if (random() > 0.24 * params.density) continue;
+      const ang = random() * Math.PI * 2, bp = { x: t.x + Math.cos(ang) * g * 0.75, y: t.y + Math.sin(ang) * g * 0.75 };
+      const bSz = g * (0.55 + random() * 0.35);
+      if (fits(bp, bSz) && clearings.every(c => distance(bp, c.center) >= c.radius)
+        && trails.every(tr => lineDistance(bp, tr) >= trailRadius + bSz * 0.6)
+        && (!stream.length || lineDistance(bp, stream) >= streamWidth / 2 + bSz * 0.6)
+        && (!pond || (!pointInPolygon(bp, pond) && ringDistance(bp, pond) >= bSz * 0.5))) {
+        rocks.push({ ...base, id: `bush-${rocks.length}`, type: 'prop', name: 'Undergrowth', ...bp, w: bSz, h: bSz, rotation: random() * Math.PI * 2, scale: 1, flipX: false, builtin: 'bush' });
+      }
+    }
+  }
+  return [...layout, ...rocks, ...trees, ...lights, ...clearings.map((c, i): Entity => ({ ...base, id: `label-${i}`, type: 'label', name: `Clearing ${i + 1}`, text: String(i + 1), x: c.center.x, y: c.center.y, size: 18 }))];
 }
 
 registerGenerator({ type: 'glade', title: 'Outdoor woodland', params: OutdoorParamsSchema, generate: generateOutdoor });

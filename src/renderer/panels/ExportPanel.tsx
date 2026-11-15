@@ -30,16 +30,19 @@ export function ExportPanel() {
       setReport(path?`Saved ${result.width} x ${result.height} ${kind.toUpperCase()}. ${result.report} ${uvtt?.report ?? ''}`:'Export cancelled.');
     }catch(e){setReport((e as Error).message);}finally{setBusy(false);}
   };
-  return <div style={{padding:'4px 10px',fontSize:12}}>
-    <button disabled={!map} onClick={()=>setOpen(!open)}>Export</button>
-    {open && <div style={{display:'flex',gap:8,alignItems:'center',flexWrap:'wrap'}}>
-      <select aria-label="Export region" value={region} onChange={e=>setRegion(e.target.value as typeof region)}><option value="map">Whole map</option><option value="selection">Selection rectangle</option><option value="rectangle">Custom rectangle</option></select>
-      {region==='rectangle' && (['x','y','w','h'] as const).map(key=><label key={key}>{key} (m) <input aria-label={`Export ${key}`} type="number" style={{width:70}} value={rect[key]} onChange={e=>setRect({...rect,[key]:Number(e.target.value)})}/></label>)}
-      <label>Pixels per square <input aria-label="Export pixels per square" type="number" min="1" style={{width:70}} value={pps} onChange={e=>setPps(Number(e.target.value))}/></label>
-      <button disabled={busy} onClick={()=>void run('png')}>Save player PNG</button>
-      <button disabled={busy} onClick={()=>void run('dd2vtt')}>Save Universal VTT</button>
-      <span>Private content is hidden. Fog is omitted. Maximum 8192 px per side.</span>
+  return <>
+    <button type="button" disabled={!map} aria-expanded={open} onClick={()=>setOpen(!open)}>Export</button>
+    {(open || report) && <div className="top-drawer-row">
+      {open && <>
+        <select aria-label="Export region" value={region} onChange={e=>setRegion(e.target.value as typeof region)}><option value="map">Whole map</option><option value="selection">Selection rectangle</option><option value="rectangle">Custom rectangle</option></select>
+        {region==='rectangle' && (['x','y','w','h'] as const).map(key=><label key={key}>{key} (m) <input aria-label={`Export ${key}`} type="number" style={{width:70}} value={rect[key]} onChange={e=>setRect({...rect,[key]:Number(e.target.value)})}/></label>)}
+        <label>Pixels per square <input aria-label="Export pixels per square" type="number" min="1" style={{width:70}} value={pps} onChange={e=>setPps(Number(e.target.value))}/></label>
+        <button type="button" disabled={busy} onClick={()=>void run('png')}>Save player PNG</button>
+        <button type="button" disabled={busy} onClick={()=>void run('dd2vtt')}>Save Universal VTT</button>
+        <span>Private content is hidden. Fog is omitted. Maximum 8192 px per side.</span>
+      </>}
+      {report && <div role="status" aria-label="Export result">{report}</div>}
+      <button type="button" aria-label="Close export controls" onClick={() => { setOpen(false); setReport(''); }} style={{marginLeft:'auto'}}>×</button>
     </div>}
-    {report && <div role="status" aria-label="Export result">{report}</div>}
-  </div>;
+  </>;
 }

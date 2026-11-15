@@ -1,10 +1,42 @@
-import { useEffect, useState } from 'react';
+import { activateMapPanel, navigateToMap } from '../model/navigation';
+import { useEffect, useRef, useState } from 'react';
 import type { IDockviewPanelProps } from 'dockview-react';
 import { useStore } from 'zustand';
-import type { AreaRole, Entity, PathRole } from '../model/schema';
+import {
+  DEFAULT_BIOMES,
+  DistrictProfileSchema,
+  type AreaRole,
+  type Entity,
+  type MapDoc,
+  type PathRole,
+  type PlaceEntity,
+} from '../model/schema';
+import { DistrictControls } from './DistrictControls';
 import { worldStore } from '../model/store';
 import { viewStore } from '../model/viewStore';
 import { PanelHeaderBar } from './PanelHeaderBar';
+import { GenerationControls, useGenerationTarget } from './GenerationControls';
+import { resolveGenerationContext } from '../model/generationContext';
+import {
+  defaultGenerationDraft,
+  draftKey,
+  generateFromContext,
+  generationState,
+  type SettingsTarget,
+} from '../model/generationState';
+import { MapSettings } from './MapSettings';
+
+function ContextSettings({ map, target, props }: { map: MapDoc; target: SettingsTarget; props: IDockviewPanelProps }) {
+  const { context } = useGenerationTarget(map, target.panelId);
+  const valid = target.mode === 'map' || context.key === target.key;
+  useEffect(() => { if (!valid) generationState.setState({ settings: null }); }, [valid]);
+  if (!valid) return null;
+  return <div data-testid={`panel-${props.api.id}`} style={{ height: '100%', overflow: 'auto' }}>
+    <PanelHeaderBar title={target.mode === 'map' ? 'Map settings' : 'Generation settings'} panelProps={props} />
+    <button onClick={() => generationState.setState({ settings: null })}>Back to selection</button>
+    {target.mode === 'map' ? <MapSettings key={map.id} map={map} /> : <GenerationControls map={map} panelId={target.panelId} api={props.containerApi} detailed />}
+  </div>;
+}
 
 const AREA_ROLES = [
   'land',
@@ -73,11 +105,33 @@ function NumberField(props: {
   );
 }
 
+function toHexColor(val?: string): string {
+  if (!val) return '#3b5249';
+  if (/^#[0-9a-fA-F]{6}$/.test(val)) return val;
+  const short = val.match(/^#([0-9a-fA-F])([0-9a-fA-F])([0-9a-fA-F])$/);
+  if (short) return `#${short[1]}${short[1]}${short[2]}${short[2]}${short[3]}${short[3]}`;
+  return '#3b5249';
+}
+
+const PLACE_CATEGORY_SUGGESTIONS = [
+  'settlement',
+  'dungeon',
+  'region',
+  'building',
+  'room',
+  'landmark',
+  'poi',
+  'Tavern',
+  'Shop',
+  'other',
+];
+
 function TextField(props: {
   label: string;
   value: string;
   placeholder?: string;
   testId?: string;
+  list?: string;
   onCommit: (next: string) => void;
 }) {
   const [draft, setDraft] = useState(props.value);
@@ -99,6 +153,7 @@ function TextField(props: {
       </span>
       <input
         type="text"
+        list={props.list}
         data-testid={props.testId}
         placeholder={props.placeholder}
         value={draft}
@@ -155,8 +210,31 @@ export function InspectorPanel(props: IDockviewPanelProps) {
   const world = useStore(worldStore, (s) => s.world);
   const activeMapId = useStore(worldStore, (s) => s.activeMapId);
   const selectedIds = useStore(viewStore, (s) => s.selectedEntityIds);
+  const editParts = useStore(viewStore, (s) => s.editParts);
+  const settings = useStore(generationState, s => s.settings);
+  const job = useStore(generationState, (s) => s.job);
 
   const map = activeMapId && world ? world.maps[activeMapId] : undefined;
+  const prevSelectedKey = useRef(selectedIds.join(','));
+  const prevSettings = useRef(settings);
+
+  useEffect(() => {
+    const selectedKey = selectedIds.join(',');
+    if (
+      settings &&
+      prevSettings.current === settings &&
+      selectedKey !== prevSelectedKey.current &&
+      selectedIds.length === 1 &&
+      map
+    ) {
+      const ent = map.entities[selectedIds[0]!];
+      if (ent && (!ent.groupId || editParts || ent.type === 'place')) {
+        generationState.setState({ settings: null });
+      }
+    }
+    prevSelectedKey.current = selectedKey;
+    prevSettings.current = settings;
+  }, [selectedIds, settings, editParts, map]);
   const selectedEntities: Entity[] = map
     ? selectedIds
         .map((id) => map.entities[id])
@@ -185,6 +263,10 @@ export function InspectorPanel(props: IDockviewPanelProps) {
 
   const single = selectedEntities.length === 1 ? selectedEntities[0]! : null;
 
+  if (settings && settings.worldId === world?.meta.id && settings.mapId === activeMapId && map) {
+    return <ContextSettings map={map} target={settings} props={props} />;
+  }
+
   return (
     <div
       data-testid={`panel-${props.api.id}`}
@@ -210,6 +292,14 @@ export function InspectorPanel(props: IDockviewPanelProps) {
           gap: 8,
         }}
       >
+        {map&&selectedEntities.length>0&&selectedEntities[0]?.groupId&&selectedEntities.every(e=>e.groupId===selectedEntities[0]!.groupId)&&<div>
+          Group: {map.groups?.[selectedEntities[0]!.groupId!]?.name??'Map group'}{' '}
+          <button onClick={()=>viewStore.setState({editParts:true})}>Edit Parts</button>
+        </div>}
+        {map&&selectedEntities.some(e=>e.origin==='manual'&&e.genId&&map.generators[e.genId])&&<div>
+          Edited parts are preserved on reroll.{' '}
+          <details><summary>More…</summary><button onClick={()=>worldStore.getState().execute('entity.returnToGenerated',{mapId:map.id,entityIds:selectedEntities.filter(e=>e.origin==='manual'&&e.genId).map(e=>e.id)})}>Allow regeneration of this part</button></details>
+        </div>}
         {!map || selectedEntities.length === 0 ? (
           <div style={{ color: 'var(--atlas-text-muted)' }}>
             Select an entity to inspect
@@ -275,6 +365,7 @@ export function InspectorPanel(props: IDockviewPanelProps) {
                 updateEntity(single.id, { name: val || undefined })
               }
             />
+            {single.type==='path'&&single.role==='river'&&single.outlet&&<div>Downstream outlet: {single.outlet}</div>}
 
             <label style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
               <span style={{ width: 78, color: 'var(--atlas-text-muted)' }}>
@@ -346,34 +437,45 @@ export function InspectorPanel(props: IDockviewPanelProps) {
 
             {single.type === 'area' && (
               <>
-                <label style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
-                  <span style={{ width: 78, color: 'var(--atlas-text-muted)' }}>
-                    Role
-                  </span>
-                  <select
-                    data-testid="inspector-field-role"
-                    value={
-                      AREA_ROLES.includes(
-                        single.role as (typeof AREA_ROLES)[number],
-                      )
-                        ? single.role
-                        : 'biome:forest'
-                    }
-                    onChange={(e) =>
-                      updateEntity(single.id, {
-                        role: e.target.value as AreaRole,
-                      })
-                    }
-                    style={{ flex: 1 }}
-                  >
-                    {AREA_ROLES.map((r) => (
-                      <option key={r} value={r}>
-                        {r}
-                      </option>
-                    ))}
-                    <option value="biome:forest">biome:forest</option>
-                  </select>
-                </label>
+                {single.role==='floor'&&single.roomPurpose&&<div>Room purpose: {single.roomPurpose}</div>}
+                {(() => {
+                  const biomeRoles = Array.from(
+                    new Set([
+                      ...(world?.meta.climate?.biomes ?? DEFAULT_BIOMES).map(
+                        (b) => `biome:${b.name}`,
+                      ),
+                      ...(single.role.startsWith('biome:') ? [single.role] : []),
+                    ]),
+                  );
+                  return (
+                    <label style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                      <span style={{ width: 78, color: 'var(--atlas-text-muted)' }}>
+                        Role
+                      </span>
+                      <select
+                        data-testid="inspector-field-role"
+                        value={single.role}
+                        onChange={(e) =>
+                          updateEntity(single.id, {
+                            role: e.target.value as AreaRole,
+                          })
+                        }
+                        style={{ flex: 1 }}
+                      >
+                        {AREA_ROLES.map((r) => (
+                          <option key={r} value={r}>
+                            {r}
+                          </option>
+                        ))}
+                        {biomeRoles.map((r) => (
+                          <option key={r} value={r}>
+                            {r}
+                          </option>
+                        ))}
+                      </select>
+                    </label>
+                  );
+                })()}
                 {single.role.startsWith('biome:') && (
                   <TextField
                     label="Biome"
@@ -385,15 +487,45 @@ export function InspectorPanel(props: IDockviewPanelProps) {
                     }}
                   />
                 )}
-                <TextField
-                  label="Fill (#hex)"
-                  testId="inspector-field-fill"
-                  value={single.fill ?? ''}
-                  placeholder="#3b5249"
-                  onCommit={(fill) =>
-                    updateEntity(single.id, { fill: fill || undefined })
-                  }
-                />
+                {single.role === 'district' && <DistrictControls value={single.district ?? DistrictProfileSchema.parse({})} onChange={district=>updateEntity(single.id,{district})} />}
+                <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                  <div style={{ flex: 1 }}>
+                    <TextField
+                      label="Fill (#hex)"
+                      testId="inspector-field-fill"
+                      value={single.fill ?? ''}
+                      placeholder="#3b5249"
+                      onCommit={(fill) =>
+                        updateEntity(single.id, { fill: fill || undefined })
+                      }
+                    />
+                  </div>
+                  <input
+                    type="color"
+                    data-testid="inspector-field-fill-picker"
+                    aria-label="Fill color"
+                    value={toHexColor(single.fill)}
+                    onChange={(e) =>
+                      updateEntity(single.id, { fill: e.target.value })
+                    }
+                    style={{
+                      width: 28,
+                      height: 24,
+                      padding: 0,
+                      border: '1px solid var(--atlas-border)',
+                      background: 'transparent',
+                      cursor: 'pointer',
+                    }}
+                  />
+                  {single.fill && (
+                    <button
+                      type="button"
+                      onClick={() => updateEntity(single.id, { fill: undefined })}
+                    >
+                      Clear
+                    </button>
+                  )}
+                </div>
                 <NumberField
                   label="Elevation"
                   value={single.elevation ?? 0}
@@ -428,10 +560,10 @@ export function InspectorPanel(props: IDockviewPanelProps) {
                   </select>
                 </label>
                 <NumberField
-                  label="Width (m)"
-                  value={single.width}
+                  label="Path width (ft)"
+                  value={single.width/.3048}
                   min={0.05}
-                  onCommit={(width) => updateEntity(single.id, { width })}
+                  onCommit={(width) => updateEntity(single.id, { width:width*.3048 })}
                 />
                 <label style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
                   <input
@@ -634,7 +766,7 @@ export function InspectorPanel(props: IDockviewPanelProps) {
                     const targetPanelId = vs.activeMapPanelId ?? 'map-main';
                     vs.setPanelMap(targetPanelId, single.targetMapId);
                     vs.setSelection([]);
-                    worldStore.getState().setActiveMap(single.targetMapId);
+                    navigateToMap(single.targetMapId);
                   }}
                 >
                   Follow Portal
@@ -642,44 +774,249 @@ export function InspectorPanel(props: IDockviewPanelProps) {
               </>
             )}
 
-            {single.type === 'place' && (
-              <>
-                <TextField
-                  label="Category"
-                  value={single.category}
-                  onCommit={(category) =>
-                    updateEntity(single.id, { category })
+            <datalist id="inspector-place-categories">
+              {PLACE_CATEGORY_SUGGESTIONS.map((c) => (
+                <option key={c} value={c} />
+              ))}
+            </datalist>
+
+            {single.type === 'place' &&
+              (() => {
+                const linkedBuilding =
+                  map.kind === 'settlement'
+                    ? single.entityIds
+                        .map((id) => map.entities[id])
+                        .find((e) => e?.type === 'area' && e.role === 'building')
+                    : undefined;
+                const hasChildMap = Boolean(
+                  single.childMapId && world?.maps[single.childMapId],
+                );
+                return (
+                  <>
+                    <TextField
+                      label="Category"
+                      list="inspector-place-categories"
+                      value={single.category}
+                      onCommit={(category) =>
+                        updateEntity(single.id, { category })
+                      }
+                    />
+                    <TextAreaField
+                      label="Notes"
+                      value={single.notes}
+                      onCommit={(notes) => updateEntity(single.id, { notes })}
+                    />
+                    <TextAreaField
+                      label="GM Notes"
+                      value={single.gmNotes}
+                      onCommit={(gmNotes) =>
+                        updateEntity(single.id, { gmNotes })
+                      }
+                    />
+                    {!hasChildMap && linkedBuilding && (
+                      <button
+                        type="button"
+                        data-testid="btn-inspector-generate-interior"
+                        disabled={Boolean(job)}
+                        onClick={() => {
+                          const ctx = resolveGenerationContext(
+                            map,
+                            [single.id],
+                            editParts,
+                          );
+                          if (!world || !ctx.kind) return;
+                          const draft =
+                            generationState.getState().drafts[
+                              draftKey(world.meta.id, map.id, ctx)
+                            ] ?? defaultGenerationDraft(map, ctx);
+                          const panelId =
+                            viewStore.getState().activeMapPanelId ?? 'map-main';
+                          activateMapPanel(panelId, map.id);
+                          props.containerApi.getPanel(panelId)?.api.setActive();
+                          void generateFromContext(
+                            map,
+                            ctx,
+                            { ...draft, placeId: single.id },
+                            panelId,
+                          );
+                        }}
+                      >
+                        {job?.mapId === map.id
+                          ? 'Generating…'
+                          : 'Generate Interior'}
+                      </button>
+                    )}
+                    <button
+                      type="button"
+                      data-testid="btn-inspector-open-interior"
+                      onClick={() => {
+                        const res = worldStore.getState().execute('map.openInterior', {
+                          parentMapId: map.id,
+                          placeId: single.id,
+                        }) as { id: string };
+                        const vs = viewStore.getState();
+                        const targetPanelId = vs.activeMapPanelId ?? 'map-main';
+                        vs.setPanelMap(targetPanelId, res.id);
+                        vs.setSelection([]);
+                        navigateToMap(res.id);
+                      }}
+                    >
+                      {hasChildMap ? 'Open Interior' : 'Create & Open Interior'}
+                    </button>
+                  </>
+                );
+              })()}
+
+            {single.type !== 'place' &&
+              (() => {
+                const linkedPlace = Object.values(map.entities).find(
+                  (e): e is PlaceEntity =>
+                    e.type === 'place' && e.entityIds.includes(single.id),
+                );
+                const isSettlementBuilding =
+                  map.kind === 'settlement' &&
+                  single.type === 'area' &&
+                  single.role === 'building';
+                if (!isSettlementBuilding && !linkedPlace) return null;
+                const hasChildMap = Boolean(
+                  linkedPlace?.childMapId && world?.maps[linkedPlace.childMapId],
+                );
+                const commitPlaceField = (patch: {
+                  category?: string;
+                  notes?: string;
+                  gmNotes?: string;
+                }) => {
+                  if (linkedPlace) {
+                    updateEntity(linkedPlace.id, patch);
+                    return;
                   }
-                />
-                <TextAreaField
-                  label="Notes"
-                  value={single.notes}
-                  onCommit={(notes) => updateEntity(single.id, { notes })}
-                />
-                <TextAreaField
-                  label="GM Notes"
-                  value={single.gmNotes}
-                  onCommit={(gmNotes) => updateEntity(single.id, { gmNotes })}
-                />
-                <button
-                  type="button"
-                  data-testid="btn-inspector-open-interior"
-                  onClick={() => {
-                    const res = worldStore.getState().execute('map.openInterior', {
-                      parentMapId: map.id,
-                      placeId: single.id,
-                    }) as { id: string };
-                    const vs = viewStore.getState();
-                    const targetPanelId = vs.activeMapPanelId ?? 'map-main';
-                    vs.setPanelMap(targetPanelId, res.id);
-                    vs.setSelection([]);
-                    worldStore.getState().setActiveMap(res.id);
-                  }}
-                >
-                  {single.childMapId ? 'Open Interior' : 'Create & Open Interior'}
-                </button>
-              </>
-            )}
+                  worldStore.getState().execute('place.create', {
+                    mapId: map.id,
+                    layerId: single.layerId,
+                    name: single.name?.trim() || 'Place',
+                    category:
+                      patch.category ??
+                      (isSettlementBuilding ? 'building' : 'other'),
+                    notes: patch.notes ?? '',
+                    gmNotes: patch.gmNotes ?? '',
+                    entityIds: [single.id],
+                  });
+                };
+                return (
+                  <div
+                    style={{
+                      display: 'flex',
+                      flexDirection: 'column',
+                      gap: 6,
+                      paddingTop: 6,
+                      borderTop: '1px solid var(--atlas-border)',
+                    }}
+                  >
+                    <div style={{ fontWeight: 600 }}>Place &amp; Notes</div>
+                    <TextField
+                      label="Category"
+                      list="inspector-place-categories"
+                      value={linkedPlace?.category ?? ''}
+                      onCommit={(category) => commitPlaceField({ category })}
+                    />
+                    <TextAreaField
+                      label="Notes"
+                      value={linkedPlace?.notes ?? ''}
+                      onCommit={(notes) => commitPlaceField({ notes })}
+                    />
+                    <TextAreaField
+                      label="GM Notes"
+                      value={linkedPlace?.gmNotes ?? ''}
+                      onCommit={(gmNotes) => commitPlaceField({ gmNotes })}
+                    />
+                    {hasChildMap && linkedPlace ? (
+                      <button
+                        type="button"
+                        data-testid="btn-inspector-open-interior"
+                        onClick={() => {
+                          const res = worldStore
+                            .getState()
+                            .execute('map.openInterior', {
+                              parentMapId: map.id,
+                              placeId: linkedPlace.id,
+                            }) as { id: string };
+                          const vs = viewStore.getState();
+                          const targetPanelId = vs.activeMapPanelId ?? 'map-main';
+                          vs.setPanelMap(targetPanelId, res.id);
+                          vs.setSelection([]);
+                          navigateToMap(res.id);
+                        }}
+                      >
+                        Open Interior
+                      </button>
+                    ) : (
+                      <>
+                        {isSettlementBuilding && (
+                          <button
+                            type="button"
+                            data-testid="btn-inspector-generate-interior"
+                            disabled={Boolean(job)}
+                            onClick={() => {
+                              const ctx = resolveGenerationContext(
+                                map,
+                                [single.id],
+                                editParts,
+                              );
+                              if (!world || !ctx.kind) return;
+                              const draft =
+                                generationState.getState().drafts[
+                                  draftKey(world.meta.id, map.id, ctx)
+                                ] ?? defaultGenerationDraft(map, ctx);
+                              const panelId =
+                                viewStore.getState().activeMapPanelId ??
+                                'map-main';
+                              activateMapPanel(panelId, map.id);
+                              props.containerApi
+                                .getPanel(panelId)
+                                ?.api.setActive();
+                              void generateFromContext(
+                                map,
+                                ctx,
+                                {
+                                  ...draft,
+                                  placeId: linkedPlace?.id ?? draft.placeId,
+                                },
+                                panelId,
+                              );
+                            }}
+                          >
+                            {job?.mapId === map.id
+                              ? 'Generating…'
+                              : 'Generate Interior'}
+                          </button>
+                        )}
+                        {linkedPlace && (
+                          <button
+                            type="button"
+                            data-testid="btn-inspector-open-interior"
+                            onClick={() => {
+                              const res = worldStore
+                                .getState()
+                                .execute('map.openInterior', {
+                                  parentMapId: map.id,
+                                  placeId: linkedPlace.id,
+                                }) as { id: string };
+                              const vs = viewStore.getState();
+                              const targetPanelId =
+                                vs.activeMapPanelId ?? 'map-main';
+                              vs.setPanelMap(targetPanelId, res.id);
+                              vs.setSelection([]);
+                              navigateToMap(res.id);
+                            }}
+                          >
+                            Create &amp; Open Interior
+                          </button>
+                        )}
+                      </>
+                    )}
+                  </div>
+                );
+              })()}
           </>
         )}
       </div>

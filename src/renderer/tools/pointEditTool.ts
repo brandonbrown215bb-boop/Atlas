@@ -14,6 +14,7 @@ import { snapPointToGrid } from '../geom/simplify';
 import { applyEntityPatch } from '../geom/transform';
 import type { Entity, MapDoc, Point } from '../model/schema';
 import { viewStore } from '../model/viewStore';
+import { handleDraftHistory } from './draftHistory';
 import type { MapTool, ToolContext } from './types';
 
 function getSingleEditableEntity(
@@ -46,6 +47,7 @@ export function createPointEditTool(): MapTool {
 
   // Boolean add/subtract clip polygon state
   let clipPoints: Point[] = [];
+  const removedPoints: Point[] = [];
   let hoverPt: Point | null = null;
   let lastClickTime = 0;
   let lastClickPt: Point | null = null;
@@ -58,6 +60,7 @@ export function createPointEditTool(): MapTool {
 
   const clearClip = () => {
     clipPoints = [];
+    removedPoints.length = 0;
     lastClickTime = 0;
     lastClickPt = null;
   };
@@ -123,6 +126,7 @@ export function createPointEditTool(): MapTool {
   };
 
   return {
+    draftState: () => ({ undo: clipPoints.length > 0 || removedPoints.length > 0, redo: removedPoints.length > 0 }),
     id: 'pointEdit',
 
     getPreviewEntities() {
@@ -136,7 +140,7 @@ export function createPointEditTool(): MapTool {
       const mode = viewStore.getState().pointEditMode;
       const snapped = snapIfNeeded(pt, ctx);
       hoverPt = snapped;
-      const tol = 8 / Math.max(0.0005, ctx.camera.zoom);
+      const tol = 8 / Math.max(1e-8, ctx.camera.zoom);
 
       if (mode === 'add' || mode === 'subtract') {
         let target = getSingleEditableEntity(ctx.map, ctx.getSelectedIds());
@@ -175,6 +179,7 @@ export function createPointEditTool(): MapTool {
 
         const prev = clipPoints[clipPoints.length - 1];
         if (!prev || prev.x !== snapped.x || prev.y !== snapped.y) {
+          removedPoints.length = 0;
           clipPoints.push(snapped);
         }
         ctx.requestRedraw();
@@ -274,7 +279,7 @@ export function createPointEditTool(): MapTool {
         pt.x - draggingVertex.startPt.x,
         pt.y - draggingVertex.startPt.y,
       );
-      if (dist > 1 / Math.max(0.0005, ctx.camera.zoom)) {
+      if (dist > 1 / Math.max(1e-8, ctx.camera.zoom)) {
         draggingVertex.moved = true;
       }
       if (!draggingVertex.moved) {
@@ -317,14 +322,14 @@ export function createPointEditTool(): MapTool {
     onKey(e, ctx) {
       const mode = viewStore.getState().pointEditMode;
       if (mode === 'add' || mode === 'subtract') {
-        if (e.key === 'Escape' && clipPoints.length > 0) {
-          clearClip();
+        if (handleDraftHistory(e, clipPoints, removedPoints)) {
+          lastClickTime = 0;
+          lastClickPt = null;
           ctx.requestRedraw();
           return true;
         }
-        if (e.key === 'Backspace' && clipPoints.length > 0) {
-          e.preventDefault();
-          clipPoints.pop();
+        if (e.key === 'Escape' && (clipPoints.length > 0 || removedPoints.length > 0)) {
+          clearClip();
           ctx.requestRedraw();
           return true;
         }
@@ -389,7 +394,7 @@ export function createPointEditTool(): MapTool {
     },
 
     drawOverlay(gfx: Graphics, ctx: ToolContext) {
-      const zoom = Math.max(0.0005, ctx.camera.zoom);
+      const zoom = Math.max(1e-8, ctx.camera.zoom);
       const strokeW = 1.5 / zoom;
       const r = 4.5 / zoom;
       const mode = viewStore.getState().pointEditMode;

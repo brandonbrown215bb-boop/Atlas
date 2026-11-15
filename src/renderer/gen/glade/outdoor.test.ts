@@ -122,7 +122,7 @@ describe('outdoor woodland generator', () => {
     const before = s().world;
     s().execute('generator.reroll', { mapId: 'site', genId: 'woods', seed: 2, params: { water: false, entrances: [{ x: 0, y: 15.24 }] } });
     expect(s().world!.maps.site!.entities[tree.id]).toEqual(before!.maps.site!.entities[tree.id]);
-    expect(s().world!.maps.site!.entities.footprint).toEqual(footprint);
+    expect(s().world!.maps.site!.entities.footprint).toEqual({...footprint,usage:'boundary',groupId:'woods'});
     expect(MapDocSchema.parse(s().world!.maps.site).generators.woods).toMatchObject({ type: 'glade', seed: 2, params: { water: false } });
     s().undo(); expect(s().world).toEqual(before);
   });

@@ -8,6 +8,45 @@ export function signedArea(ring: Point[]): number {
   }, 0) / 2;
 }
 
+/** Taubin (zero-shrinkage) + Chaikin corner-cutting on closed polygon rings to round Voronoi cell sawtooths. */
+export function smoothPolygons(polygons: Point[][][], passes = 1): Point[][][] {
+  if (passes <= 0) return polygons;
+  const taubinStep = (ring: Point[], factor: number): Point[] =>
+    ring.map((cur, i) => {
+      const prev = ring[(i - 1 + ring.length) % ring.length]!;
+      const next = ring[(i + 1) % ring.length]!;
+      const avgX = (prev.x + next.x) * 0.5;
+      const avgY = (prev.y + next.y) * 0.5;
+      return {
+        x: cur.x + factor * (avgX - cur.x),
+        y: cur.y + factor * (avgY - cur.y),
+      };
+    });
+
+  return polygons.map(poly => poly.map(ring => {
+    let cur = ring;
+    if (cur.length >= 4) {
+      for (let t = 0; t < 2; t++) {
+        cur = taubinStep(cur, 0.45);
+        cur = taubinStep(cur, -0.46);
+      }
+    }
+    for (let pass = 0; pass < passes; pass++) {
+      if (cur.length < 3) break;
+      const next: Point[] = [];
+      for (let i = 0; i < cur.length; i++) {
+        const a = cur[i]!, b = cur[(i + 1) % cur.length]!;
+        next.push(
+          { x: a.x * 0.75 + b.x * 0.25, y: a.y * 0.75 + b.y * 0.25 },
+          { x: a.x * 0.25 + b.x * 0.75, y: a.y * 0.25 + b.y * 0.75 },
+        );
+      }
+      cur = next;
+    }
+    return cur;
+  }));
+}
+
 /** Cancel shared cell edges, then walk only the boundary. Coordinates are normalized. */
 export function traceCellBoundaries(cells: Point[][], groups: Array<string | null>): Map<string, Point[][][]> {
   type Edge = { a: string; b: string };

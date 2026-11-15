@@ -48,5 +48,31 @@ test('player PNG exports through UI and MCP preserve size, hide GM art and omit 
     await main.getByRole('button',{name:'Save Universal VTT',exact:true}).click();
     await expect(main.getByRole('status',{name:'Export result'})).toContainText('DD2VTT');
     expect(JSON.parse(readFileSync(vttPath,'utf8'))).toEqual(vtt.document);
+    // Exercise every region choice through the UI, checking the saved bytes too.
+    await app.evaluate(({dialog},path)=>{dialog.showSaveDialog=async()=>({canceled:false,filePath:path});},output);
+    await main.evaluate(()=>(window as any).__atlasViewStore.getState().setSelection(['land']));
+    await main.getByLabel('Export region').selectOption('selection');
+    await main.getByRole('button',{name:'Save player PNG',exact:true}).click();
+    await expect(main.getByRole('status',{name:'Export result'})).toContainText(/Saved 100 . 100 PNG/);
+    expect(readFileSync(output).toString('base64')).toBe(image.data);
+    await main.getByLabel('Export region').selectOption('map');
+    await main.getByLabel('Export pixels per square').fill('4');
+    await call('command_run',{commands:[{name:'map.setExtent',input:{mapId:'map-1',bounds:{x:0,y:0,w:5000,h:5000}}}]});
+    const whole=await call('export_player_image',{mapId:'map-1',pixelsPerSquare:4});
+    await main.getByRole('button',{name:'Save player PNG',exact:true}).click();
+    await expect(main.getByRole('status',{name:'Export result'})).toContainText(/Saved 200 . 200 PNG/);
+    expect(readFileSync(output).toString('base64')).toBe(whole.data);
+    await main.getByLabel('Export region').selectOption('rectangle');
+    for(const [key,value] of Object.entries({x:20,y:30,w:50,h:25})) await main.getByLabel(`Export ${key}`,{exact:true}).fill(String(value));
+    await main.getByLabel('Export pixels per square').fill('100');
+    const crop=await call('export_player_image',{mapId:'map-1',pixelsPerSquare:100,rect:{x:20,y:30,w:50,h:25}});
+    await main.getByRole('button',{name:'Save player PNG',exact:true}).click();
+    await expect(main.getByRole('status',{name:'Export result'})).toContainText(/Saved 50 . 25 PNG/);
+    expect(readFileSync(output).toString('base64')).toBe(crop.data);
+    await main.getByLabel('Export w',{exact:true}).fill('10000');
+    await main.getByLabel('Export h',{exact:true}).fill('10');
+    await main.getByRole('button',{name:'Save player PNG',exact:true}).click();
+    await expect(main.getByRole('status',{name:'Export result'})).toContainText(/Saved 8192 . 8 PNG.*capped at 8192/);
+    expect(await app.evaluate(({nativeImage},path)=>nativeImage.createFromPath(path).getSize(),output)).toEqual({width:8192,height:8});
   } finally {await client.close();await app.close();}
 });

@@ -1,3 +1,9 @@
+import { createBiomeTool } from '../tools/biomeTool';
+import { editorHistory, registerDrawingHistory } from '../model/drawingHistory';
+import { activateMapPanel, navigateToMap } from '../model/navigation';
+import { extentLabel, distanceLabel } from '../model/mapDefaults';
+import { geographicEntities } from '../geom/geography';
+import { getSelectionBounds } from '../geom/hitTest';
 import { createFogTool } from '../tools/fogTool';
 import { drawFog } from './drawFog';
 import { useEffect, useRef, useState } from 'react';
@@ -38,6 +44,7 @@ import {
 import { boxesIntersect, getEntityBounds } from '../geom/hitTest';
 import { createAreaTool } from '../tools/areaTool';
 import { createDevelopAreaTool } from '../tools/developAreaTool';
+import { GenerationControls, openGenerationSettings } from '../panels/GenerationControls';
 import { createDoorTool } from '../tools/doorTool';
 import { createLabelTool } from '../tools/labelTool';
 import { createLightTool } from '../tools/lightTool';
@@ -71,8 +78,14 @@ export function MapView(props: IDockviewPanelProps<MapPanelParams>) {
   const [isPopout, setIsPopout] = useState(
     () => props.api.location.type === 'popout',
   );
+  const [liveDimensions,setLiveDimensions]=useState('');
   const [renderCount, setRenderCount] = useState(0);
 
+  const interactionMessage=useStore(viewStore,s=>s.interactionMessage);
+  const diagnosticEntityIds = useStore(viewStore,s=>s.diagnosticEntityIds);
+  const zoomThrough = useStore(viewStore, s => s.zoomThrough);
+  const editParts = useStore(viewStore, s => s.editParts);
+  const fitRequest = useStore(viewStore, s => s.fitRequest);
   const world = useStore(worldStore, (s) => s.world);
   const worldPath = useStore(worldStore, (s) => s.worldPath);
   const activeMapId = useStore(worldStore, (s) => s.activeMapId);
@@ -89,6 +102,10 @@ export function MapView(props: IDockviewPanelProps<MapPanelParams>) {
   const activeMapPanelId = useStore(viewStore, (s) => s.activeMapPanelId);
   const pendingDevelopRect = useStore(viewStore, (s) => s.pendingDevelopRect);
   const measurement = useStore(viewStore, (s) => s.measurements[props.api.id]);
+  const measureSchedule = useStore(viewStore, s => s.measureSchedule);
+  const measureMarkers = useStore(viewStore, s => s.measureMarkers);
+  const measureSpeed = useStore(viewStore, s => s.measureSpeedMph);
+  const measureDeparture = useStore(viewStore, s => s.measureDeparture);
 
   const [calibLine, setCalibLine] = useState<{
     start: Point;
@@ -128,7 +145,7 @@ export function MapView(props: IDockviewPanelProps<MapPanelParams>) {
 
   useEffect(() => {
     if (!viewStore.getState().activeMapPanelId || props.api.isActive) {
-      viewStore.getState().setActiveMapPanelId(props.api.id);
+      activateMapPanel(props.api.id, mapRef.current?.id);
     }
     const locDisposable = props.api.onDidLocationChange((event) => {
       setIsPopout(event.location.type === 'popout');
@@ -136,7 +153,7 @@ export function MapView(props: IDockviewPanelProps<MapPanelParams>) {
     });
     const activeDisposable = props.api.onDidActiveChange((event) => {
       if (event.isActive) {
-        viewStore.getState().setActiveMapPanelId(props.api.id);
+        activateMapPanel(props.api.id, mapRef.current?.id);
       }
     });
     return () => {
@@ -184,7 +201,9 @@ export function MapView(props: IDockviewPanelProps<MapPanelParams>) {
     const measureGfx = new Graphics();
     measureGfx.eventMode = 'none';
 
+    const contentMask = new Graphics();
     const fogGfx = new Graphics();
+    const biomeTool = createBiomeTool();
     const fogTool = createFogTool();
     const selectTool = createSelectTool();
     const propTool = createPropTool();
@@ -200,6 +219,7 @@ export function MapView(props: IDockviewPanelProps<MapPanelParams>) {
     const measureTool = createMeasureTool();
     const getActiveTool = (): MapTool => {
       switch (activeToolIdRef.current) {
+        case 'biome': return biomeTool;
         case 'fog': return fogTool;
         case 'prop': return propTool;
         case 'area':
@@ -252,7 +272,11 @@ export function MapView(props: IDockviewPanelProps<MapPanelParams>) {
         Math.max(1, host.clientHeight),
         m.kind,
       );
-      viewStore.getState().setPanelCamera(props.api.id, initial);
+      // Restored tabs can initialize before Dockview gives them any space.
+      // Don't keep the temporary one-pixel fit as the user's actual camera.
+      if (host.clientWidth > 0 && host.clientHeight > 0) {
+        viewStore.getState().setPanelCamera(props.api.id, initial);
+      }
       return initial;
     };
 
@@ -293,8 +317,27 @@ export function MapView(props: IDockviewPanelProps<MapPanelParams>) {
       },
     });
 
+    const unregisterHistory = registerDrawingHistory(props.api.id, redo => {
+      const m = mapRef.current;
+      if (!m) return false;
+      const handled = getActiveTool().onKey({ key: redo ? 'y' : 'z', ctrlKey: true, preventDefault() {} } as KeyboardEvent, buildToolContext(m));
+      syncScene(); scheduleRender(); return handled;
+    });
+    let lastToolMap = `${worldRef.current?.meta.id}:${mapRef.current?.id}`;
     const syncScene = () => {
-      if (disposed || !app.renderer) {
+      const toolMap=`${worldRef.current?.meta.id}:${mapRef.current?.id}`;
+      if(toolMap!==lastToolMap&&mapRef.current){
+        lastToolMap=toolMap;
+        for (const cached of entityCache.values()) cached.container.destroy({ children: true });
+        entityCache.clear();
+        const e={key:'Escape',preventDefault(){}} as KeyboardEvent;const ctx={...buildToolContext(mapRef.current),requestRedraw(){}};for(const tool of [areaTool,pathTool,wallTool,pointEditTool,biomeTool,developAreaTool])tool.onKey(e,ctx);
+      }
+      const live=getActiveTool().extentPreview?.();setLiveDimensions(live?extentLabel(live):'');
+      if (viewStore.getState().activeMapPanelId === props.api.id) {
+        const d = getActiveTool().draftState?.() ?? { undo: false, redo: false };
+        if (viewStore.getState().draftUndo !== d.undo || viewStore.getState().draftRedo !== d.redo) viewStore.setState({ draftUndo: d.undo, draftRedo: d.redo });
+      }
+      if (disposed || !app.renderer || host.clientWidth <= 0 || host.clientHeight <= 0) {
         return;
       }
       const m = mapRef.current;
@@ -305,6 +348,7 @@ export function MapView(props: IDockviewPanelProps<MapPanelParams>) {
         fogGfx.clear();
         gridGfx.clear();
         overlayGfx.clear();
+
         measureGfx.clear();
         for (const cached of entityCache.values()) cached.container.destroy({ children: true });
         entityCache.clear();
@@ -314,6 +358,11 @@ export function MapView(props: IDockviewPanelProps<MapPanelParams>) {
 
       const cam = getCamera();
       drawFog(fogGfx, m, {x:-cam.x/cam.zoom,y:-cam.y/cam.zoom,w:host.clientWidth/cam.zoom,h:host.clientHeight/cam.zoom},0.5);
+      contentMask.clear();
+      if (m.parent) {
+        contentMask.rect(m.bounds.x, m.bounds.y, m.bounds.w, m.bounds.h).fill(0xffffff);
+        entitiesRoot.mask = contentMask; childMapsContainer.mask = contentMask;
+      } else { entitiesRoot.mask = null; childMapsContainer.mask = null; }
       const usedTextures = new Set<string>();
       const textureFor = (entity: Entity): Texture | undefined => {
         const id = entityAssetId(entity);
@@ -352,9 +401,11 @@ export function MapView(props: IDockviewPanelProps<MapPanelParams>) {
         entitiesRoot.addChild(lc);
       }
 
+      const geoEntities = geographicEntities(m) as Entity[];
+      const geoIds = new Set(geoEntities.map((e) => e.id));
       // Remove deleted entities from cache
       for (const [eid, cached] of entityCache) {
-        if (!m.entities[eid]) {
+        if (!geoIds.has(eid)) {
           cached.container.destroy({ children: true });
           entityCache.delete(eid);
         }
@@ -362,10 +413,15 @@ export function MapView(props: IDockviewPanelProps<MapPanelParams>) {
 
       // Add or update changed entities only
       const selectedSet = selectedSetRef.current;
+      const groupIds = !viewStore.getState().editParts && selectedSet.size > 1
+        ? new Set([...selectedSet].map((id) => m.entities[id]?.groupId ?? m.entities[id]?.genId).filter(Boolean))
+        : null;
+      const isGroupSelection = Boolean(groupIds && groupIds.size === 1);
       const layerGmMap = new Map(m.layers.map((l) => [l.id, l.gmOnly]));
       const activeTool = getActiveTool();
       const previewMap = activeTool.getPreviewEntities?.() ?? null;
-      for (const rawEntity of Object.values(m.entities) as Entity[]) {
+      const displayOrder = new Map<string, Container[]>();
+      for (const rawEntity of geoEntities) {
         const isPreview = Boolean(previewMap?.has(rawEntity.id));
         const entity = previewMap?.get(rawEntity.id) ?? rawEntity;
         const bounds = getEntityBounds(entity);
@@ -377,7 +433,7 @@ export function MapView(props: IDockviewPanelProps<MapPanelParams>) {
         const texture = textureFor(entity);
 
         const hasTexture = Boolean(texture);
-        const isSelected = selectedSet.has(entity.id);
+        const isSelected = selectedSet.has(entity.id) && !isGroupSelection;
         const layerGmOnly = Boolean(layerGmMap.get(entity.layerId));
         const cached = entityCache.get(entity.id);
         const needsRebuild =
@@ -398,6 +454,7 @@ export function MapView(props: IDockviewPanelProps<MapPanelParams>) {
           const display = buildEntityDisplay(entity, {
             selected: isSelected,
             zoom: cam.zoom,
+            cartographicRivers: (m.riverWidthMode ?? (['world','region'].includes(m.kind)?'cartographic':'physical')) === 'cartographic',
             texture,
             layerGmOnly,
           });
@@ -415,6 +472,15 @@ export function MapView(props: IDockviewPanelProps<MapPanelParams>) {
             container: display,
           });
         }
+        const order=displayOrder.get(entity.layerId) ?? [];
+        order.push(entityCache.get(entity.id)!.container);
+        displayOrder.set(entity.layerId,order);
+      }
+      // Rebuilding a selected/edited entity appends its display. Restore model order
+      // so a district fill cannot jump over its streets and buildings.
+      for(const [layerId,order] of displayOrder) {
+        const layer=layerContainers.get(layerId)!;
+        order.forEach((display,index)=>{if(layer.children[index]!==display) layer.setChildIndex(display,index);});
       }
 
       if (zoomChangedSignificantly) {
@@ -444,13 +510,15 @@ export function MapView(props: IDockviewPanelProps<MapPanelParams>) {
           frame
             .rect(0, 0, rect.w, rect.h)
             .stroke({ width: Math.max(0.1, 1.5 / Math.max(0.01, cam.zoom)), color: 0x38bdf8, alpha: 0.7 });
+          const childMask = new Graphics().rect(0,0,rect.w,rect.h).fill(0xffffff);
+          childContainer.addChild(childMask); childContainer.mask = childMask;
           childContainer.addChild(frame);
 
           const childLayerGmMap = new Map(childMap.layers.map((l) => [l.id, l.gmOnly]));
           const childLayerVisMap = new Map(childMap.layers.map((l) => [l.id, l.visible]));
           for (const layer of childMap.layers) {
             if (!childLayerVisMap.get(layer.id)) continue;
-            for (const ent of Object.values(childMap.entities)) {
+            for (const ent of geographicEntities(childMap)) {
               if (ent.layerId !== layer.id) continue;
               const disp = buildEntityDisplay(ent, {
                 selected: false,
@@ -515,6 +583,7 @@ export function MapView(props: IDockviewPanelProps<MapPanelParams>) {
       }
 
       overlayGfx.clear();
+      for(const id of viewStore.getState().diagnosticEntityIds){const entity=m.entities[id]??geographicEntities(m).find(e=>e.id===id);if(!entity)continue;const b=getEntityBounds(entity);if(b)overlayGfx.rect(b.minX,b.minY,b.maxX-b.minX,b.maxY-b.minY).stroke({color:0xf87171,width:2/cam.zoom});}
       for (const selectedId of selectedSetRef.current) {
         const ent = m.entities[selectedId];
         if (ent?.type === 'place') {
@@ -572,6 +641,7 @@ export function MapView(props: IDockviewPanelProps<MapPanelParams>) {
       const height = Math.max(1, Math.floor(rect.height));
       app.renderer.resolution = ownerWin.devicePixelRatio || 1;
       app.renderer.resize(width, height);
+      syncScene();
       scheduleRender();
     };
 
@@ -592,8 +662,34 @@ export function MapView(props: IDockviewPanelProps<MapPanelParams>) {
       }
       const m = mapRef.current;
       if (m && !calibratingIdRef.current) {
-        getActiveTool().onKey(e, buildToolContext(m));
+        if (getActiveTool().onKey(e, buildToolContext(m))) {
+          e.preventDefault();
+          return;
+        }
+        if (e.key === 'Escape') {
+          const vs = viewStore.getState();
+          if (vs.pendingDevelopRect) {
+            vs.setPendingDevelopRect(null);
+            e.preventDefault();
+            return;
+          }
+          if (vs.activeTool !== 'select') {
+            vs.setActiveTool('select');
+            e.preventDefault();
+            return;
+          }
+          if (vs.selectedEntityIds.length > 0) {
+            vs.setSelection([]);
+            e.preventDefault();
+            return;
+          }
+        }
       }
+    };
+    const onPopupShortcut = (e:KeyboardEvent) => {
+      if(ownerWin===window||e.defaultPrevented||!(e.ctrlKey||e.metaKey))return;
+      const target=e.target as HTMLElement|null;if(target?.closest('input,textarea,select,[contenteditable=true]'))return;
+      const key=e.key.toLowerCase();if(key==='z'||key==='y'){e.preventDefault();editorHistory(key==='y'||e.shiftKey);}
     };
     const onKeyUp = (e: KeyboardEvent) => {
       if (e.code === 'Space') {
@@ -606,7 +702,7 @@ export function MapView(props: IDockviewPanelProps<MapPanelParams>) {
     let toolCapture = false;
 
     const onPointerDown = (e: PointerEvent) => {
-      viewStore.getState().setActiveMapPanelId(props.api.id);
+      activateMapPanel(props.api.id, mapRef.current?.id);
       canvas.focus({ preventScroll: true });
       if (e.button === 0 && calibratingIdRef.current && !spaceHeld) {
         const rect = canvas.getBoundingClientRect();
@@ -734,11 +830,11 @@ export function MapView(props: IDockviewPanelProps<MapPanelParams>) {
       const currentWorld = worldRef.current;
       const viewW = Math.max(1, host.clientWidth);
       const viewH = Math.max(1, host.clientHeight);
-      if (currentWorld && e.deltaY < 0) {
+      if (viewStore.getState().zoomThrough && currentWorld && e.deltaY < 0) {
         const children = Object.values(currentWorld.maps).filter(
           (c) => c.parent?.mapId === m.id && c.kind !== 'interior',
         );
-        const zoomTarget = findZoomInChild(nextCam, m.kind, children, viewW, viewH);
+        const zoomTarget = findZoomInChild(nextCam, m.kind, children, viewW, viewH, { x: sx, y: sy });
         if (zoomTarget && zoomTarget.parent) {
           const childCam = parentToChildCamera(
             nextCam,
@@ -748,13 +844,13 @@ export function MapView(props: IDockviewPanelProps<MapPanelParams>) {
           viewStore.getState().setSelection([]);
           viewStore.getState().setPanelMap(props.api.id, zoomTarget.id);
           viewStore.getState().setPanelCamera(props.api.id, childCam);
-          worldStore.getState().setActiveMap(zoomTarget.id);
+          navigateToMap(zoomTarget.id, props.api.id);
           syncScene();
           scheduleRender();
           return;
         }
       } else if (
-        currentWorld &&
+        viewStore.getState().zoomThrough && currentWorld &&
         e.deltaY > 0 &&
         m.parent &&
         m.kind !== 'interior' &&
@@ -770,7 +866,7 @@ export function MapView(props: IDockviewPanelProps<MapPanelParams>) {
           viewStore.getState().setSelection([]);
           viewStore.getState().setPanelMap(props.api.id, parentMap.id);
           viewStore.getState().setPanelCamera(props.api.id, parentCam);
-          worldStore.getState().setActiveMap(parentMap.id);
+          navigateToMap(parentMap.id, props.api.id);
           syncScene();
           scheduleRender();
           return;
@@ -802,6 +898,7 @@ export function MapView(props: IDockviewPanelProps<MapPanelParams>) {
         }
         app.stage.eventMode = 'none';
         worldLayer.addChild(gridGfx);
+        worldLayer.addChild(contentMask);
         worldLayer.addChild(entitiesRoot);
         worldLayer.addChild(childMapsContainer);
         worldLayer.addChild(placeOverlayContainer);
@@ -815,8 +912,10 @@ export function MapView(props: IDockviewPanelProps<MapPanelParams>) {
         canvas.addEventListener('pointerup', onPointerUp);
         canvas.addEventListener('pointercancel', onPointerUp);
         canvas.addEventListener('wheel', onWheel, { passive: false });
-        ownerWin.addEventListener('keydown', onKeyDown);
+        // Let the focused drawing tool consume Undo before the app shortcut.
+        ownerWin.addEventListener('keydown', onKeyDown, true);
         ownerWin.addEventListener('keyup', onKeyUp);
+        ownerWin.addEventListener('keydown',onPopupShortcut);
 
         observer = new ownerWin.ResizeObserver(() => {
           resizeToHost();
@@ -831,6 +930,7 @@ export function MapView(props: IDockviewPanelProps<MapPanelParams>) {
       });
 
     return () => {
+      unregisterHistory();
       disposed = true;
       syncSceneRef.current = null;
       scheduleRenderRef.current = null;
@@ -843,8 +943,9 @@ export function MapView(props: IDockviewPanelProps<MapPanelParams>) {
       canvas.removeEventListener('pointerup', onPointerUp);
       canvas.removeEventListener('pointercancel', onPointerUp);
       canvas.removeEventListener('wheel', onWheel);
-      ownerWin.removeEventListener('keydown', onKeyDown);
+      ownerWin.removeEventListener('keydown', onKeyDown, true);
       ownerWin.removeEventListener('keyup', onKeyUp);
+      ownerWin.removeEventListener('keydown',onPopupShortcut);
       if (app.renderer) {
         app.destroy(true, { children: true });
       }
@@ -865,6 +966,8 @@ export function MapView(props: IDockviewPanelProps<MapPanelParams>) {
     showPlaceCategoryOverlay,
     pendingDevelopRect,
     measurement,
+    measureSchedule, measureMarkers, measureSpeed, measureDeparture,
+    diagnosticEntityIds,
     panelState?.camera,
   ]);
 
@@ -906,6 +1009,19 @@ export function MapView(props: IDockviewPanelProps<MapPanelParams>) {
     syncSceneRef.current?.();
   }, [focusPlaceRequest, map, activeMapPanelId, props.api.id]);
 
+  useEffect(() => {
+    if (!fitRequest || fitRequest.panelId !== props.api.id || !map || !hostRef.current) return;
+    const host = hostRef.current;
+    viewStore.getState().setPanelCamera(props.api.id, fitBoundsCamera(fitRequest.bounds ?? map.bounds, host.clientWidth, host.clientHeight, map.kind));
+    viewStore.setState({fitRequest:null});
+    syncSceneRef.current?.();
+  }, [fitRequest, map?.id, props.api.id]);
+
+  const fit = (selection = false) => {
+    if (!map) return;
+    const b = selection ? getSelectionBounds(selectedIds.flatMap(id => map.entities[id] ? [map.entities[id]!] : [])) : null;
+    viewStore.setState({ fitRequest: { panelId: props.api.id, bounds: b ? { x: b.minX, y: b.minY, w: Math.max(.01,b.maxX-b.minX), h: Math.max(.01,b.maxY-b.minY) } : undefined, nonce: Date.now() } });
+  };
   const applyCalibration = () => {
     if (!map || !calibratingImageId || !calibLine) {
       return;
@@ -936,6 +1052,7 @@ export function MapView(props: IDockviewPanelProps<MapPanelParams>) {
         h: entity.h * scale,
       },
     });
+    viewStore.setState({ fitRequest: { panelId: props.api.id, bounds: { x: entity.x, y: entity.y, w: entity.w * scale, h: entity.h * scale }, nonce: Date.now() } });
     setCalibLine(null);
     viewStore.getState().setCalibratingImageId(null);
   };
@@ -989,6 +1106,7 @@ export function MapView(props: IDockviewPanelProps<MapPanelParams>) {
         style={{
           display: 'flex',
           alignItems: 'center',
+          flexWrap: 'wrap',
           gap: 8,
           padding: '6px 10px',
           borderBottom: '1px solid var(--atlas-border)',
@@ -997,9 +1115,15 @@ export function MapView(props: IDockviewPanelProps<MapPanelParams>) {
         }}
       >
         <strong>{map ? `${map.name} (${map.kind})` : 'No map'}</strong>
-        <span style={{ color: 'var(--atlas-text-muted)' }}>
-          {entityCount} entities
-        </span>
+        {map && <>
+          <button data-testid="fit-map" onClick={() => fit()}>Fit</button>
+          <details className="context-menu"><summary>Map…</summary><div>
+            <span>{entityCount} entities · {extentLabel(map.bounds)}</span>
+            <button data-testid="fit-selection" disabled={!selectedIds.length} onClick={() => fit(true)}>Fit Selection</button>
+            <label><input type="checkbox" checked={zoomThrough} onChange={e => viewStore.setState({ zoomThrough: e.target.checked })} />Zoom-through</label>
+            <button onClick={() => openGenerationSettings(map, props.api.id, '', props.containerApi, 'map')}>Map settings…</button>
+          </div></details>
+        </>}
         {parentChanged && (
           <button
             type="button"
@@ -1054,6 +1178,7 @@ export function MapView(props: IDockviewPanelProps<MapPanelParams>) {
           )}
         </div>
       </div>
+      {map && <GenerationControls map={map} panelId={props.api.id} api={props.containerApi} />}
       {activeToolId === 'measure' && map && world && <MeasureBar panelId={props.api.id} worldId={world.meta.id} mapId={map.id} />}
       <div
         style={{
@@ -1067,6 +1192,11 @@ export function MapView(props: IDockviewPanelProps<MapPanelParams>) {
           data-testid={`canvas-host-${props.api.id}`}
           style={{ width: '100%', height: '100%' }}
         />
+        {liveDimensions&&<div data-testid="live-dimensions" style={{position:'absolute',top:8,right:8,pointerEvents:'none',background:'#10151acc',color:'#f8fafc',fontSize:11,borderRadius:4,padding:6}}>Selection extent: {liveDimensions}</div>}
+        {interactionMessage&&<div role="status" style={{position:'absolute',top:6,left:8,background:'#10151aee',color:'#f8fafc',fontSize:12,borderRadius:4,padding:8}} onClick={()=>viewStore.setState({interactionMessage:''})}>{interactionMessage}</div>}
+        {panelState?.camera && <div style={{ position: 'absolute', bottom: 8, left: 10, pointerEvents: 'none', background: '#10151acc', color: '#f8fafc', fontSize: 11, borderRadius: 4, padding: 5 }}>
+          <div style={{ width: 100, borderBottom: '2px solid #e5e7eb' }}>{distanceLabel(100 / panelState.camera.zoom)}</div>
+        </div>}
         {calibratingImageId && (
           <div
             data-testid="calibration-bar"

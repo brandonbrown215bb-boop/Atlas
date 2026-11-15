@@ -1,7 +1,8 @@
-import polygonClipping, {
-  type Polygon as PcPolygon,
-  type Ring as PcRing,
+import type {
+  Polygon as PcPolygon,
+  Ring as PcRing,
 } from 'polygon-clipping';
+import polygonClipping from './polygonClipping';
 import type { Entity, Point } from '../model/schema';
 import { distanceToSegment } from './hitTest';
 

@@ -6,6 +6,7 @@ import {
 } from '../geom/simplify';
 import type { Point } from '../model/schema';
 import { viewStore } from '../model/viewStore';
+import { handleDraftHistory } from './draftHistory';
 import {
   resolveTargetLayerId,
   type MapTool,
@@ -14,6 +15,7 @@ import {
 
 export function createPathTool(): MapTool {
   let points: Point[] = [];
+  const removedPoints: Point[] = [];
   let hoverPt: Point | null = null;
   let freehandActive = false;
   let lastClickTime = 0;
@@ -21,6 +23,7 @@ export function createPathTool(): MapTool {
 
   const reset = () => {
     points = [];
+    removedPoints.length = 0;
     freehandActive = false;
     lastClickTime = 0;
     lastClickPt = null;
@@ -36,7 +39,8 @@ export function createPathTool(): MapTool {
       return;
     }
     const id = `path-${crypto.randomUUID().slice(0, 8)}`;
-    ctx.execute('entity.add', {
+    ctx.execute(vs.pathRole==='river'?'river.add':'entity.add', {
+      ...(vs.pathRole==='river'?{snapDistance:8/ctx.camera.zoom}:{}),
       mapId: ctx.map.id,
       entity: {
         id,
@@ -60,6 +64,8 @@ export function createPathTool(): MapTool {
   };
 
   return {
+    extentPreview:()=>{if(!points.length)return null;const p=hoverPt?[...points,hoverPt]:points;return {w:Math.max(...p.map(q=>q.x))-Math.min(...p.map(q=>q.x)),h:Math.max(...p.map(q=>q.y))-Math.min(...p.map(q=>q.y))};},
+    draftState: () => ({ undo: points.length > 0 || removedPoints.length > 0, redo: removedPoints.length > 0 }),
     id: 'path',
 
     onPointerDown(pt, e, ctx) {
@@ -78,7 +84,7 @@ export function createPathTool(): MapTool {
       }
 
       const now = Date.now();
-      const tol = 8 / Math.max(0.0005, ctx.camera.zoom);
+      const tol = 8 / Math.max(1e-8, ctx.camera.zoom);
       const isDoubleClick =
         (e.detail !== undefined && e.detail >= 2) ||
         (lastClickPt !== null &&
@@ -98,6 +104,7 @@ export function createPathTool(): MapTool {
 
       const prev = points[points.length - 1];
       if (!prev || prev.x !== snapped.x || prev.y !== snapped.y) {
+        removedPoints.length = 0;
         points.push(snapped);
       }
       ctx.requestRedraw();
@@ -109,7 +116,7 @@ export function createPathTool(): MapTool {
       hoverPt = snapped;
 
       if (freehandActive) {
-        const minDist = 2 / Math.max(0.0005, ctx.camera.zoom);
+        const minDist = 2 / Math.max(1e-8, ctx.camera.zoom);
         const last = points[points.length - 1];
         if (!last || Math.hypot(snapped.x - last.x, snapped.y - last.y) >= minDist) {
           points.push(snapped);
@@ -129,7 +136,7 @@ export function createPathTool(): MapTool {
       const closed = viewStore.getState().pathClosed;
       reset();
       if (raw.length >= 2) {
-        const eps = 3 / Math.max(0.0005, ctx.camera.zoom);
+        const eps = 3 / Math.max(1e-8, ctx.camera.zoom);
         const simplified = simplifyRDP(raw, eps, closed);
         const smoothed = smoothChaikin(simplified, 2, closed);
         if (smoothed.length >= 2) {
@@ -140,8 +147,14 @@ export function createPathTool(): MapTool {
     },
 
     onKey(e, ctx) {
+      if (handleDraftHistory(e, points, removedPoints)) {
+        lastClickTime = 0;
+        lastClickPt = null;
+        ctx.requestRedraw();
+        return true;
+      }
       if (e.key === 'Escape') {
-        if (points.length > 0 || freehandActive) {
+        if (points.length > 0 || removedPoints.length > 0 || freehandActive) {
           reset();
           ctx.requestRedraw();
           return true;
@@ -156,17 +169,11 @@ export function createPathTool(): MapTool {
         ctx.requestRedraw();
         return true;
       }
-      if (e.key === 'Backspace' && points.length > 0 && !freehandActive) {
-        e.preventDefault();
-        points.pop();
-        ctx.requestRedraw();
-        return true;
-      }
       return false;
     },
 
     drawOverlay(gfx: Graphics, ctx: ToolContext) {
-      const zoom = Math.max(0.0005, ctx.camera.zoom);
+      const zoom = Math.max(1e-8, ctx.camera.zoom);
       const strokeW = Math.max(1.5 / zoom, viewStore.getState().pathWidth);
       const dotR = 4 / zoom;
 

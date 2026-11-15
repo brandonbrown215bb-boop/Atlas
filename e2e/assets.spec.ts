@@ -25,10 +25,19 @@ test('indexes an asset folder, browses nested folders, searches tags and loads c
     await expect(panel.getByText('0 assets', { exact: true })).toBeVisible();
     await panel.getByLabel('Asset tag', { exact: true }).fill('oak');
     await expect(panel.getByText('1 assets', { exact: true })).toBeVisible();
+    await panel.getByLabel('Asset biome', { exact: true }).selectOption('forest');
+    await expect(panel.getByText('1 assets', { exact: true })).toBeVisible();
+    await panel.getByLabel('Asset purpose', { exact: true }).selectOption('tree');
+    await expect(panel.getByText('1 assets', { exact: true })).toBeVisible();
+    await panel.getByRole('button', { name: 'Oak_Green.png' }).click();
+    await panel.getByLabel('Selected asset themes', { exact: true }).fill('fey');
+    await panel.getByRole('button', { name: 'Save tags', exact: true }).click();
+    await panel.getByLabel('Asset theme', { exact: true }).selectOption('fey');
+    await expect(panel.getByText('1 assets', { exact: true })).toBeVisible();
   } finally { await app.close(); }
 });
 
-test('MCP stamps portable props and textures with one undo step; UI can stamp the selected asset', async () => {
+test('MCP stamps portable props and textures with one undo step; UI can stamp the selected asset', async ({}, testInfo) => {
   const root = mkdtempSync(join(tmpdir(), 'atlas-e2e-stamp-'));
   const art = join(root,'Art'); mkdirSync(art);
   const worldDir = join(root,'World');
@@ -89,6 +98,42 @@ test('MCP stamps portable props and textures with one undo step; UI can stamp th
         return green;
       }, (png.content as Array<{data:string}>)[0]!.data);
       expect(colors).toBeGreaterThan(8_000);
+      const exported = await call('export_player_image', { mapId: 'site', pixelsPerSquare: 30 });
+      expect(await app.evaluate(({nativeImage},data)=>{
+        const pixels=nativeImage.createFromBuffer(Buffer.from(data,'base64')).toBitmap();
+        let green=0;for(let i=0;i<pixels.length;i+=4)if(pixels[i+1]!>120&&pixels[i+2]!<80)green++;
+        return green;
+      },exported.data)).toBeGreaterThan(8_000);
+      await win.evaluate(() => {
+        const w = window as any;
+        w.__atlasWorldStore.getState().setActiveMap('site');
+        const v = w.__atlasViewStore.getState();
+        v.setPanelMap('map-main', 'site'); v.setPanelCamera('map-main', { x: 20, y: 20, zoom: 18 });
+      });
+      const greenPixels = async (page: import('@playwright/test').Page) => app.evaluate(({ nativeImage }, data) => {
+        const image = nativeImage.createFromBuffer(Buffer.from(data, 'base64')), width = image.getSize().width, pixels = image.toBitmap();
+        const greenAt = (x: number, y: number) => pixels[(y * width + x) * 4 + 1]! > 120 && pixels[(y * width + x) * 4 + 2]! < 80;
+        return { floor: greenAt(56, 56), hole: greenAt(92, 92), path: greenAt(92, 236), wall: greenAt(290, 236), prop: greenAt(236, 110) };
+      }, (await page.getByTestId('panel-map-main').locator('canvas').screenshot()).toString('base64'));
+      const visibleArt = { floor: true, hole: false, path: true, wall: true, prop: true };
+      await expect.poll(() => greenPixels(win)).toEqual(visibleArt);
+      await win.getByTestId(`layer-visible-${layerId}`).click();
+      await expect.poll(() => greenPixels(win)).toEqual({ floor: false, hole: false, path: false, wall: false, prop: false });
+      await win.getByTestId(`layer-visible-${layerId}`).click();
+      await expect.poll(() => greenPixels(win)).toEqual(visibleArt);
+      const popupReady = win.waitForEvent('popup');
+      await win.getByTestId('popout-btn-map-main').click();
+      const popup = await popupReady;
+      await expect.poll(() => greenPixels(popup)).toEqual(visibleArt);
+      await popup.getByTestId('panel-map-main').screenshot({ path: testInfo.outputPath('textured-popout.png') });
+      await win.getByTestId(`layer-visible-${layerId}`).click();
+      await expect.poll(() => greenPixels(popup)).toEqual({ floor: false, hole: false, path: false, wall: false, prop: false });
+      await win.getByTestId(`layer-visible-${layerId}`).click();
+      await expect.poll(() => greenPixels(popup)).toEqual(visibleArt);
+      await popup.getByTestId('dockback-btn-map-main').click();
+      await expect.poll(() => greenPixels(win)).toEqual(visibleArt);
+      // Visibility changes have their own undo steps; return to the stamping transaction.
+      for (let i = 0; i < 4; i++) await call('undo');
       await call('undo'); const undone = await call('map_get',{mapId:'site'});
       expect(undone.entities.tree).toBeUndefined(); expect(undone.entities.floor.texture).toBeUndefined();
       expect((await call('theme_get')).resolved.tree).toEqual(['builtin:tree']);
@@ -96,8 +141,8 @@ test('MCP stamps portable props and textures with one undo step; UI can stamp th
       await win.getByTestId('btn-assets').click();
       await win.getByTestId('assets-panel').getByRole('button',{name:'Tree.png',exact:true}).click();
       await win.getByRole('button',{name:'Stamp on map'}).click();
-      // Open the site through the existing Maps panel, then click its canvas.
-      await win.getByText('Site (site)',{exact:true}).first().click();
+      // Docking put Map alongside Assets; activate its tab before stamping.
+      await win.locator('.dv-tab').filter({hasText:/^Map$/}).click();
       const canvas = win.getByTestId('canvas-host-map-main').locator('canvas');
       await canvas.click({position:{x:100,y:100}});
       await expect.poll(async () => Object.values((await call('map_get',{mapId:'site'})).entities).filter((e:any) => e.type==='prop').length).toBe(2);
@@ -113,7 +158,7 @@ test('MCP stamps portable props and textures with one undo step; UI can stamp th
       await win.getByText('Built-in flat props',{exact:true}).click();
       await win.getByTestId('assets-panel').getByRole('button',{name:'bed',exact:true}).click();
       await win.getByRole('button',{name:'Stamp on map'}).click();
-      await win.getByText('Site (site)',{exact:true}).first().click();
+      await win.locator('.dv-tab').filter({hasText:/^Map$/}).click();
       await canvas.click({position:{x:150,y:120}});
       await expect.poll(async () => Object.values((await call('map_get',{mapId:'site'})).entities).some((e:any) => e.builtin==='bed')).toBe(true);
       await win.getByTestId('btn-save-now').click();

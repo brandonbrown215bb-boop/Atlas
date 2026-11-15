@@ -42,6 +42,9 @@ export async function readPackTable(handle: FileHandle, length: number): Promise
   }
   let end = cursor;
   for (const file of [...files].sort((a,b) => a.offset-b.offset)) {
+    // Dungeondraft writes missing thumbnail placeholders as offset=0, size=0.
+    // Empty entries occupy no payload and cannot overlap another file.
+    if (file.size === 0) continue;
     if (file.offset < end) throw fail();
     end = file.offset + file.size;
   }

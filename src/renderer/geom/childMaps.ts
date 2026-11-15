@@ -1,5 +1,5 @@
 import type { MapDoc, MapKind } from '../model/schema';
-import { clampZoom, ZOOM_LIMITS, type CameraState } from '../render/camera';
+import { clampZoom, type CameraState } from '../render/camera';
 import type { RectBounds } from './clipInherit';
 
 export function childMapParentRect(child: MapDoc): RectBounds | null {
@@ -64,11 +64,11 @@ export function findZoomInChild(
   children: readonly MapDoc[],
   viewW: number,
   viewH: number,
+  cursor?: { x: number; y: number },
 ): MapDoc | null {
   const safeW = Math.max(1, viewW);
   const safeH = Math.max(1, viewH);
   const viewArea = safeW * safeH;
-  const nearParentMax = parentCam.zoom >= ZOOM_LIMITS[parentKind].max * 0.85;
 
   let best: { child: MapDoc; coverage: number } | null = null;
   for (const child of children) {
@@ -78,9 +78,10 @@ export function findZoomInChild(
     const top = Math.max(0, rect.y * parentCam.zoom + parentCam.y);
     const right = Math.min(safeW, (rect.x + rect.w) * parentCam.zoom + parentCam.x);
     const bottom = Math.min(safeH, (rect.y + rect.h) * parentCam.zoom + parentCam.y);
+    if (cursor && (cursor.x < left || cursor.x > right || cursor.y < top || cursor.y > bottom)) continue;
     if (right <= left || bottom <= top) continue;
     const coverage = ((right - left) * (bottom - top)) / viewArea;
-    const qualifies = coverage >= 0.65 || (nearParentMax && coverage >= 0.45);
+    const qualifies = coverage >= 0.7;
     if (qualifies && (!best || coverage > best.coverage)) {
       best = { child, coverage };
     }
@@ -99,10 +100,6 @@ export function shouldZoomOutToParent(
   }
   const safeW = Math.max(1, viewW);
   const safeH = Math.max(1, viewH);
-  const screenW = child.bounds.w * childCam.zoom;
-  const screenH = child.bounds.h * childCam.zoom;
-  if (screenW < safeW * 0.55 && screenH < safeH * 0.55) {
-    return true;
-  }
-  return childCam.zoom <= ZOOM_LIMITS[child.kind].min * 1.05;
+  const fit = Math.min(safeW / child.bounds.w, safeH / child.bounds.h) * .9;
+  return childCam.zoom < fit * .5;
 }

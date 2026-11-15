@@ -55,6 +55,23 @@ describe('Dungeondraft PCK v1', () => {
     await expect(extractDungeondraft(source,root)).rejects.toThrow(/checksum/);
     expect(lib.packs).toEqual(before);
   });
+  it('allows an empty thumbnail at offset zero without weakening payload overlap checks', async () => {
+    const root = await mkdtemp(join(tmpdir(),'atlas-pck-placeholder-'));
+    const source = join(root,'Natural.dungeondraft_pack');
+    const thumbnail = 'res://packs/natural/thumbnails/missing.png';
+    const bytes = packFixture([
+      {path:thumbnail,data:Buffer.alloc(0)},
+      {path:'res://packs/natural/textures/tree.png',data:png},
+    ]);
+    bytes.writeBigUInt64LE(0n,92+Buffer.byteLength(thumbnail));
+    await writeFile(source,bytes);
+    const extracted = await extractDungeondraft(source,root);
+    expect(await readFile(join(extracted.root,'packs/natural/textures/tree.png'))).toEqual(png);
+    // A nonempty entry pointing into the directory is still corrupt.
+    bytes.writeBigUInt64LE(1n,100+Buffer.byteLength(thumbnail));
+    await writeFile(source,bytes);
+    await expect(extractDungeondraft(source,root)).rejects.toThrow(/Corrupt/);
+  });
   if (process.env.ATLAS_REAL_PACK) it('validates and extracts the actual Arkenforge demo inspected before implementation', async () => {
     const source=process.env.ATLAS_REAL_PACK!;
     const handle=await open(source,'r');

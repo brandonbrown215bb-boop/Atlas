@@ -24,6 +24,8 @@ export function registerAtlasSchemes(): void {
         standard: true,
         secure: true,
         supportFetchAPI: true,
+        // Pixi fetches images from the renderer's app:// or Vite origin.
+        corsEnabled: true,
       },
     },
   ]);

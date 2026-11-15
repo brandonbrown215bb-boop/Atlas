@@ -70,6 +70,39 @@ function readJsonBody(req: IncomingMessage): Promise<unknown> {
   });
 }
 
+const DEFAULT_AGENT_PORT = 47474;
+
+function parsePreferredPort(): number {
+  const raw = process.env.ATLAS_AGENT_PORT;
+  if (!raw) return DEFAULT_AGENT_PORT;
+  const parsed = Number(raw);
+  return Number.isInteger(parsed) && parsed > 0 && parsed <= 65535
+    ? parsed
+    : DEFAULT_AGENT_PORT;
+}
+
+function listenWithFallback(
+  httpServer: Server,
+  preferredPort: number,
+): Promise<number> {
+  return new Promise((resolve, reject) => {
+    const onError = (err: NodeJS.ErrnoException) => {
+      if (err.code === 'EADDRINUSE' && preferredPort !== 0) {
+        httpServer.removeListener('error', onError);
+        listenWithFallback(httpServer, 0).then(resolve, reject);
+        return;
+      }
+      reject(err);
+    };
+    httpServer.once('error', onError);
+    httpServer.listen(preferredPort, '127.0.0.1', () => {
+      httpServer.removeListener('error', onError);
+      const addr = httpServer.address();
+      resolve(addr && typeof addr === 'object' ? addr.port : preferredPort);
+    });
+  });
+}
+
 export async function startAgentServer(
   deps: AgentServerDeps,
 ): Promise<AgentServerHandle> {
@@ -246,8 +279,8 @@ export async function startAgentServer(
       inputSchema:{mapId:z.string().optional(),pixelsPerSquare:z.number().positive().finite().optional(),rect:z.object({x:z.number().finite(),y:z.number().finite(),w:z.number().positive().finite(),h:z.number().positive().finite()}).optional()},
     },async args=>{try {return jsonText(await callRenderer('export_player_image',args));}catch(e){return errorResult(e);}});
     server.registerTool('asset_search', {
-      description: 'Search registered pack assets by name/tag and folder. Returns at most 100 matches and total count; use offset to page.',
-      inputSchema: { query: z.string().optional(), tag: z.string().optional(), packId: z.string().optional(), folder: z.string().optional(), offset: z.number().int().nonnegative().optional() },
+      description: 'Search registered pack assets by name/tag, theme, biome, purpose, and folder. Returns at most 100 matches and total count; use offset to page.',
+      inputSchema: { query: z.string().optional(), tag: z.string().optional(), theme: z.string().optional(), biome: z.string().optional(), purpose: z.string().optional(), packId: z.string().optional(), folder: z.string().optional(), offset: z.number().int().nonnegative().optional() },
     }, async args => {
       try { return jsonText(await callRenderer('asset_search', args)); } catch (err) { return errorResult(err); }
     });
@@ -257,6 +290,11 @@ export async function startAgentServer(
     }, async args => {
       try {return jsonText(await callRenderer('theme_get',args));} catch(err) {return errorResult(err);}
     });
+
+    server.registerTool('trace_backdrop', {
+      description:'Analyze a backdrop locally and return editable land/lake/river proposals without changing the world. Review the returned geometry, then use map.applyTrace with its sourceRevision to accept it.',
+      inputSchema:{mapId:z.string(),imageEntityId:z.string(),sensitivity:z.number().min(15).max(180).optional(),waterColor:z.array(z.number().min(0).max(255)).length(3).optional()},
+    },async args=>{try{return jsonText(await callRenderer('trace_backdrop',args));}catch(error){return errorResult(error);}});
 
     server.registerTool(
       'command_list',
@@ -453,15 +491,7 @@ export async function startAgentServer(
     },
   );
 
-  await new Promise<void>((resolve) => {
-    httpServer.listen(0, '127.0.0.1', () => {
-      const addr = httpServer.address();
-      if (addr && typeof addr === 'object') {
-        port = addr.port;
-      }
-      resolve();
-    });
-  });
+  port = await listenWithFallback(httpServer, parsePreferredPort());
 
   const getInfo = () => ({
     enabled,

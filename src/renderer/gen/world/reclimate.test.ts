@@ -37,9 +37,10 @@ function fixture() {
 function ids() { let id = 0; return () => `copy-${++id}`; }
 const biomes = (entities: Entity[]) => entities.filter((e): e is Extract<Entity, { type: 'area' }> => e.type === 'area' && e.role.startsWith('biome:') && e.origin === 'generated');
 
-for (const mode of ['copy', 'move', 'linked'] as const) it(`${mode} re-climates generated biomes while preserving manual areas, places, coastline, rivers and developed child maps`, () => {
+for (const transform of [{rotation:0,scale:1},{rotation:Math.PI/2,scale:2}])
+for (const mode of ['copy', 'move', 'linked'] as const) it(`${mode} re-climates generated biomes at rotation ${transform.rotation}, scale ${transform.scale} while preserving manual work and developed child maps`, () => {
   const { source, target } = fixture(), original = structuredClone(source);
-  const placement = { parentMapId: 'world', x: 200000, y: 200000, rotation: 0, scale: 1, underneath: 'merge' as const, seamMargin: 0 };
+  const placement = { parentMapId: 'world', x: 200000, y: 200000, ...transform, underneath: 'merge' as const, seamMargin: 0 };
   const before = transferMap(source, target, { mapId: 'region', mode, placement }, ids());
   const after = transferMap(source, target, { mapId: 'region', mode, placement: { ...placement, reClimate: true } }, ids());
   const normal = before.target.maps[before.mapId]!, changed = after.target.maps[after.mapId]!;

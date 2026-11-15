@@ -1,6 +1,7 @@
 import { Graphics } from 'pixi.js';
 import { describe, expect, it } from 'vitest';
 import { createWorldStore } from '../model/store';
+import { viewStore } from '../model/viewStore';
 import type { MapDoc, WorldMeta } from '../model/schema';
 import { createSelectTool } from './selectTool';
 import type { ToolContext, ToolPointerEvent } from './types';
@@ -179,5 +180,59 @@ describe('SelectTool', () => {
     const gfx = new Graphics();
     tool.drawOverlay(gfx, makeCtx());
     gfx.destroy();
+  });
+
+  it('single-click selects a group while double-click enters Edit Parts and pointEdit', () => {
+    const { store, tool, makeCtx, getSelected } = makeFixture();
+    viewStore.setState({ editParts: false, activeTool: 'select' });
+    store.getState().execute('entity.add', {
+      mapId: 'm1',
+      entity: {
+        id: 'g1',
+        layerId: 'l1',
+        origin: 'generated',
+        groupId: 'grp',
+        rev: 1,
+        type: 'area',
+        role: 'building',
+        rings: [[{ x: 50, y: 50 }, { x: 60, y: 50 }, { x: 60, y: 60 }, { x: 50, y: 60 }]],
+      },
+    });
+    store.getState().execute('entity.add', {
+      mapId: 'm1',
+      entity: {
+        id: 'g2',
+        layerId: 'l1',
+        origin: 'generated',
+        groupId: 'grp',
+        rev: 1,
+        type: 'prop',
+        builtin: 'crate',
+        x: 70,
+        y: 55,
+        rotation: 0,
+        scale: 1,
+        flipX: false,
+      },
+    });
+
+    // Single click selects all group members
+    tool.onPointerDown({ x: 55, y: 55 }, makePointer({ detail: 1 }), makeCtx());
+    tool.onPointerUp({ x: 55, y: 55 }, makePointer({ detail: 1 }), makeCtx());
+    expect(viewStore.getState().editParts).toBe(false);
+    expect(getSelected().sort()).toEqual(['g1', 'g2']);
+
+    // Double click enters editParts and selects only the clicked member
+    tool.onPointerDown({ x: 55, y: 55 }, makePointer({ detail: 2 }), makeCtx());
+    tool.onPointerUp({ x: 55, y: 55 }, makePointer({ detail: 2 }), makeCtx());
+    expect(viewStore.getState().editParts).toBe(true);
+    expect(getSelected()).toEqual(['g1']);
+
+    // Double click on individual area enters pointEdit
+    tool.onPointerDown({ x: 55, y: 55 }, makePointer({ detail: 2 }), makeCtx());
+    tool.onPointerUp({ x: 55, y: 55 }, makePointer({ detail: 2 }), makeCtx());
+    expect(viewStore.getState().activeTool).toBe('pointEdit');
+
+    viewStore.setState({ editParts: false, activeTool: 'select' });
   });
 });

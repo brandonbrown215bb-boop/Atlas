@@ -279,6 +279,7 @@ export function pickTopEntity(
     }
     for (let j = allEntities.length - 1; j >= 0; j--) {
       const entity = allEntities[j]!;
+      if (entity.usage==='boundary' || (entity.type==='prop'&&entity.symbolKind&&!['world','region'].includes(map.kind))) continue;
       if (entity.layerId !== layer.id) {
         continue;
       }
@@ -296,6 +297,7 @@ export function boxSelectEntities(map: MapDoc, box: BBox): string[] {
   );
   const selected: string[] = [];
   for (const entity of Object.values(map.entities)) {
+    if (entity.usage==='boundary' || (entity.type==='prop'&&entity.symbolKind&&!['world','region'].includes(map.kind))) continue;
     if (!unlockedVisibleLayers.has(entity.layerId)) {
       continue;
     }

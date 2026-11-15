@@ -1,3 +1,4 @@
+import { generationSettings } from './context-helpers';
 import { mkdtempSync, readFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
@@ -46,33 +47,33 @@ test('phase 6: MCP woodland generation, UI settings, reroll, accept, undo and po
       w.__atlasViewStore.getState().setPanelMap('map-main', 'forest');
       w.__atlasViewStore.getState().setSelection(['footprint']);
     });
-    await main.getByTestId('btn-generator').click();
+    await generationSettings(main);
     await main.evaluate(() => {
       const host = document.querySelector('[data-testid="panel-map-main"]')!, rect = host.getBoundingClientRect();
       const zoom = Math.min(rect.width / 80, rect.height / 65) * .85;
       (window as any).__atlasViewStore.getState().setPanelCamera('map-main', { x: rect.width / 2 - 40 * zoom, y: rect.height / 2 - 32.5 * zoom, zoom });
     });
-    await main.getByLabel('Generator run').selectOption('woods');
-    await expect(main.getByLabel('Generator type')).toHaveValue('glade');
-    await expect(main.getByLabel('Clearing count')).toHaveValue('6');
+    await expect(main.getByTestId('generation-settings').getByLabel('Clearing count')).toHaveValue('6');
     await expect(main.getByLabel('Outdoor water')).toBeChecked();
     await expect(main.getByRole('button', { name: 'Reroll dressing only', exact: true })).toHaveCount(0);
+    await main.getByTestId('generation-settings').getByText('Entrances',{exact:true}).click();
     await main.getByRole('button', { name: 'Add entrance', exact: true }).click();
     await main.getByLabel('Entrance 1 x (ft)').fill('0');
     await main.getByLabel('Entrance 1 y (ft)').fill('50');
     await main.getByLabel('Outdoor water').uncheck();
-    await main.getByRole('button', { name: 'Reroll', exact: true }).click();
-    await expect(main.getByTestId('panel-generator').getByRole('alert')).toHaveCount(0);
+    await main.getByTestId('generation-strip').getByRole('button', { name: 'Try another', exact: true }).click();
+    await expect(main.getByTestId('generation-strip')).toHaveAttribute('aria-busy','false');
+    await expect(main.getByTestId('generation-strip').getByRole('alert')).toHaveCount(0);
     const fromUI: MapDoc = await call('map_get', { mapId: 'forest' });
     expect(fromUI.generators.woods).toMatchObject({ type: 'glade', seed: 2, params: { water: false, entrances: [{ x: 0, y: 15.24 }] } });
-    await main.getByLabel('Generator run').selectOption('');
-    await main.getByLabel('Generator run').selectOption('woods');
+    await generationSettings(main);
     await expect(main.getByLabel('Entrance 1 y (ft)')).toHaveValue('50');
     await call('undo');
     // Visual QA uses the fully rendered map with the built-in tree and bridge roles.
     await expect.poll(() => main.getByTestId('panel-map-main').getAttribute('data-entity-count')).toBe(String(Object.keys(before.entities).length));
     await main.screenshot({ path: resolve(__dirname, '../test-results/outdoor-generator.png') });
-    await main.getByRole('button', { name: 'Accept', exact: true }).click();
+    await main.getByTestId('generation-strip').getByText('More…',{exact:true}).click();
+    await main.getByTestId('generation-strip').getByRole('button', { name: 'Make independent', exact: true }).click();
     const accepted: MapDoc = await call('map_get', { mapId: 'forest' });
     expect(accepted.generators).toEqual({});
     expect(Object.values(accepted.entities).every(e => e.origin === 'manual')).toBe(true);

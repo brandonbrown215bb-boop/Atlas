@@ -1,3 +1,4 @@
+import { executeGeneration } from '../render/generationJob';
 import { getCommand } from '../model/commands';
 import { worldStore, type CommandCall } from '../model/store';
 import { viewStore } from '../model/viewStore';
@@ -31,5 +32,5 @@ export async function executeAssetCommands(calls: readonly CommandCall[], label?
       w: call.input.w ?? result.w, h: call.input.h ?? result.h, metersPerPixel: call.input.metersPerPixel ?? result.metersPerPixel };
   }
   if (worldStore.getState().world?.meta.id !== worldId) throw new Error('The open world changed.');
-  return worldStore.getState().executeBatch(parsed, label);
+  return parsed.some(c=>['generator.run','generator.reroll','generator.dressArea'].includes(c.name)) ? executeGeneration(parsed) : worldStore.getState().executeBatch(parsed,label);
 }

@@ -55,4 +55,24 @@ describe('generator framework', () => {
     expect(() => store.getState().execute('generator.run', {mapId:'map',type:'missing',seed:1,regionEntityId:'footprint',layerId:'base'})).toThrow('Unknown generator');
     expect(store.getState().world).toBe(before);
   });
+  it('keeps Place-linked generated scenery through rerolls and undoes promotion together with the Place', () => {
+    const store = fixtureStore(), s = () => store.getState();
+    s().execute('generator.run', {mapId:'map',genId:'g',type:'test-generator',seed:4,regionEntityId:'footprint',layerId:'base'});
+    const prop = Object.values(s().world!.maps.map!.entities).find(e => e.type === 'prop')!;
+    const before = s().world;
+    s().execute('place.create', {mapId:'map',id:'shop',name:'The Shop',entityIds:[prop.id],notes:'Keep me'});
+    const promoted = s().world;
+    expect(promoted!.maps.map!.entities[prop.id]).toMatchObject({origin:'manual'});
+    s().undo(); expect(s().world).toEqual(before);
+    s().redo(); expect(s().world).toEqual(promoted);
+    s().execute('generator.reroll', {mapId:'map',genId:'g',seed:5});
+    expect(s().world!.maps.map!.entities[prop.id]).toEqual(promoted!.maps.map!.entities[prop.id]);
+    expect(s().world!.maps.map!.entities.shop).toMatchObject({entityIds:[prop.id],notes:'Keep me'});
+    s().undo(); expect(s().world).toEqual(promoted);
+    s().undo(); // Undo Place creation too: the object is generated again.
+    s().execute('layer.update', {mapId:'map',layerId:'base',patch:{locked:true}});
+    const locked = s().world;
+    expect(() => s().execute('place.create', {mapId:'map',name:'Locked',entityIds:[prop.id]})).toThrow('Unlock');
+    expect(s().world).toBe(locked);
+  });
 });

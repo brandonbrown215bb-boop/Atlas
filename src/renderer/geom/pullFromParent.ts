@@ -43,7 +43,7 @@ export function hasParentChanged(childMap: MapDoc, parentMap: MapDoc): boolean {
   }
 
   // Check if any new or updated clippable parent entity inside rect has rev > maxInheritedRev
-  if (parentMap.revision > maxInheritedRev) {
+  if (!childMap.parent.footprintEntityId && parentMap.revision > maxInheritedRev) {
     const fresh = clipAndInheritEntities(parentMap, rect, 'layer-check');
     for (const candidate of fresh) {
       const srcId = candidate.inheritedFrom?.entityId;

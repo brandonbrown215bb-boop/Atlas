@@ -1,3 +1,4 @@
+import { chooseTool } from './context-helpers';
 import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
@@ -81,7 +82,7 @@ test('develops a child area, zooms through parent <-> child, opens place interio
       await expect(win.getByTestId('panel-map-main')).toContainText('Big Region (region)');
 
       // Use Develop Area tool by dragging a rectangle on the canvas
-      await win.getByTestId('tool-btn-developArea').click();
+      await chooseTool(win,'developArea');
       const canvas = win.locator('[data-testid="panel-map-main"] canvas');
       const box = (await canvas.boundingBox())!;
       await win.mouse.move(box.x + box.width * 0.3, box.y + box.height * 0.3);
@@ -159,7 +160,7 @@ test('develops a child area, zooms through parent <-> child, opens place interio
       );
 
       // Add a portal back to map-1 and follow it via Inspector
-      await win.getByTestId('tool-btn-portal').click();
+      await chooseTool(win,'portal');
       await win.getByTestId('select-portal-target').selectOption('map-1');
       await win.mouse.click(box.x + box.width / 2, box.y + box.height / 2);
 

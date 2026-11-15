@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { EntitySchema, type Entity, type Point } from '../../model/schema';
 import { distanceToSegment, pointInPolygon } from '../../geom/hitTest';
-import { dungeonLayout, DungeonParamsSchema } from './layout';
+import { dungeonLayout, generateDungeon, DungeonParamsSchema } from './layout';
 
 const region=[[{x:0,y:0},{x:30,y:0},{x:30,y:24},{x:0,y:24}]];
 function reachable(entities: Entity[], rings: Point[][]) {
@@ -26,6 +26,19 @@ function reachable(entities: Entity[], rings: Point[][]) {
 }
 
 describe('dungeon layouts', () => {
+  it('defaults to ten feet and maintains two-square floor clearance through corridor bends',()=>{
+    const params=DungeonParamsSchema.parse({mode:'dungeon',density:0});expect(params.corridorWidth).toBe(2);
+    for(const seed of [2,7,11]){
+      const g=1.524,shape=[[{x:0,y:0},{x:45.72,y:0},{x:45.72,y:36.576},{x:0,y:36.576}]];
+      const result=generateDungeon({seed,params,region:shape,constraints:[],theme:{},grid:g});
+      const floors=result.filter((e):e is Extract<Entity,{type:'area'}>=>e.type==='area'&&e.role==='floor');
+      const onFloor=(x:number,y:number)=>floors.some(e=>pointInPolygon({x:(x+.5)*g,y:(y+.5)*g},e.rings));
+      for(let y=0;y<24;y++)for(let x=0;x<30;x++)if(floors.some(e=>e.name==='Corridor'&&pointInPolygon({x:(x+.5)*g,y:(y+.5)*g},e.rings))){
+        expect([-1,0].some(dx=>[-1,0].some(dy=>[0,1].every(a=>[0,1].every(b=>onFloor(x+dx+a,y+dy+b)))))).toBe(true);
+      }
+      expect(floors.filter(f=>f.name!=='Corridor').every(f=>!!f.roomPurpose)).toBe(true);
+    }
+  });
   it('mirrors the layout left/right without moving the footprint',()=>{
     const input={seed:5,params:DungeonParamsSchema.parse({mode:'dungeon'}),region,constraints:[],theme:{},grid:1};
     const normal=dungeonLayout(input), mirrored=dungeonLayout({...input,params:{...input.params,mirror:true}});

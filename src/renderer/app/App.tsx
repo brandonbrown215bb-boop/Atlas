@@ -1,3 +1,8 @@
+import { DEFAULT_BIOMES } from '../model/schema';
+import { activatePropTool, ContextTools } from '../panels/ContextTools';
+import { editorHistory } from '../model/drawingHistory';
+import { extentLabel } from '../model/mapDefaults';
+import { navigateToMap } from '../model/navigation';
 import { TransferPanel } from '../panels/TransferPanel';
 import { ExportPanel } from '../panels/ExportPanel';
 import { PlayerControls } from '../panels/PlayerControls';
@@ -75,8 +80,12 @@ export function App() {
   } | null>(null);
 
   const world = useStore(worldStore, (s) => s.world);
+  const activeMapId = useStore(worldStore, (s) => s.activeMapId);
   const worldPath = useStore(worldStore, (s) => s.worldPath);
+  const assetError = useStore(viewStore, (s) => s.assetError);
   const canUndo = useStore(worldStore, (s) => s.history.past.length > 0);
+  const draftUndo = useStore(viewStore, s => s.draftUndo);
+  const draftRedo = useStore(viewStore, s => s.draftRedo);
   const canRedo = useStore(worldStore, (s) => s.history.future.length > 0);
   const dirtyWorld = useStore(worldStore, (s) => s.dirtyWorld);
   const dirtyMapIds = useStore(worldStore, (s) => s.dirtyMapIds);
@@ -88,6 +97,9 @@ export function App() {
   const snapToGrid = useStore(viewStore, (s) => s.snapToGrid);
   const areaRole = useStore(viewStore, (s) => s.areaRole);
   const pathRole = useStore(viewStore, (s) => s.pathRole);
+  const biomeName = useStore(viewStore,s=>s.biomeName);
+  const biomeRadius = useStore(viewStore,s=>s.biomeRadius);
+  const biomeErase = useStore(viewStore,s=>s.biomeErase);
   const pathWidth = useStore(viewStore, (s) => s.pathWidth);
   const pathClosed = useStore(viewStore, (s) => s.pathClosed);
   const wallSnapToGrid = useStore(viewStore, (s) => s.wallSnapToGrid);
@@ -102,6 +114,23 @@ export function App() {
   const developAreaKind = useStore(viewStore, (s) => s.developAreaKind);
   const pendingDevelopRect = useStore(viewStore, (s) => s.pendingDevelopRect);
   const [developName, setDevelopName] = useState('Developed Area');
+
+  useEffect(() => {
+    // Canvas callbacks and async jobs run outside React's panel error boundaries.
+    const onError = (event: ErrorEvent) => {
+      if (event.message) setErrorBanner({ message: event.error?.stack ?? event.message });
+    };
+    const onRejection = (event: PromiseRejectionEvent) => {
+      const error = event.reason;
+      setErrorBanner({ message: error instanceof Error ? error.stack ?? error.message : String(error) });
+    };
+    window.addEventListener('error', onError);
+    window.addEventListener('unhandledrejection', onRejection);
+    return () => {
+      window.removeEventListener('error', onError);
+      window.removeEventListener('unhandledrejection', onRejection);
+    };
+  }, []);
 
   useEffect(() => {
     (
@@ -127,18 +156,82 @@ export function App() {
     applyThemeToAllWindows(theme, apiRef.current);
   }, [theme]);
 
+  const activeMap = activeMapId && world ? world.maps[activeMapId] : undefined;
+
   useEffect(() => {
+    if (activeTool !== 'developArea' || !activeMap) return;
+    const defaultChildKind: MapKind =
+      activeMap.kind === 'world'
+        ? 'region'
+        : activeMap.kind === 'region'
+          ? 'settlement'
+          : activeMap.kind === 'settlement'
+            ? 'site'
+            : 'settlement';
+    viewStore.getState().setDevelopAreaKind(defaultChildKind);
+  }, [activeTool, activeMap?.id, activeMap?.kind]);
+
+  useEffect(() => {
+    const shortcutTools: Record<string, ToolId> = {
+      v: 'select',
+      a: 'area',
+      p: 'path',
+      w: 'wall',
+      d: 'door',
+      e: 'pointEdit',
+      b: 'biome',
+      l: 'label',
+      m: 'measure',
+      f: 'fog',
+    };
     const onKeyDown = (e: KeyboardEvent) => {
+      if (e.defaultPrevented) return;
+      const target = e.target;
+      if (target instanceof HTMLElement &&
+        (target.isContentEditable || target.closest('input, textarea, select'))) return;
       if ((e.ctrlKey || e.metaKey) && !e.shiftKey && e.key.toLowerCase() === 'z') {
         e.preventDefault();
-        worldStore.getState().undo();
-      } else if (
+        editorHistory();
+        return;
+      }
+      if (
         (e.ctrlKey || e.metaKey) &&
         (e.key.toLowerCase() === 'y' ||
           (e.shiftKey && e.key.toLowerCase() === 'z'))
       ) {
         e.preventDefault();
-        worldStore.getState().redo();
+        editorHistory(true);
+        return;
+      }
+      if (e.ctrlKey || e.metaKey || e.altKey || document.querySelector('dialog[open]')) {
+        return;
+      }
+      if (e.key === 'Escape') {
+        const vs = viewStore.getState();
+        if (vs.pendingDevelopRect) {
+          e.preventDefault();
+          vs.setPendingDevelopRect(null);
+          return;
+        }
+        if (vs.activeTool !== 'select') {
+          e.preventDefault();
+          vs.setActiveTool('select');
+        }
+        return;
+      }
+      if (e.repeat || e.shiftKey) return;
+      const key = e.key.toLowerCase();
+      if (key === 'o') {
+        e.preventDefault();
+        const mid = worldStore.getState().activeMapId;
+        const m = mid ? worldStore.getState().world?.maps[mid] : undefined;
+        activatePropTool(m?.kind);
+        return;
+      }
+      const tool = shortcutTools[key];
+      if (tool) {
+        e.preventDefault();
+        viewStore.getState().setActiveTool(tool);
       }
     };
     window.addEventListener('keydown', onKeyDown);
@@ -300,10 +393,21 @@ export function App() {
       existing.api.setActive();
       return;
     }
+    const inspectorPanel = api.panels.find((p) => p.id === 'inspector');
+    const layersPanel = api.panels.find((p) => p.id === 'layers');
+    const position =
+      component === 'maps'
+        ? undefined
+        : inspectorPanel
+          ? ({ referencePanel: inspectorPanel, direction: 'within' } as const)
+          : layersPanel
+            ? ({ referencePanel: layersPanel, direction: 'below' } as const)
+            : undefined;
     api.addPanel({
       id: component,
       component,
       title,
+      position,
     });
   };
 
@@ -323,8 +427,9 @@ export function App() {
         data-testid="menu-bar"
         style={{
           display: 'flex',
+          flexWrap: 'wrap',
           alignItems: 'center',
-          gap: 8,
+          gap: 6,
           padding: '6px 10px',
           background: 'var(--atlas-surface)',
           borderBottom: '1px solid var(--atlas-border)',
@@ -350,16 +455,16 @@ export function App() {
         <button
           type="button"
           data-testid="btn-undo"
-          disabled={!canUndo}
-          onClick={() => worldStore.getState().undo()}
+          disabled={!canUndo && !draftUndo}
+          onClick={() => editorHistory()}
         >
           Undo
         </button>
         <button
           type="button"
           data-testid="btn-redo"
-          disabled={!canRedo}
-          onClick={() => worldStore.getState().redo()}
+          disabled={!canRedo && !draftRedo}
+          onClick={() => editorHistory(true)}
         >
           Redo
         </button>
@@ -392,7 +497,6 @@ export function App() {
         >
           Assets
         </button>
-        <button type="button" data-testid="btn-generator" onClick={() => openOrFocusPanel('generator', 'Generator')}>Generator</button>
         <button
           type="button"
           data-testid="btn-settings"
@@ -400,17 +504,28 @@ export function App() {
         >
           Settings
         </button>
+        <span style={{ opacity: 0.3 }}>|</span>
+        <PlayerControls />
+        <ExportPanel />
+        <TransferPanel />
         <span
           data-testid="save-status"
-          style={{ marginLeft: 'auto', color: 'var(--atlas-text-muted)' }}
+          style={{ marginLeft: 'auto', color: 'var(--atlas-text-muted)', order: 1 }}
         >
-          {world ? `${world.meta.name} — ${isDirty ? 'Unsaved' : 'Saved'}` : 'No world open'}
+          {world ? (
+            <>
+              {world.meta.name}
+              {activeMapId && (
+                <> · {world.meta.maps.find((m) => m.id === activeMapId)?.name}</>
+              )}
+              {` — ${isDirty ? 'Unsaved' : 'Saved'}`}
+            </>
+          ) : (
+            'No world open'
+          )}
         </span>
       </header>
 
-      <PlayerControls />
-      <ExportPanel />
-      <TransferPanel />
       <div
         data-testid="tool-bar"
         style={{
@@ -424,26 +539,12 @@ export function App() {
           fontSize: 12,
         }}
       >
-        <span style={{ color: 'var(--atlas-text-muted)' }}>Tool:</span>
-        {(['select', 'prop', 'area', 'path', 'pointEdit', 'wall', 'door', 'light', 'label', 'portal', 'developArea', 'measure', 'fog'] as ToolId[]).map((tool) => (
-          <button
-            key={tool}
-            type="button"
-            data-testid={`tool-btn-${tool}`}
-            onClick={() => viewStore.getState().setActiveTool(tool)}
-            style={{
-              fontWeight: activeTool === tool ? 700 : 400,
-              outline: activeTool === tool ? '1px solid var(--atlas-accent)' : undefined,
-            }}
-          >
-            {tool === 'pointEdit'
-              ? 'Point Edit'
-              : tool === 'developArea'
-                ? 'Develop Area'
-                : tool[0]!.toUpperCase() + tool.slice(1)}
-          </button>
-        ))}
-
+        <ContextTools onOpenAssets={() => openOrFocusPanel('assets', 'Assets')} />
+        {activeTool === 'biome' && <>
+          <label>Biome <select aria-label="Paint biome" value={biomeName} onChange={e=>viewStore.setState({biomeName:e.target.value})}>{(world?.meta.climate?.biomes ?? DEFAULT_BIOMES).map(b=><option key={b.name} value={b.name}>{b.name}</option>)}</select></label>
+          <label>Brush radius (ft) <input aria-label="Biome brush radius" type="number" min="1" value={Number((biomeRadius/.3048).toFixed(1))} onChange={e=>viewStore.setState({biomeRadius:Math.max(.3048,Number(e.target.value)*.3048)})} /></label>
+          <label><input type="checkbox" checked={biomeErase} onChange={e=>viewStore.setState({biomeErase:e.target.checked})} />Erase</label>
+        </>}
         {activeTool === 'pointEdit' && (
           <>
             <span style={{ opacity: 0.3 }}>|</span>
@@ -510,7 +611,7 @@ export function App() {
                   <option value="district">district</option>
                   <option value="building">building</option>
                   <option value="floor">floor</option>
-                  <option value="biome:forest">biome:forest</option>
+                  {(world?.meta.climate?.biomes ?? DEFAULT_BIOMES).map(b=><option key={b.name} value={`biome:${b.name}`}>{b.name}</option>)}
                 </select>
               </label>
             )}
@@ -534,16 +635,16 @@ export function App() {
                   </select>
                 </label>
                 <label style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
-                  <span>Width (m):</span>
+                  <span>New path width (ft):</span>
                   <input
                     type="number"
                     min={0.1}
                     step={0.5}
-                    value={pathWidth}
+                    value={Number((pathWidth/.3048).toFixed(2))}
                     onChange={(e) => {
                       const val = Number.parseFloat(e.target.value);
                       if (Number.isFinite(val) && val > 0) {
-                        viewStore.getState().setPathWidth(val);
+                        viewStore.getState().setPathWidth(val * .3048);
                       }
                     }}
                     style={{ width: 56 }}
@@ -574,6 +675,11 @@ export function App() {
               <span>Snap to grid</span>
             </label>
           </>
+        )}
+
+        {(activeTool === 'area' || activeTool === 'path' || activeTool === 'wall' ||
+          (activeTool === 'pointEdit' && pointEditMode !== 'edit')) && (
+          <small>Enter: finish · Ctrl+Z / Backspace: undo point · Ctrl+Y: redo point · Esc: cancel</small>
         )}
 
         {activeTool === 'wall' && (
@@ -723,65 +829,94 @@ export function App() {
           <>
             <span style={{ opacity: 0.3 }}>|</span>
             {pendingDevelopRect ? (
-              <>
-                <input
-                  type="text"
-                  data-testid="develop-area-name"
-                  placeholder="Child map name..."
-                  value={developName}
-                  onChange={(e) => setDevelopName(e.target.value)}
-                  style={{ width: 130 }}
-                />
-                <select
-                  data-testid="select-develop-kind"
-                  value={developAreaKind}
-                  onChange={(e) =>
-                    viewStore.getState().setDevelopAreaKind(e.target.value as MapKind)
-                  }
-                >
-                  {MapKindSchema.options
-                    .filter((k) => k !== 'interior')
-                    .map((k) => (
-                      <option key={k} value={k}>
-                        {k}
-                      </option>
-                    ))}
-                </select>
-                <button
-                  type="button"
-                  data-testid="btn-confirm-develop"
-                  disabled={developName.trim().length === 0}
-                  onClick={() => {
-                    const res = worldStore.getState().execute('map.developArea', {
-                      parentMapId: pendingDevelopRect.mapId,
-                      name: developName.trim(),
-                      kind: developAreaKind,
-                      rect: pendingDevelopRect.rect,
-                    }) as { id: string };
-                    const vs = viewStore.getState();
-                    vs.setPendingDevelopRect(null);
-                    vs.setActiveTool('select');
-                    const targetPanelId = vs.activeMapPanelId ?? 'map-main';
-                    vs.setPanelMap(targetPanelId, res.id);
-                    worldStore.getState().setActiveMap(res.id);
-                  }}
-                >
-                  Create Child Map
-                </button>
-                <button
-                  type="button"
-                  data-testid="btn-cancel-develop"
-                  onClick={() => viewStore.getState().setPendingDevelopRect(null)}
-                >
-                  Cancel
-                </button>
-              </>
+              (() => {
+                const confirmDevelopArea = () => {
+                  if (!developName.trim()) return;
+                  const res = worldStore.getState().execute('map.developArea', {
+                    parentMapId: pendingDevelopRect.mapId,
+                    name: developName.trim(),
+                    kind: developAreaKind,
+                    rect: pendingDevelopRect.rect,
+                  }) as { id: string };
+                  const vs = viewStore.getState();
+                  vs.setPendingDevelopRect(null);
+                  vs.setActiveTool('select');
+                  const targetPanelId = vs.activeMapPanelId ?? 'map-main';
+                  vs.setPanelMap(targetPanelId, res.id);
+                  navigateToMap(res.id);
+                };
+                return <>
+                  <span>{extentLabel(pendingDevelopRect.rect)}</span>
+                  <label>Width (mi) <input data-testid="develop-area-width" type="number" min="0.0001" step="0.01" value={Number((pendingDevelopRect.rect.w/1609.344).toFixed(4))} onChange={e=>{const w=Number(e.target.value)*1609.344;if(w>0)viewStore.getState().setPendingDevelopRect({...pendingDevelopRect,rect:{...pendingDevelopRect.rect,x:pendingDevelopRect.rect.x+(pendingDevelopRect.rect.w-w)/2,w}});}} /></label>
+                  <label>Height (mi) <input data-testid="develop-area-height" type="number" min="0.0001" step="0.01" value={Number((pendingDevelopRect.rect.h/1609.344).toFixed(4))} onChange={e=>{const h=Number(e.target.value)*1609.344;if(h>0)viewStore.getState().setPendingDevelopRect({...pendingDevelopRect,rect:{...pendingDevelopRect.rect,y:pendingDevelopRect.rect.y+(pendingDevelopRect.rect.h-h)/2,h}});}} /></label>
+                  {developAreaKind==='settlement'&&pendingDevelopRect.rect.w*pendingDevelopRect.rect.h>16000000&&<span>This is region-sized. You can develop it, but draw a district under 6.18 sq mi for town generation.</span>}
+                  <input
+                    type="text"
+                    data-testid="develop-area-name"
+                    placeholder="Child map name..."
+                    value={developName}
+                    onChange={(e) => setDevelopName(e.target.value)}
+                    onKeyDown={(e) => {
+                      if (e.key === 'Enter') {
+                        e.preventDefault();
+                        confirmDevelopArea();
+                      } else if (e.key === 'Escape') {
+                        e.preventDefault();
+                        viewStore.getState().setPendingDevelopRect(null);
+                      }
+                    }}
+                    style={{ width: 130 }}
+                  />
+                  <select
+                    data-testid="select-develop-kind"
+                    value={developAreaKind}
+                    onChange={(e) =>
+                      viewStore.getState().setDevelopAreaKind(e.target.value as MapKind)
+                    }
+                  >
+                    {MapKindSchema.options
+                      .filter((k) => k !== 'interior')
+                      .map((k) => (
+                        <option key={k} value={k}>
+                          {k}
+                        </option>
+                      ))}
+                  </select>
+                  <button
+                    type="button"
+                    data-testid="btn-confirm-develop"
+                    disabled={developName.trim().length === 0}
+                    onClick={confirmDevelopArea}
+                  >
+                    Create Child Map
+                  </button>
+                  <button
+                    type="button"
+                    data-testid="btn-cancel-develop"
+                    onClick={() => viewStore.getState().setPendingDevelopRect(null)}
+                  >
+                    Cancel
+                  </button>
+                </>;
+              })()
             ) : (
               <span style={{ color: 'var(--atlas-text-muted)' }}>
                 Drag a rectangle on the map to develop a child area
               </span>
             )}
           </>
+        )}
+
+        {assetError && (
+          <span
+            data-testid="toolbar-asset-error"
+            style={{ color: 'var(--atlas-danger)', display: 'inline-flex', alignItems: 'center', gap: 6 }}
+          >
+            <span>{assetError}</span>
+            <button type="button" aria-label="Dismiss asset error" onClick={() => viewStore.setState({ assetError: '' })}>
+              ×
+            </button>
+          </span>
         )}
       </div>
 
@@ -798,7 +933,7 @@ export function App() {
             fontSize: 12,
           }}
         >
-          <span>{errorBanner.message}</span>
+          <span style={{ minWidth: 0, maxHeight: 120, overflow: 'auto', whiteSpace: 'pre-wrap', overflowWrap: 'anywhere' }}>{errorBanner.message}</span>
           {errorBanner.backups && errorBanner.backups.length > 0 && (
             <button type="button" onClick={handleRestoreLatestBackup}>
               Restore newest backup ({errorBanner.backups[0]})

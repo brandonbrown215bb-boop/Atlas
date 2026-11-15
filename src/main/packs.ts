@@ -1,11 +1,30 @@
 import { createHash } from 'node:crypto';
 import { mkdir, open, readFile, readdir, stat, writeFile, rename } from 'node:fs/promises';
 import { basename, extname, join, relative, resolve } from 'node:path';
-import { PackSchema, PacksSchema, type Pack, type PackProgress, type AssetQuery, type AssetPage } from '../renderer/model/packs';
+import { z } from 'zod';
+import { ASSET_TAG_VERSION, UNTAGGED_FILTER, applyTagOverrides, classifyAsset, type AssetTagOverride } from '../renderer/model/assetTags';
+import { PackSchema, PacksSchema, type Pack, type PackAsset, type PackProgress, type AssetQuery, type AssetPage } from '../renderer/model/packs';
 import { resolveAllowedPath } from './pathSecurity';
 
 const imageExtensions = new Set(['.png', '.jpg', '.jpeg', '.webp', '.bmp']);
 const hash = (value: string) => createHash('sha1').update(value).digest('hex');
+
+const TagOverrideSchema = z.object({
+  themes: z.array(z.string()).optional(),
+  biomes: z.array(z.string()).optional(),
+  purposes: z.array(z.string()).optional(),
+});
+const TagOverridesSchema = z.record(z.string(), TagOverrideSchema);
+
+function tagAsset(packName: string, asset: PackAsset, overrides?: Record<string, AssetTagOverride>): PackAsset {
+  const classified = applyTagOverrides(classifyAsset(packName, asset.relativePath), overrides?.[asset.id]);
+  return { ...asset, ...classified };
+}
+
+function normalizeTagList(values?: string[]): string[] | undefined {
+  if (!values) return undefined;
+  return [...new Set(values.map(v => v.trim().toLowerCase()).filter(Boolean))].sort();
+}
 
 // Read image headers only; registering a pack must not decode thousands of textures.
 export function imageDimensions(b: Buffer): { width: number; height: number } | null {
@@ -42,11 +61,26 @@ export function imageDimensions(b: Buffer): { width: number; height: number } | 
   return width > 0 && height > 0 ? { width, height } : null;
 }
 
-export async function indexFolder(rootPath: string, previous?: Pack, progress?: (p: PackProgress) => void): Promise<Pack> {
+export async function indexFolder(
+  rootPath: string,
+  previous?: Pack,
+  progress?: (p: PackProgress) => void,
+  options?: { packName?: string; overrides?: Record<string, AssetTagOverride> },
+): Promise<Pack> {
   const root = resolve(rootPath);
   if (!(await stat(root)).isDirectory()) throw new Error('Choose an image folder.');
-  const pack: Pack = { id: hash(root.toLowerCase()), root, name: basename(root), pxPerSquare: previous?.pxPerSquare ?? 200, assets: [], skipped: 0 };
+  const name = options?.packName ?? previous?.name ?? basename(root);
+  const pack: Pack = {
+    id: hash(root.toLowerCase()),
+    root,
+    name,
+    pxPerSquare: previous?.pxPerSquare ?? 200,
+    assets: [],
+    skipped: 0,
+    tagVersion: ASSET_TAG_VERSION,
+  };
   const cached = new Map(previous?.assets.map(a => [a.relativePath, a]));
+  const staleTags = (previous?.tagVersion ?? 0) !== ASSET_TAG_VERSION || previous?.name !== name;
   let scanned = 0;
   const walk = async (dir: string): Promise<void> => {
     for (const entry of await readdir(dir, { withFileTypes: true })) {
@@ -60,8 +94,9 @@ export async function indexFolder(rootPath: string, previous?: Pack, progress?: 
         const info = await stat(path);
         const relativePath = relative(root, path).replace(/\\/g, '/');
         const old = cached.get(relativePath);
-        if (old && old.size === info.size && old.mtimeMs === info.mtimeMs) pack.assets.push(old);
-        else {
+        if (old && old.size === info.size && old.mtimeMs === info.mtimeMs) {
+          pack.assets.push(staleTags || options?.overrides?.[old.id] ? tagAsset(pack.name, old, options?.overrides) : old);
+        } else {
           const handle = await open(path, 'r');
           let dimensions;
           try {
@@ -70,9 +105,17 @@ export async function indexFolder(rootPath: string, previous?: Pack, progress?: 
             dimensions = imageDimensions(header.subarray(0, bytesRead));
           } finally { await handle.close(); }
           if (!dimensions) { pack.skipped++; continue; }
-          pack.assets.push({ id: hash(`${pack.id}/${relativePath}`), relativePath, name: entry.name,
-            tags: [...new Set(relativePath.toLowerCase().split(/[^\p{L}\p{N}]+/u).filter(Boolean))],
-            size: info.size, mtimeMs: info.mtimeMs, ...dimensions });
+          const id = hash(`${pack.id}/${relativePath}`);
+          const classified = applyTagOverrides(classifyAsset(pack.name, relativePath), options?.overrides?.[id]);
+          pack.assets.push({
+            id,
+            relativePath,
+            name: entry.name,
+            ...classified,
+            size: info.size,
+            mtimeMs: info.mtimeMs,
+            ...dimensions,
+          });
         }
       } catch { pack.skipped++; }
       if (scanned % 32 === 0) { progress?.({ scanned, indexed: pack.assets.length, path }); await new Promise<void>(r => setImmediate(r)); }
@@ -86,6 +129,7 @@ export async function indexFolder(rootPath: string, previous?: Pack, progress?: 
 
 export class PackLibrary {
   packs: Pack[] = [];
+  overrides: Record<string, AssetTagOverride> = {};
   private busy = false;
   constructor(private readonly userData: string) {}
   findAsset(id: string) {
@@ -101,9 +145,16 @@ export class PackLibrary {
   search(options: AssetQuery = {}): AssetPage {
     const words = (options.query ?? '').toLowerCase().trim().split(/\s+/).filter(Boolean);
     const tag = options.tag?.toLowerCase().trim();
+    const theme = options.theme?.toLowerCase().trim();
+    const biome = options.biome?.toLowerCase().trim();
+    const purpose = options.purpose?.toLowerCase().trim();
     const folder = (options.folder ?? '').replace(/\/$/, '');
     const prefix = folder ? `${folder}/` : '';
     const folders = new Set<string>();
+    const themeCounts = new Map<string, number>();
+    const biomeCounts = new Map<string, number>();
+    const purposeCounts = new Map<string, number>();
+    const untagged = { theme: 0, biome: 0, purpose: 0 };
     const result: AssetPage = { total: 0, assets: [], folders: [], packs: this.packs.map(p => ({ id: p.id, name: p.name, count: p.assets.length })) };
     const offset = Math.max(0, Math.floor(options.offset ?? 0));
     for (const pack of this.packs) {
@@ -113,17 +164,48 @@ export class PackLibrary {
         const rest = asset.relativePath.slice(prefix.length);
         if (rest.includes('/')) folders.add(prefix + rest.split('/')[0]);
         if (tag && !asset.tags.includes(tag)) continue;
-        if (!words.every(w => asset.relativePath.toLowerCase().includes(w) || asset.tags.some(t => t.includes(w)))) continue;
-        if (result.total >= offset && result.assets.length < 100) result.assets.push({ ...asset, packId: pack.id, packName: pack.name, pxPerSquare: pack.pxPerSquare });
+        if (words.length && !words.every(w => asset.relativePath.toLowerCase().includes(w) || asset.tags.some(t => t.includes(w)))) continue;
+
+        const themes = asset.themes ?? [];
+        const biomes = asset.biomes ?? [];
+        const purposes = asset.purposes ?? [];
+        if (themes.length === 0) untagged.theme++;
+        else for (const t of themes) themeCounts.set(t, (themeCounts.get(t) ?? 0) + 1);
+        if (biomes.length === 0) untagged.biome++;
+        else for (const b of biomes) biomeCounts.set(b, (biomeCounts.get(b) ?? 0) + 1);
+        if (purposes.length === 0) untagged.purpose++;
+        else for (const p of purposes) purposeCounts.set(p, (purposeCounts.get(p) ?? 0) + 1);
+
+        if (theme === UNTAGGED_FILTER) { if (themes.length > 0) continue; }
+        else if (theme && !themes.includes(theme)) continue;
+        if (biome === UNTAGGED_FILTER) { if (biomes.length > 0) continue; }
+        else if (biome && !biomes.includes(biome)) continue;
+        if (purpose === UNTAGGED_FILTER) { if (purposes.length > 0) continue; }
+        else if (purpose && !purposes.includes(purpose)) continue;
+
+        if (result.total >= offset && result.assets.length < 100) result.assets.push({ ...asset, themes, biomes, purposes, packId: pack.id, packName: pack.name, pxPerSquare: pack.pxPerSquare });
         result.total++;
       }
     }
     result.folders = [...folders].sort();
+    const toFacets = (counts: Map<string, number>) =>
+      [...counts.entries()].sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0])).map(([value, count]) => ({ value, count }));
+    result.facets = { themes: toFacets(themeCounts), biomes: toFacets(biomeCounts), purposes: toFacets(purposeCounts), untagged };
     return result;
   }
   async load(): Promise<void> {
+    try { this.overrides = TagOverridesSchema.parse(JSON.parse(await readFile(join(this.userData, 'asset-tag-overrides.json'), 'utf8'))); }
+    catch { this.overrides = {}; }
     try { this.packs = PacksSchema.parse(JSON.parse(await readFile(join(this.userData, 'packs.json'), 'utf8'))); }
     catch { this.packs = []; }
+    if (this.packs.some(p => p.tagVersion !== ASSET_TAG_VERSION)) {
+      const upgraded = this.packs.map(p => p.tagVersion === ASSET_TAG_VERSION ? p : {
+        ...p,
+        tagVersion: ASSET_TAG_VERSION,
+        assets: p.assets.map(a => tagAsset(p.name, a, this.overrides)),
+      });
+      await this.save(upgraded);
+    }
   }
   private async save(packs: Pack[]): Promise<void> {
     await mkdir(this.userData, { recursive: true });
@@ -132,12 +214,41 @@ export class PackLibrary {
     await rename(`${path}.tmp`, path);
     this.packs = packs;
   }
+  private async saveOverrides(overrides: Record<string, AssetTagOverride>): Promise<void> {
+    await mkdir(this.userData, { recursive: true });
+    const path = join(this.userData, 'asset-tag-overrides.json');
+    await writeFile(`${path}.tmp`, JSON.stringify(overrides, null, 2));
+    await rename(`${path}.tmp`, path);
+    this.overrides = overrides;
+  }
+  async setAssetTags(id: string, input: AssetTagOverride): Promise<PackAsset> {
+    if (this.busy) throw new Error('Wait for indexing to finish.');
+    const { pack } = this.findAsset(id);
+    const nextOverride: AssetTagOverride = {
+      ...(input.themes !== undefined ? { themes: normalizeTagList(input.themes) } : {}),
+      ...(input.biomes !== undefined ? { biomes: normalizeTagList(input.biomes) } : {}),
+      ...(input.purposes !== undefined ? { purposes: normalizeTagList(input.purposes) } : {}),
+    };
+    const nextOverrides = { ...this.overrides, [id]: { ...this.overrides[id], ...nextOverride } };
+    await this.saveOverrides(nextOverrides);
+    let updated!: PackAsset;
+    const nextPacks = this.packs.map(p => p.id !== pack.id ? p : {
+      ...p,
+      assets: p.assets.map(a => {
+        if (a.id !== id) return a;
+        updated = tagAsset(p.name, a, nextOverrides);
+        return updated;
+      }),
+    });
+    await this.save(nextPacks);
+    return updated;
+  }
   async register(root: string, progress?: (p: PackProgress) => void, defaults?: { name: string; pxPerSquare: number }): Promise<Pack[]> {
     if (this.busy) throw new Error('An asset folder is already being indexed.');
     this.busy = true;
     try {
       const old = this.packs.find(p => p.root.toLowerCase() === resolve(root).toLowerCase());
-      const pack = await indexFolder(root, old, progress);
+      const pack = await indexFolder(root, old, progress, { packName: defaults?.name, overrides: this.overrides });
       if (defaults) { pack.name = defaults.name; pack.pxPerSquare = old?.pxPerSquare ?? defaults.pxPerSquare; }
       await this.save([...this.packs.filter(p => p.id !== pack.id), pack]);
       return this.packs;

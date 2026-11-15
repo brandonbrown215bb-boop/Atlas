@@ -13,6 +13,10 @@ describe('map.measureRoute command', () => {
       mapId: 'm', points: [{ x: 0, y: 0 }, { x: 1609.344, y: 0 }], speedMph: 2, departure: '23:45',
     })).toMatchObject({ miles: 1, feet: 5280, durationSeconds: 1800, arrival: { time: '00:15', dayOffset: 1 } });
     expect(store.getState()).toBe(before);
+    expect(store.getState().execute('map.measureRoute', {
+      mapId:'m',points:[{x:0,y:0},{x:36*1609.344,y:0}],speedMph:3,departure:'08:00',schedule:{startTime:'08:00',hoursPerDay:8},
+    })).toMatchObject({restStops:1,arrival:{time:'12:00',dayOffset:1}});
+    expect(store.getState()).toBe(before);
     expect(() => store.getState().execute('map.measureRoute', { mapId: 'm', points: [{ x: 0, y: 0 }, { x: 1, y: 0 }], speedMph: 0 })).toThrow();
     expect(() => store.getState().execute('map.measureRoute', { mapId: 'missing', points: [{ x: 0, y: 0 }, { x: 1, y: 0 }] })).toThrow('Map not found');
     expect(store.getState()).toBe(before);

@@ -1,3 +1,4 @@
+import { viewStore } from '../model/viewStore';
 import type { Graphics } from 'pixi.js';
 import {
   boxSelectEntities,
@@ -64,7 +65,7 @@ function getUnlockedVisibleEntities(
     const entity = map.entities[id];
     if (!entity) continue;
     const layer = layerMap.get(entity.layerId);
-    if (!layer || !layer.visible || layer.locked) continue;
+    if (!layer || layer.locked || (!layer.visible && (viewStore.getState().editParts || !entity.groupId))) continue;
     result.push(entity);
   }
   return result;
@@ -87,7 +88,7 @@ function getScaleHandles(b: BBox): HandlePos[] {
 
 function getRotateHandle(b: BBox, zoom: number): Point {
   const cx = (b.minX + b.maxX) / 2;
-  const stem = 24 / Math.max(0.0005, zoom);
+  const stem = 24 / Math.max(1e-8, zoom);
   return { x: cx, y: b.minY - stem };
 }
 
@@ -126,6 +127,7 @@ export function createSelectTool(): MapTool {
 
   return {
     id: 'select',
+    extentPreview:()=>{if(!drag)return null;if(drag.mode==='marquee')return{w:Math.abs(drag.current.x-drag.start.x),h:Math.abs(drag.current.y-drag.start.y)};const b=getSelectionBounds(previewEntities.size?[...previewEntities.values()]:drag.snapshots);return b?{w:b.maxX-b.minX,h:b.maxY-b.minY}:null;},
 
     getPreviewEntities() {
       return previewEntities.size > 0 ? previewEntities : null;
@@ -136,13 +138,15 @@ export function createSelectTool(): MapTool {
         return false;
       }
       clearPreview();
-      const zoom = Math.max(0.0005, ctx.camera.zoom);
+      viewStore.setState({interactionMessage:''});
+      const zoom = Math.max(1e-8, ctx.camera.zoom);
       const tolerance = 8 / zoom;
       const selectedEntities = getUnlockedVisibleEntities(
         ctx.map,
         ctx.getSelectedIds(),
       );
-      const bounds = getSelectionBounds(selectedEntities);
+      const lockedSelection=!viewStore.getState().editParts&&ctx.getSelectedIds().some(id=>ctx.map.layers.find(l=>l.id===ctx.map.entities[id]?.layerId)?.locked);
+      const bounds = lockedSelection?null:getSelectionBounds(selectedEntities);
 
       if (bounds && selectedEntities.length > 0) {
         const rotHandle = getRotateHandle(bounds, zoom);
@@ -194,8 +198,28 @@ export function createSelectTool(): MapTool {
           ctx.requestRedraw();
           return true;
         }
-        const nextSelection = current.includes(hit.id) ? current : [hit.id];
-        if (!current.includes(hit.id)) {
+        if ((e.detail ?? 1) >= 2) {
+          const hitLayer = ctx.map.layers.find((l) => l.id === hit.layerId);
+          if (hitLayer && !hitLayer.locked) {
+            if (hit.groupId && !viewStore.getState().editParts) {
+              viewStore.setState({ editParts: true, interactionMessage: '' });
+              ctx.setSelectedIds([hit.id]);
+              ctx.requestRedraw();
+              return true;
+            }
+            if (hit.type === 'area' || hit.type === 'path' || hit.type === 'wall') {
+              ctx.setSelectedIds([hit.id]);
+              viewStore.getState().setActiveTool('pointEdit');
+              ctx.requestRedraw();
+              return true;
+            }
+          }
+        }
+        const groupMembers = !viewStore.getState().editParts && hit.groupId ? Object.values(ctx.map.entities).filter(e=>e.groupId===hit.groupId).map(e=>e.id) : [hit.id];
+        if (groupMembers.some(id=>ctx.map.layers.find(l=>l.id===ctx.map.entities[id]?.layerId)?.locked)) { ctx.setSelectedIds(groupMembers);viewStore.setState({interactionMessage:'Unlock all layers in this group before moving or resizing it. Click Edit Parts to work with individual features.'});ctx.requestRedraw();return true; }
+        const keepSelection = current.includes(hit.id) && (!viewStore.getState().editParts || current.length === 1);
+        const nextSelection = keepSelection ? current : groupMembers;
+        if (!keepSelection) {
           ctx.setSelectedIds(nextSelection);
         }
         const movable = getUnlockedVisibleEntities(ctx.map, nextSelection);
@@ -236,7 +260,7 @@ export function createSelectTool(): MapTool {
       }
 
       const distMoved = Math.hypot(pt.x - drag.start.x, pt.y - drag.start.y);
-      if (distMoved > 1 / Math.max(0.0005, ctx.camera.zoom)) {
+      if (distMoved > 1 / Math.max(1e-8, ctx.camera.zoom)) {
         drag.moved = true;
       }
       if (!drag.moved) {
@@ -299,6 +323,8 @@ export function createSelectTool(): MapTool {
           sy = uniform;
         }
 
+        const selectedGroup=drag.snapshots[0]?.groupId;
+        if(!viewStore.getState().editParts&&selectedGroup&&drag.snapshots.every(e=>e.groupId===selectedGroup)){const uniform=Math.abs(sx-1)>Math.abs(sy-1)?sx:sy;sx=uniform;sy=uniform;}
         for (const entity of drag.snapshots) {
           const patch = scaleEntityPatch(entity, drag.pivot, sx, sy);
           pendingPatches.set(entity.id, patch);
@@ -323,7 +349,7 @@ export function createSelectTool(): MapTool {
           maxX: Math.max(activeDrag.start.x, activeDrag.current.x),
           maxY: Math.max(activeDrag.start.y, activeDrag.current.y),
         };
-        const minSize = 3 / Math.max(0.0005, ctx.camera.zoom);
+        const minSize = 3 / Math.max(1e-8, ctx.camera.zoom);
         if (box.maxX - box.minX >= minSize || box.maxY - box.minY >= minSize) {
           const hits = boxSelectEntities(ctx.map, box);
           if (e.shiftKey || activeDrag.shiftKey) {
@@ -345,7 +371,9 @@ export function createSelectTool(): MapTool {
           }),
         );
         clearPreview();
-        ctx.executeBatch(calls, `select.${activeDrag.mode}`);
+        const groupId = activeDrag.snapshots[0]?.groupId;
+        if (!viewStore.getState().editParts && groupId && activeDrag.snapshots.every(e=>e.groupId===groupId)) ctx.execute('group.applyTransform', {mapId:ctx.map.id,groupId,changes:calls.map(c=>c.input)});
+        else ctx.executeBatch(calls, `select.${activeDrag.mode}`);
       } else {
         clearPreview();
       }
@@ -354,6 +382,7 @@ export function createSelectTool(): MapTool {
 
     onKey(e, ctx) {
       if (e.key === 'Escape') {
+        if(viewStore.getState().editParts){const ids=ctx.getSelectedIds(),groups=new Set(ids.map(id=>ctx.map.entities[id]?.groupId).filter(Boolean));viewStore.setState({editParts:false});ctx.setSelectedIds(Object.values(ctx.map.entities).filter(e=>groups.has(e.groupId)||ids.includes(e.id)).map(e=>e.id));ctx.requestRedraw();return true;}
         if (drag) {
           drag = null;
           clearPreview();
@@ -426,7 +455,9 @@ export function createSelectTool(): MapTool {
             patch: translateEntityPatch(entity, dx, dy),
           },
         }));
-        ctx.executeBatch(calls, 'select.nudge');
+        const groupId=selectedEntities[0]?.groupId;
+        if(!viewStore.getState().editParts&&groupId&&selectedEntities.every(e=>e.groupId===groupId))ctx.execute('group.applyTransform',{mapId:ctx.map.id,groupId,changes:calls.map(c=>c.input)});
+        else ctx.executeBatch(calls, 'select.nudge');
         return true;
       }
 
@@ -434,7 +465,7 @@ export function createSelectTool(): MapTool {
     },
 
     drawOverlay(gfx, ctx) {
-      const zoom = Math.max(0.0005, ctx.camera.zoom);
+      const zoom = Math.max(1e-8, ctx.camera.zoom);
       const strokeW = 1.5 / zoom;
       const handleSize = 8 / zoom;
 

@@ -1,3 +1,6 @@
+import { TraceGeographyDialog } from './TraceGeographyDialog';
+import { FOOT, MILE } from '../model/mapDefaults';
+import { navigateToMap } from '../model/navigation';
 import { useState } from 'react';
 import type { IDockviewPanelProps } from 'dockview-react';
 import { useStore } from 'zustand';
@@ -28,6 +31,10 @@ export function MapsPanel(props: IDockviewPanelProps) {
   const worldPath = useStore(worldStore, (s) => s.worldPath);
   const activeMapId = useStore(worldStore, (s) => s.activeMapId);
 
+  const [backdropWidth, setBackdropWidth] = useState('');
+  const [backdropUnit, setBackdropUnit] = useState<'mi' | 'ft'>('mi');
+  const [tracing,setTracing] = useState(false);
+  const [repairing,setRepairing] = useState(false);
   const [newName, setNewName] = useState('');
   const [newKind, setNewKind] = useState<MapKind>('settlement');
   const [newParentId, setNewParentId] = useState<string>('');
@@ -51,7 +58,7 @@ export function MapsPanel(props: IDockviewPanelProps) {
       kind: newKind,
       parentId: newParentId || undefined,
     });
-    worldStore.getState().setActiveMap(id);
+    navigateToMap(id);
     setNewName('');
   };
 
@@ -67,22 +74,16 @@ export function MapsPanel(props: IDockviewPanelProps) {
 
     const entry = index[assetId];
     const aspect = entry ? entry.height / entry.width : 1;
-    const defaultW =
-      activeMap.kind === 'world'
-        ? 4000
-        : activeMap.kind === 'region'
-          ? 1000
-          : activeMap.kind === 'settlement'
-            ? 400
-            : (entry?.width ?? 1000) / (entry?.pxPerSquare ?? 200) * 1.524;
+    const defaultW = Number(backdropWidth) > 0 ? Number(backdropWidth) * (backdropUnit === 'mi' ? MILE : FOOT) : activeMap.bounds.w;
     const defaultH = defaultW * aspect;
     const layerId = activeMap.layers[0]?.id ?? 'layer-base';
 
+    const imageId = `img-${crypto.randomUUID().slice(0, 8)}`;
     worldStore.getState().execute('entity.add', {
       mapId: activeMap.id,
       entity: {
-        id: `img-${crypto.randomUUID().slice(0, 8)}`,
-        type: 'image',
+        id: imageId,
+        type: 'image', usage: 'reference',
         layerId,
         origin: 'manual',
         rev: 0,
@@ -94,6 +95,9 @@ export function MapsPanel(props: IDockviewPanelProps) {
         rotation: 0,
       },
     });
+    viewStore.getState().setSelection([imageId]);
+    viewStore.setState({ fitRequest: { panelId: viewStore.getState().activeMapPanelId ?? 'map-main', bounds: { x: 0, y: 0, w: defaultW, h: defaultH }, nonce: Date.now() } });
+    if (!Object.keys(activeMap.entities).length) worldStore.getState().execute('map.setExtent', { mapId: activeMap.id, bounds: { x: 0, y: 0, w: defaultW, h: defaultH } });
   };
 
   const tree = world ? buildMapTree(world.meta.maps) : [];
@@ -156,7 +160,7 @@ export function MapsPanel(props: IDockviewPanelProps) {
                 <button
                   type="button"
                   data-testid={`map-tree-item-${map.id}`}
-                  onClick={() => worldStore.getState().setActiveMap(map.id)}
+                  onClick={() => navigateToMap(map.id)}
                   style={{
                     flex: 1,
                     textAlign: 'left',
@@ -212,89 +216,137 @@ export function MapsPanel(props: IDockviewPanelProps) {
           }}
         >
           <div style={{ fontWeight: 600 }}>New Map</div>
-          <input
-            type="text"
-            placeholder="Map name"
-            data-testid="input-new-map-name"
-            value={newName}
-            onChange={(e) => setNewName(e.target.value)}
-          />
-          <select
-            data-testid="select-new-map-kind"
-            value={newKind}
-            onChange={(e) => setNewKind(e.target.value as MapKind)}
-          >
-            <option value="world">world</option>
-            <option value="region">region</option>
-            <option value="settlement">settlement</option>
-            <option value="site">site</option>
-            <option value="interior">interior</option>
-          </select>
-          <select
-            data-testid="select-new-map-parent"
-            value={newParentId}
-            onChange={(e) => setNewParentId(e.target.value)}
-          >
-            <option value="">(no parent)</option>
-            {world.meta.maps.map((m) => (
-              <option key={m.id} value={m.id}>
-                Parent: {m.name}
-              </option>
-            ))}
-          </select>
-          <button
-            type="button"
-            data-testid="btn-create-map"
-            onClick={handleCreateMap}
-          >
-            Create Map
-          </button>
+          <div style={{ display: 'flex', gap: 4 }}>
+            <input
+              type="text"
+              placeholder="Map name"
+              data-testid="input-new-map-name"
+              value={newName}
+              onChange={(e) => setNewName(e.target.value)}
+              style={{ flex: 1, minWidth: 0 }}
+            />
+            <select
+              data-testid="select-new-map-kind"
+              value={newKind}
+              onChange={(e) => setNewKind(e.target.value as MapKind)}
+            >
+              <option value="world">world</option>
+              <option value="region">region</option>
+              <option value="settlement">settlement</option>
+              <option value="site">site</option>
+              <option value="interior">interior</option>
+            </select>
+          </div>
+          <div style={{ display: 'flex', gap: 4 }}>
+            <select
+              data-testid="select-new-map-parent"
+              value={newParentId}
+              onChange={(e) => setNewParentId(e.target.value)}
+              style={{ flex: 1, minWidth: 0 }}
+            >
+              <option value="">(no parent)</option>
+              {world.meta.maps.map((m) => (
+                <option key={m.id} value={m.id}>
+                  Parent: {m.name}
+                </option>
+              ))}
+            </select>
+            <button
+              type="button"
+              data-testid="btn-create-map"
+              onClick={handleCreateMap}
+            >
+              Create Map
+            </button>
+          </div>
 
-          <hr style={{ width: '100%', borderColor: 'var(--atlas-border)' }} />
+          <hr style={{ width: '100%', borderColor: 'var(--atlas-border)', margin: '2px 0' }} />
 
-          <button
-            type="button"
-            data-testid="btn-import-backdrop"
-            disabled={!activeMap || !worldPath}
-            onClick={() => void handleImportBackdrop()}
-          >
-            Import Backdrop Image
-          </button>
-          <button
-            type="button"
-            data-testid="btn-import-svg"
-            disabled={!activeMap || loadingSvg}
-            onClick={async (event) => {
-              if (!activeMap || !world) return;
-              const doc = event.currentTarget.ownerDocument;
-              setSvgError('');
-              setLoadingSvg(true);
-              try {
-                const file = await window.atlasApi.pickSvg();
-                if (file && worldStore.getState().world?.meta.id === world.meta.id) {
-                  setSvgImport({ drawing: parseSvg(file.text, doc), fileName: file.name, map: activeMap, worldId: world.meta.id });
-                }
-              } catch (error) { setSvgError(error instanceof Error ? error.message : String(error)); }
-              finally { setLoadingSvg(false); }
-            }}
-          >
-            {loadingSvg ? 'Reading SVG…' : 'Import SVG'}
-          </button>
+          <label style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
+            <span style={{ whiteSpace: 'nowrap' }}>Backdrop width</span>
+            <input
+              aria-label="Backdrop real width"
+              type="number"
+              min="0.01"
+              placeholder="Map width"
+              value={backdropWidth}
+              onChange={(e) => setBackdropWidth(e.target.value)}
+              style={{ flex: 1, minWidth: 0 }}
+            />
+            <select
+              aria-label="Backdrop width unit"
+              value={backdropUnit}
+              onChange={(e) => setBackdropUnit(e.target.value as typeof backdropUnit)}
+            >
+              <option value="mi">mi</option>
+              <option value="ft">ft</option>
+            </select>
+          </label>
+          <div style={{ display: 'flex', gap: 4 }}>
+            <button
+              type="button"
+              data-testid="btn-import-backdrop"
+              disabled={!activeMap || !worldPath}
+              onClick={() => void handleImportBackdrop()}
+              style={{ flex: 1 }}
+            >
+              Import Backdrop Image
+            </button>
+            <button
+              type="button"
+              data-testid="btn-import-svg"
+              disabled={!activeMap || loadingSvg}
+              style={{ flex: 1 }}
+              onClick={async (event) => {
+                if (!activeMap || !world) return;
+                const doc = event.currentTarget.ownerDocument;
+                setSvgError('');
+                setLoadingSvg(true);
+                try {
+                  const file = await window.atlasApi.pickSvg();
+                  if (file && worldStore.getState().world?.meta.id === world.meta.id) {
+                    setSvgImport({ drawing: parseSvg(file.text, doc), fileName: file.name, map: activeMap, worldId: world.meta.id });
+                  }
+                } catch (error) { setSvgError(error instanceof Error ? error.message : String(error)); }
+                finally { setLoadingSvg(false); }
+              }}
+            >
+              {loadingSvg ? 'Reading SVG…' : 'Import SVG'}
+            </button>
+          </div>
           {svgError && <div role="alert" style={{ color: 'var(--atlas-danger)' }}>{svgError}</div>}
-          <button
-            type="button"
-            data-testid="btn-calibrate-scale"
-            disabled={!firstImageEntity}
-            onClick={() => {
-              if (firstImageEntity) {
-                viewStore.getState().setCalibratingImageId(firstImageEntity.id);
-              }
-            }}
-          >
-            Set Real Size (Calibrate)
-          </button>
+          {firstImageEntity && (
+            <div style={{ display: 'flex', gap: 4 }}>
+              <button
+                type="button"
+                data-testid="btn-trace-geography"
+                onClick={() => setTracing(true)}
+                style={{ flex: 1 }}
+              >
+                Trace Geography
+              </button>
+              <button
+                type="button"
+                data-testid="btn-calibrate-scale"
+                onClick={() => {
+                  viewStore.getState().setCalibratingImageId(firstImageEntity.id);
+                }}
+                style={{ flex: 1 }}
+              >
+                Set Real Size (Calibrate)
+              </button>
+            </div>
+          )}
+          <button type="button" onClick={() => setRepairing(!repairing)}>Repair Existing World…</button>
+          {repairing && activeMap && <div role="region" aria-label="Repair preview">
+            <p>Repair this map's extent, restore missing layers for stranded contents, and recover boundaries from surviving source areas. Existing geometry is preserved; missing sources stay unresolved. Applying is undoable.</p>
+            {Object.values(activeMap.entities).some(e=>!activeMap.layers.some(l=>l.id===e.layerId))&&<p>Some contents belong to deleted layers. Repair will restore those layers as “Recovered contents”.</p>}
+            {Object.entries(activeMap.generators).map(([id,r])=><div key={id}>{r.type}: {r.boundary||activeMap.entities[r.regionEntityId]?.type==='area'?'Boundary available':'Missing boundary'}{!r.boundary&&activeMap.entities[r.regionEntityId]?.type!=='area'&&<button disabled={!viewStore.getState().selectedEntityIds.some(key=>activeMap.entities[key]?.type==='area')} onClick={()=>worldStore.getState().execute('map.repair',{mapId:activeMap.id,reassign:{[id]:viewStore.getState().selectedEntityIds.find(key=>activeMap.entities[key]?.type==='area')}})}>Use selected area</button>}</div>)}
+            <button onClick={()=>{worldStore.getState().execute('map.repair',{mapId:activeMap.id});setRepairing(false);}}>Apply Repair</button>
+          </div>}
         </div>
       )}
+      {tracing && firstImageEntity?.type==='image' && <TraceGeographyDialog image={firstImageEntity} onClose={()=>setTracing(false)} />}
       {svgImport && <SvgImportDialog {...svgImport} onClose={() => setSvgImport(null)} />}
     </div>
   );
