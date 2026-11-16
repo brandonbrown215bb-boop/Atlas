@@ -10,7 +10,7 @@ import { clipAndInheritEntities, type RectBounds } from './clipInherit';
 export type CardinalDirection = 'N' | 'S' | 'E' | 'W';
 
 /** Source strip clipped along the shared cardinal border before reflecting across the seam. */
-export function neighborSeamStripRect(
+function neighborSeamStripRect(
   bounds: RectBounds,
   direction: CardinalDirection,
   stripRatio = 0.14,

@@ -5,6 +5,7 @@ import { MapDocSchema, WorldMetaSchema, type Entity, type MapDoc, type Point } f
 import type { WorldDocument } from './commands';
 import { fromPolygons, toPolygons, rectRing } from '../geom/fog';
 import { rotateEntityPatch, scaleEntityPatch, translateEntityPatch } from '../geom/transform';
+import { polygonArea } from '../geom/geography';
 import { reclimateMap } from '../gen/world/reclimate';
 
 export const WorldDocumentSchema=z.object({meta:WorldMetaSchema,maps:z.record(z.string(),MapDocSchema)});
@@ -33,7 +34,7 @@ export function validateWorld(input: WorldDocument): WorldDocument {
   }
   return w;
 }
-export function mapTree(world: WorldDocument, rootId: string): string[] {
+function mapTree(world: WorldDocument, rootId: string): string[] {
   if(!world.maps[rootId]) throw new Error('Source map not found');
   const ids=[rootId];
   for(let i=0;i<ids.length;i++) for(const m of Object.values(world.maps)) if(m.parent?.mapId===ids[i] && !ids.includes(m.id)) ids.push(m.id);
@@ -73,9 +74,9 @@ function placeTree(maps: Record<string,MapDoc>, ids:string[], placement: Placeme
     const localPoint=(p:Point)=>{const q=movePoint(p,scale,angle);return{x:q.x+offset.x,y:q.y+offset.y};};
     for(const r of Object.values(m.generators))if(r.boundary)r.boundary=r.boundary.map(ring=>ring.map(localPoint));
     for(const g of Object.values(m.groups??{}))if(g.boundary)g.boundary=g.boundary.map(ring=>ring.map(localPoint));
-    for(const [key,p]of Object.entries(m.riverNodes??{}))m.riverNodes![key]=localPoint(p);
     for(const model of Object.values(m.terrain??{})){model.cells=model.cells.map(c=>({...c,...localPoint(c)}));const bounds=rectRing(model.bounds).map(localPoint),x=Math.min(...bounds.map(p=>p.x)),y=Math.min(...bounds.map(p=>p.y));model.bounds={x,y,w:Math.max(...bounds.map(p=>p.x))-x,h:Math.max(...bounds.map(p=>p.y))-y};}
-    m.fog.revealed=m.fog.revealed.map(poly=>poly.map(r=>r.map(p=>{const q=movePoint(p,scale,angle);return {x:q.x+offset.x,y:q.y+offset.y};})));
+    m.fog.revealed=m.fog.revealed.map(poly=>poly.map(r=>r.map(localPoint)));
+    if(m.fog.explored)m.fog.explored=m.fog.explored.map(poly=>poly.map(r=>r.map(localPoint)));
     m.bounds={x:0,y:0,w:Math.max(...corners.map(p=>p.x))-minX,h:Math.max(...corners.map(p=>p.y))-minY};
     m.grid.size*=scale;
     if(m.parent && transforms.has(m.parent.mapId)) {
@@ -107,7 +108,12 @@ function applyGeography(parent: MapDoc, incoming: MapDoc, footprint:Point[], pla
   if(placement.underneath==='replace') {
     for(const e of Object.values(parent.entities)) {
       if(protectedIds.has(e.id))continue;
-      if(e.type==='area') replaceArea(e,fromPolygons(clipping.difference(toPolygons([e.rings]),toPolygons([[footprint]]))));
+      if(e.type==='area') {
+        const cut=fromPolygons(clipping.difference(toPolygons([e.rings]),toPolygons([[footprint]])));
+        // Areas the footprint does not touch keep their generated status and revision.
+        if(Math.abs(cut.reduce((sum,rings)=>sum+polygonArea(rings),0)-polygonArea(e.rings))<=1e-9*Math.max(1,Math.abs(polygonArea(e.rings))))continue;
+        replaceArea(e,cut);
+      }
       else if(e.type==='path'||e.type==='wall'||e.type==='door') {
         const points=e.type==='door'?[e.a,e.b]:e.points;
         const pieces=clipOutside(points,e.type==='path'&&e.closed,footprint);
@@ -150,9 +156,9 @@ export function transferMap(sourceInput:WorldDocument,targetInput:WorldDocument,
     m.layers=m.layers.map(l=>({...l,id:layers.get(l.id)!}));
     const gens=new Map(Object.keys(m.generators).map(g=>[g,linked?g:createId()]));
     const groups=new Map(Object.keys(m.groups??{}).map(g=>[g,linked?g:createId()]));
-    const riverNodes=new Map(Object.keys(m.riverNodes??{}).map(g=>[g,linked?g:createId()]));
+    const riverNodes=new Map<string,string>();
+    const nodeId=(g:string)=>{if(!riverNodes.has(g))riverNodes.set(g,linked?g:createId());return riverNodes.get(g)!;};
     m.groups=Object.fromEntries(Object.entries(m.groups??{}).map(([g,value])=>[groups.get(g)!,{...value,genId:value.genId?gens.get(value.genId):undefined}]));
-    m.riverNodes=Object.fromEntries(Object.entries(m.riverNodes??{}).map(([g,value])=>[riverNodes.get(g)!,value]));
     m.terrain=Object.fromEntries(Object.entries(m.terrain??{}).map(([g,value])=>[gens.get(g)??g,value]));
     m.generators=Object.fromEntries(Object.entries(m.generators).map(([g,value])=>[gens.get(g)!,{...value,groupId:value.groupId?groups.get(value.groupId):undefined,regionEntityId:entityIds.get(id)!.get(value.regionEntityId)??value.regionEntityId,layerId:value.layerId?layers.get(value.layerId):undefined}]));
     const oldParent=m.parent?.mapId;
@@ -162,7 +168,7 @@ export function transferMap(sourceInput:WorldDocument,targetInput:WorldDocument,
       e.id=entityIds.get(id)!.get(e.id)!;e.layerId=layers.get(e.layerId)!;
       if(e.genId)e.genId=gens.get(e.genId);
       if(e.groupId)e.groupId=groups.get(e.groupId);
-      if(e.type==='path'){if(e.startNodeId)e.startNodeId=riverNodes.get(e.startNodeId);if(e.endNodeId)e.endNodeId=riverNodes.get(e.endNodeId);}
+      if(e.type==='path'){if(e.startNodeId)e.startNodeId=nodeId(e.startNodeId);if(e.endNodeId)e.endNodeId=nodeId(e.endNodeId);}
       if(e.inheritedFrom) {
         const inherited=oldParent?entityIds.get(oldParent)?.get(e.inheritedFrom.entityId):undefined;
         if(inherited)e.inheritedFrom.entityId=inherited;else {delete e.inheritedFrom;if(e.origin==='inherited')e.origin='manual';}

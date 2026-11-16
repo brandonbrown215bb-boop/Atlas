@@ -66,3 +66,13 @@ it('undoing an applied transfer marks the restored maps unsaved',()=>{
   expect(store.getState().world!.maps.root).toBeDefined();
   expect(store.getState().dirtyMapIds).toMatchObject({root:true,child:true});
 });
+it('replace placement leaves areas away from the footprint untouched and moves explored fog with revealed fog',()=>{
+  const {source,target}=fixture();
+  target.maps['target-map']!.entities.far={id:'far',type:'area',role:'biome:forest',layerId:'l',origin:'generated',rev:1,rings:[[{x:500,y:500},{x:510,y:500},{x:510,y:510},{x:500,y:510}]]};
+  const seen=[[[{x:1,y:1},{x:3,y:1},{x:3,y:2}]]];
+  source.maps.root!.fog.revealed=structuredClone(seen);source.maps.root!.fog.explored=structuredClone(seen);
+  const result=transferMap(source,target,{mapId:'root',mode:'copy',placement:{parentMapId:'target-map',x:5,y:5,rotation:Math.PI/2,scale:2,underneath:'replace',seamMargin:0}});
+  expect(result.target.maps['target-map']!.entities.far).toMatchObject({origin:'generated',rev:1});
+  const fog=result.target.maps[result.mapId]!.fog;
+  expect(fog.revealed).not.toEqual(seen);expect(fog.explored).toEqual(fog.revealed);
+});

@@ -353,11 +353,9 @@ export function registerWorldIpc(getMainWindow: () => BrowserWindow | null): Wor
         throw new Error('Cannot import asset into a world that is not open');
       }
       const img = nativeImage.createFromPath(filePath);
+      if (img.isEmpty()) throw new Error('Cannot read this image. Choose a PNG, JPEG, WebP or BMP file.');
       const size = img.getSize();
-      return importImageAsset(resolvedWorld, filePath, {
-        width: size.width || 1000,
-        height: size.height || 1000,
-      });
+      return importImageAsset(resolvedWorld, filePath, { width: size.width, height: size.height });
     },
   );
 

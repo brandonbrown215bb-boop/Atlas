@@ -1,5 +1,6 @@
 import { expect, it } from 'vitest';
-import { signedArea, traceCellBoundaries } from './boundaries';
+import { traceCellBoundaries } from './boundaries';
+import { signedArea } from '../../geom/geography';
 
 it('traces a coast with a hole and an island without polygon unions', () => {
   const cells = Array.from({ length: 9 }, (_, i) => {

@@ -131,7 +131,14 @@ export class PackLibrary {
   packs: Pack[] = [];
   overrides: Record<string, AssetTagOverride> = {};
   private busy = false;
+  private queue: Promise<unknown> = Promise.resolve();
   constructor(private readonly userData: string) {}
+  // Read-modify-write jobs run one at a time, so two quick edits cannot overwrite each other.
+  private serial<T>(job: () => Promise<T>): Promise<T> {
+    const run = this.queue.then(job, job);
+    this.queue = run.catch(() => {});
+    return run;
+  }
   findAsset(id: string) {
     for (const pack of this.packs) {
       const asset = pack.assets.find(a => a.id === id);
@@ -230,25 +237,27 @@ export class PackLibrary {
   }
   async setAssetTags(id: string, input: AssetTagOverride): Promise<PackAsset> {
     if (this.busy) throw new Error('Wait for indexing to finish.');
-    const { pack } = this.findAsset(id);
-    const nextOverride: AssetTagOverride = {
-      ...(input.themes !== undefined ? { themes: normalizeTagList(input.themes) } : {}),
-      ...(input.biomes !== undefined ? { biomes: normalizeTagList(input.biomes) } : {}),
-      ...(input.purposes !== undefined ? { purposes: normalizeTagList(input.purposes) } : {}),
-    };
-    const nextOverrides = { ...this.overrides, [id]: { ...this.overrides[id], ...nextOverride } };
-    await this.saveOverrides(nextOverrides);
-    let updated!: PackAsset;
-    const nextPacks = this.packs.map(p => p.id !== pack.id ? p : {
-      ...p,
-      assets: p.assets.map(a => {
-        if (a.id !== id) return a;
-        updated = tagAsset(p.name, a, nextOverrides);
-        return updated;
-      }),
+    return this.serial(async () => {
+      const { pack } = this.findAsset(id);
+      const nextOverride: AssetTagOverride = {
+        ...(input.themes !== undefined ? { themes: normalizeTagList(input.themes) } : {}),
+        ...(input.biomes !== undefined ? { biomes: normalizeTagList(input.biomes) } : {}),
+        ...(input.purposes !== undefined ? { purposes: normalizeTagList(input.purposes) } : {}),
+      };
+      const nextOverrides = { ...this.overrides, [id]: { ...this.overrides[id], ...nextOverride } };
+      await this.saveOverrides(nextOverrides);
+      let updated!: PackAsset;
+      const nextPacks = this.packs.map(p => p.id !== pack.id ? p : {
+        ...p,
+        assets: p.assets.map(a => {
+          if (a.id !== id) return a;
+          updated = tagAsset(p.name, a, nextOverrides);
+          return updated;
+        }),
+      });
+      await this.save(nextPacks);
+      return updated;
     });
-    await this.save(nextPacks);
-    return updated;
   }
   async register(root: string, progress?: (p: PackProgress) => void, defaults?: { name: string; pxPerSquare: number }): Promise<Pack[]> {
     if (this.busy) throw new Error('An asset folder is already being indexed.');
@@ -257,15 +266,19 @@ export class PackLibrary {
       const old = this.packs.find(p => p.root.toLowerCase() === resolve(root).toLowerCase());
       const pack = await indexFolder(root, old, progress, { packName: defaults?.name, overrides: this.overrides });
       if (defaults) { pack.name = defaults.name; pack.pxPerSquare = old?.pxPerSquare ?? defaults.pxPerSquare; }
-      await this.save([...this.packs.filter(p => p.id !== pack.id), pack]);
-      return this.packs;
+      return await this.serial(async () => {
+        await this.save([...this.packs.filter(p => p.id !== pack.id), pack]);
+        return this.packs;
+      });
     } finally { this.busy = false; }
   }
   async setScale(id: string, pxPerSquare: number): Promise<Pack[]> {
     if (this.busy) throw new Error('Wait for indexing to finish.');
     if (!Number.isFinite(pxPerSquare) || pxPerSquare <= 0) throw new Error('Pixels per square must be positive.');
-    if (!this.packs.some(p => p.id === id)) throw new Error('Unknown asset pack.');
-    await this.save(this.packs.map(p => p.id === id ? { ...p, pxPerSquare } : p));
-    return this.packs;
+    return this.serial(async () => {
+      if (!this.packs.some(p => p.id === id)) throw new Error('Unknown asset pack.');
+      await this.save(this.packs.map(p => p.id === id ? { ...p, pxPerSquare } : p));
+      return this.packs;
+    });
   }
 }

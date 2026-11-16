@@ -1,6 +1,6 @@
 import { geographicEntities, isWorldSymbol } from '../geom/geography';
 import { z } from 'zod';
-import { boxesIntersect, getEntityBounds } from '../geom/hitTest';
+import { bboxFromPoints, boxesIntersect, getEntityBounds } from '../geom/hitTest';
 import { EntitySchema, type Climate, type Entity, type MapDoc, type MapKind, type Point, type Theme } from '../model/schema';
 
 export interface GeneratorInput<P> {
@@ -27,7 +27,6 @@ const generators = new Map<string, GeneratorDefinition>();
 export function registerGenerator<P>(definition: GeneratorDefinition<P>): void {
   generators.set(definition.type, definition);
 }
-export function listGenerators(): GeneratorDefinition[] { return [...generators.values()]; }
 export function getGenerator(type: string): GeneratorDefinition {
   const generator = generators.get(type);
   if (!generator) throw new Error(`Unknown generator: ${type}`);
@@ -36,8 +35,7 @@ export function getGenerator(type: string): GeneratorDefinition {
 
 export function regionConstraints(map: MapDoc, region: Point[][], excludeId: string): Entity[] {
   const points = region.flat();
-  const box = { minX: Math.min(...points.map(p => p.x)), minY: Math.min(...points.map(p => p.y)),
-    maxX: Math.max(...points.map(p => p.x)), maxY: Math.max(...points.map(p => p.y)) };
+  const box = bboxFromPoints(points) ?? { minX: 0, minY: 0, maxX: 0, maxY: 0 };
   return geographicEntities(map).filter(e => {
     const bounds = getEntityBounds(e);
     return e.usage!=='reference' && e.id !== excludeId && e.origin !== 'generated' && bounds && boxesIntersect(box, bounds);
@@ -122,7 +120,6 @@ export function runGenerator(map: MapDoc, options: {
       ? { ...entity, entityIds: entity.entityIds.map(eid => idMap.get(eid) ?? eid) }
       : entity;
     map.entities[id] = { ...remapped, id, genId: options.genId, groupId, rev: map.revision, layerId: layer.id };
-    if(entity.type==='path'&&entity.role==='river'){map.riverNodes??={};if(entity.startNodeId)map.riverNodes[entity.startNodeId]=entity.points[0]!;if(entity.endNodeId)map.riverNodes[entity.endNodeId]=entity.points[entity.points.length-1]!;}
     delete map.deleted[id]; ids.push(id);
   }
   map.generators[options.genId] = { type: options.type, seed: options.seed, params: options.params,
@@ -135,7 +132,8 @@ export function runGenerator(map: MapDoc, options: {
     const backgrounds = entities.filter(e => outputIds.has(e.id) && isBackground(e));
     const foregrounds = entities.filter(e => outputIds.has(e.id) && !isBackground(e));
     const kept = entities.filter(e => e.id !== region.id && !outputIds.has(e.id));
-    map.entities = Object.fromEntries([region, ...backgrounds, ...kept, ...foregrounds].map(e => [e.id, e]));
+    // A deleted boundary stays deleted; the saved rings are only used as the generation region.
+    map.entities = Object.fromEntries([...(source ? [region] : []), ...backgrounds, ...kept, ...foregrounds].map(e => [e.id, e]));
   }
   return ids;
 }

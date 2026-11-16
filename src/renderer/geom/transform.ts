@@ -1,6 +1,6 @@
 import type { Entity, Point } from '../model/schema';
 
-export function rotatePoint(pt: Point, pivot: Point, angleRad: number): Point {
+function rotatePoint(pt: Point, pivot: Point, angleRad: number): Point {
   const cos = Math.cos(angleRad);
   const sin = Math.sin(angleRad);
   const dx = pt.x - pivot.x;
@@ -11,7 +11,7 @@ export function rotatePoint(pt: Point, pivot: Point, angleRad: number): Point {
   };
 }
 
-export function scalePoint(
+function scalePoint(
   pt: Point,
   pivot: Point,
   sx: number,

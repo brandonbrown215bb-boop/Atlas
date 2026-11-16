@@ -147,6 +147,18 @@ describe('walkthrough regressions',()=>{
     const linked=Object.values(s.getState().world!.maps.map!.entities).filter(e=>e.type==='path'&&(e.startNodeId===branch.endNodeId||e.endNodeId===branch.endNodeId));
     expect(linked).toHaveLength(3);for(const e of linked)if(e.type==='path')expect(e.startNodeId===branch.endNodeId?e.points[0]:e.points[e.points.length-1]).toEqual({x:110,y:120});
   });
+  it('a new river snaps to a live junction but not to the end of a deleted river',()=>{
+    const s=fixture();const river={id:'old',type:'path',role:'river',layerId:'base',origin:'manual',rev:0,points:[{x:0,y:0},{x:50,y:0}],width:5,closed:false};
+    s.getState().execute('river.add',{mapId:'map',entity:river,snapDistance:5});
+    s.getState().execute('river.add',{mapId:'map',entity:{...river,id:'joined',points:[{x:52,y:0},{x:52,y:80}]},snapDistance:5});
+    const ends=()=>s.getState().world!.maps.map!.entities;
+    const old=ends().old!,joined=ends().joined!;if(old.type!=='path'||joined.type!=='path')throw new Error('rivers missing');
+    expect(joined.startNodeId).toBe(old.endNodeId);expect(joined.points[0]).toEqual({x:50,y:0});
+    s.getState().execute('entity.delete',{mapId:'map',entityId:'old'});s.getState().execute('entity.delete',{mapId:'map',entityId:'joined'});
+    s.getState().execute('river.add',{mapId:'map',entity:{...river,id:'fresh',points:[{x:52,y:0},{x:52,y:80}]},snapDistance:5});
+    const fresh=ends().fresh!;if(fresh.type!=='path')throw new Error('river missing');
+    expect(fresh.points[0]).toEqual({x:52,y:0});
+  });
   it('migrates ownership and keeps orphaned records without fabricating missing geometry',()=>{
     const map=structuredClone(fixture().getState().world!.maps.map!);map.formatVersion=1;map.generators.orphan={type:'world',seed:1,params:{},regionEntityId:'missing'};
     const upgraded=migrateMapData(map);expect(upgraded.generators.orphan).toBeDefined();expect(upgraded.entities.missing).toBeUndefined();expect(upgraded.groups?.orphan).toBeDefined();

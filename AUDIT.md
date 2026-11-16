@@ -20,6 +20,16 @@
 | 6. Small fixes | 14, 18, 21, 22, 23, 26, 27, 28 | Low risk, small diffs |
 | 7. Lean clean-up | 20, 29 | Less code to read and keep in sync |
 
+### Status (2026-11-16, branch `fix/audit-save-safety`)
+
+- **Fixed:** 1–15, 17–19, 21–29.
+- **Partly fixed:**
+  - **16:** The O(n²) wall-hatch scans and the stale overlays are fixed. Overlays and child previews are still rebuilt on every pan, but that cost now grows only in proportion to map size.
+  - **20:** Duplicate area, clipping, point-in-ring and distance helpers are merged, and unused exports are removed.
+- **River nodes (follow-up to 20):** `map.riverNodes` is no longer stored. `river.add` works out junctions from the rivers on the map, so a deleted or rerolled river leaves no junction to snap to. Old files that have the field still load; it is dropped on the next save.
+- **Not done:**
+  - `visual-review/` is still tracked in git; that waits for the owner's decision.
+
 ---
 
 ## Must fix

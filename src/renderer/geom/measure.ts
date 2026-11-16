@@ -1,9 +1,10 @@
 import type { MapDoc, Point } from '../model/schema';
+import { distanceToSegment, pointInRing } from './hitTest';
 
 export const METRES_PER_MILE = 1609.344;
 export const CLOCK_TIME = /^(?:[01]\d|2[0-3]):[0-5]\d$/;
 
-export const ROUTE_TIER_SPEED_FACTOR: Record<string, number> = {
+const ROUTE_TIER_SPEED_FACTOR: Record<string, number> = {
   highway: 1.5,
   road: 1.0,
   track: 0.75,
@@ -27,24 +28,6 @@ export interface RouteTerrainSample {
   };
 }
 
-function pointInRing(pt: Point, ring: readonly Point[]): boolean {
-  let inside = false;
-  for (let i = 0, j = ring.length - 1; i < ring.length; j = i++) {
-    const a = ring[i]!, b = ring[j]!;
-    if ((a.y > pt.y) !== (b.y > pt.y) && pt.x < ((b.x - a.x) * (pt.y - a.y)) / ((b.y - a.y) || 1e-9) + a.x) {
-      inside = !inside;
-    }
-  }
-  return inside;
-}
-
-function distToSegSq(p: Point, a: Point, b: Point): number {
-  const dx = b.x - a.x, dy = b.y - a.y;
-  const lenSq = dx * dx + dy * dy;
-  if (lenSq <= 1e-9) return (p.x - a.x) ** 2 + (p.y - a.y) ** 2;
-  const t = Math.max(0, Math.min(1, ((p.x - a.x) * dx + (p.y - a.y) * dy) / lenSq));
-  return (p.x - (a.x + t * dx)) ** 2 + (p.y - (a.y + t * dy)) ** 2;
-}
 
 /** Samples route terrain, path tiers, and terrain cells to derive speed factor and OSE getting-lost odds. */
 export function sampleRouteTerrain(
@@ -109,7 +92,7 @@ export function sampleRouteTerrain(
       const reach = Math.max(10, r.width * 1.2);
       const reachSq = reach * reach;
       for (let i = 1; i < r.points.length; i++) {
-        if (distToSegSq(pt, r.points[i - 1]!, r.points[i]!) <= reachSq) {
+        if (distanceToSegment(pt, r.points[i - 1]!, r.points[i]!) ** 2 <= reachSq) {
           const rf = ROUTE_TIER_SPEED_FACTOR[r.routeTier ?? 'road'] ?? 1.0;
           if (bestRoadFactor === null || rf > bestRoadFactor) bestRoadFactor = rf;
           break;

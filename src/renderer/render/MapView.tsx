@@ -436,6 +436,9 @@ export function MapView(props: MapViewProps) {
         lastZoomForRebuild === 0 ||
         Math.abs(cam.zoom - lastZoomForRebuild) / lastZoomForRebuild > 0.25;
 
+      // The hatch test scans every entity, so build it at most once per sync.
+      let hatchCache: ReturnType<typeof createWallHatchTest> | false | undefined;
+      const mapHatch = () => hatchCache ??= (['interior', 'site'].includes(m.kind) ? createWallHatchTest(Object.values(m.entities), m.generators) : false);
       // Sync layer containers in array order
       const desiredLayerIds = new Set(m.layers.map((l) => l.id));
       for (const [lid, container] of layerContainers) {
@@ -510,9 +513,7 @@ export function MapView(props: MapViewProps) {
           if (cached) {
             cached.container.destroy({ children: true });
           }
-          const wallHatch = ['interior', 'site'].includes(m.kind)
-            ? createWallHatchTest(Object.values(m.entities), m.generators)
-            : false;
+          const wallHatch = mapHatch();
           const display = buildEntityDisplay(entity, {
             selected: isSelected,
             zoom: cam.zoom,
@@ -545,17 +546,18 @@ export function MapView(props: MapViewProps) {
         displayOrder.set(entity.layerId, order);
       }
       // Restore model order and splice pooled path/clearing outlines & merged 3-pass solid walls cleanly.
-      const layerHatchTest = ['interior', 'site'].includes(m.kind)
-        ? createWallHatchTest(Object.values(m.entities), m.generators)
-        : false;
-      for (const [layerId, entries] of displayOrder) {
-        const layer = layerContainers.get(layerId)!;
+      const layerHatchTest = mapHatch();
+      // Clear overlays on every layer, including layers with nothing on screen now (or after a map switch).
+      for (const layer of layerContainers.values()) {
         for (const ch of [...layer.children]) {
           if (ch.label === '__pathOutlineOverlay' || ch.label === '__wallNetworkOverlay') {
             layer.removeChild(ch);
             ch.destroy();
           }
         }
+      }
+      for (const [layerId, entries] of displayOrder) {
+        const layer = layerContainers.get(layerId)!;
         const layerEnts = geoEntities.filter((e) => e.layerId === layerId);
         const outlineOverlay = buildPathOutlineOverlay(layerEnts, cam.zoom, m.kind);
         outlineOverlay.label = '__pathOutlineOverlay';
@@ -642,13 +644,13 @@ export function MapView(props: MapViewProps) {
 
           const childLayerGmMap = new Map(childMap.layers.map((l) => [l.id, l.gmOnly]));
           const childLayerVisMap = new Map(childMap.layers.map((l) => [l.id, l.visible]));
+          const childHatch = ['interior', 'site'].includes(childMap.kind)
+            ? createWallHatchTest(Object.values(childMap.entities), childMap.generators)
+            : false;
           for (const layer of childMap.layers) {
             if (!childLayerVisMap.get(layer.id)) continue;
             for (const ent of geographicEntities(childMap)) {
               if (ent.layerId !== layer.id) continue;
-              const childHatch = ['interior', 'site'].includes(childMap.kind)
-                ? createWallHatchTest(Object.values(childMap.entities), childMap.generators)
-                : false;
               const disp = buildEntityDisplay(ent, {
                 selected: false,
                 zoom: cam.zoom,

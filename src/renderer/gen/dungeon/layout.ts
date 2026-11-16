@@ -1,6 +1,6 @@
 import clipping from '../../geom/polygonClipping';
 import { z } from 'zod';
-import { distanceToSegment, pointInPolygon } from '../../geom/hitTest';
+import { bboxFromPoints, distanceToSegment, pointInPolygon } from '../../geom/hitTest';
 import { fromPolygons, toPolygons } from '../../geom/fog';
 import { simplifyRDP } from '../../geom/simplify';
 import type { Entity, Point } from '../../model/schema';
@@ -36,8 +36,8 @@ export function dungeonLayout(input: GeneratorInput<DungeonParams>): Entity[] {
   const { region, constraints, grid: g, params } = input;
   const random = mulberry32(input.seed);
   const points = region[0]!;
-  const x0 = Math.min(...points.map(p => p.x)), y0 = Math.min(...points.map(p => p.y));
-  const width = Math.max(...points.map(p => p.x))-x0, height = Math.max(...points.map(p => p.y))-y0;
+  const box = bboxFromPoints(points)!, x0 = box.minX, y0 = box.minY;
+  const width = box.maxX-x0, height = box.maxY-y0;
   if(params.mirror) {
     const center={x:x0+width/2,y:0};
     const reflect=(e:Entity):Entity=>({...e,...scaleEntityPatch(e,center,-1,1)});

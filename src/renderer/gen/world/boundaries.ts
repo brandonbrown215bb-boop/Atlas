@@ -1,12 +1,6 @@
 import type { Point } from '../../model/schema';
 import { pointInPolygon } from '../../geom/hitTest';
-
-export function signedArea(ring: Point[]): number {
-  return ring.reduce((sum, a, i) => {
-    const b = ring[(i + 1) % ring.length]!;
-    return sum + a.x * b.y - b.x * a.y;
-  }, 0) / 2;
-}
+import { signedArea } from '../../geom/geography';
 
 /** Taubin (zero-shrinkage) + Chaikin corner-cutting on closed polygon rings to round Voronoi cell sawtooths. */
 export function smoothPolygons(polygons: Point[][][], passes = 1): Point[][][] {

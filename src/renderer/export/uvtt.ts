@@ -1,19 +1,13 @@
 import { resolveWallChannels, type Entity, type MapDoc, type Point } from '../model/schema';
 import { ExportRectSchema, imageSize } from './imageSize';
 import type { Rect } from '../geom/fog';
+import { wallSegmentOutsideDoors } from '../geom/visibility';
+import { clipSegmentToRect } from '../geom/clipInherit';
 
-/** Liang-Barsky segment clipping, including lines crossing the rectangle with both ends outside. */
+/** Rectangle clipping that also drops pieces that only touch the edge. */
 export function clipSegment(a: Point,b: Point,r: Rect): [Point,Point] | null {
-  const dx=b.x-a.x,dy=b.y-a.y;
-  let lo=0,hi=1;
-  for(const [p,q] of [[-dx,a.x-r.x],[dx,r.x+r.w-a.x],[-dy,a.y-r.y],[dy,r.y+r.h-a.y]]) {
-    if(p===0) { if(q!<0) return null; continue; }
-    const t=q!/p!;
-    if(p!<0) lo=Math.max(lo,t); else hi=Math.min(hi,t);
-    if(lo>hi) return null;
-  }
-  if(hi-lo<1e-10) return null;
-  return [{x:a.x+lo*dx,y:a.y+lo*dy},{x:a.x+hi*dx,y:a.y+hi*dy}];
+  const clipped=clipSegmentToRect(a,b,r);
+  return clipped && Math.hypot(clipped[1].x-clipped[0].x,clipped[1].y-clipped[0].y)>=1e-10*Math.hypot(b.x-a.x,b.y-a.y) ? clipped : null;
 }
 
 /** All positions are in grid squares. References: Arkenforge UVTT docs and FVTT-DD-Import/ddimport.js. */
@@ -32,20 +26,8 @@ export function exportUvtt(map: MapDoc, image: string, pixelsPerSquare=200, sele
     if(!channels.blocksSight && !channels.blocksLight) continue;
     const target = channels.wallKind === 'terrain' ? objects_line_of_sight : line_of_sight;
     for(let i=1;i<wall.points.length;i++) {
-      const a=wall.points[i-1]!,b=wall.points[i]!,dx=b.x-a.x,dy=b.y-a.y,l2=dx*dx+dy*dy;
-      if(!l2) continue;
-      let pieces: Array<[number,number]>=[[0,1]];
-      for(const door of doors) {
-        const cross=(p:Point)=>Math.abs((p.x-a.x)*dy-(p.y-a.y)*dx)/Math.sqrt(l2);
-        if(cross(door.a)>0.001 || cross(door.b)>0.001) continue;
-        const t=(p:Point)=>((p.x-a.x)*dx+(p.y-a.y)*dy)/l2;
-        const start=Math.max(0,Math.min(t(door.a),t(door.b))),end=Math.min(1,Math.max(t(door.a),t(door.b)));
-        if(start>=end) continue;
-        pieces=pieces.flatMap(([lo,hi])=>end<=lo || start>=hi?[[lo,hi] as [number,number]]:
-          [...(start>lo?[[lo,start] as [number,number]]:[]),...(end<hi?[[end,hi] as [number,number]]:[])]);
-      }
-      for(const [lo,hi] of pieces) {
-        const clipped=clipSegment({x:a.x+lo*dx,y:a.y+lo*dy},{x:a.x+hi*dx,y:a.y+hi*dy},rect);
+      for(const piece of wallSegmentOutsideDoors(wall.points[i-1]!,wall.points[i]!,doors)) {
+        const clipped=clipSegment(piece.a,piece.b,rect);
         if(clipped) target.push(clipped.map(unit));
       }
     }

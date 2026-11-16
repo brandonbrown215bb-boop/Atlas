@@ -9,7 +9,7 @@ import {
   type WallEntity,
 } from '../model/schema';
 
-export function hashString(s: string): number {
+function hashString(s: string): number {
   let h = 2166136261;
   for (let i = 0; i < s.length; i++) {
     h ^= s.charCodeAt(i);

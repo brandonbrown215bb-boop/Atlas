@@ -1,10 +1,10 @@
 import type { Entity, Point } from '../model/schema';
 import { simplifyRDP } from '../geom/simplify';
 import { pointInPolygon } from '../geom/hitTest';
+import { signedArea } from '../geom/geography';
 export interface TraceOptions { width:number; height:number; pixels:Uint8ClampedArray; sensitivity:number; waterColor?:number[]; mask?:Uint8Array }
 export interface TraceResult { width:number; height:number; mask:Uint8Array; land:Point[][][]; lakes:Point[][][]; rivers:Array<{points:Point[];width:number}>; waterFraction:number; warnings?:string[] }
 
-function signedArea(r:Point[]){return r.reduce((s,p,i)=>{const q=r[(i+1)%r.length]!;return s+p.x*q.y-q.x*p.y;},0)/2;}
 /** Trace binary pixel boundaries without allocating a polygon for every pixel. */
 export function maskPolygons(mask:Uint8Array,w:number,h:number):Point[][][] {
   const stride=w+1,edges=new Map<number,number[]>();

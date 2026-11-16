@@ -10,6 +10,18 @@ const base={origin:'manual' as const,rev:0,layerId:'l'};
 const district=(id:string,x:number,w:number):Entity=>({...base,id,type:'area',role:'district',rings:[rectRing({x,y:0,w,h:240})]});
 const source=()=>({seed:9,params:CityParamsSchema.parse({}),region:[rectRing({x:0,y:0,w:320,h:240})],grid:10,theme:{},constraints:[] as Entity[]});
 
+it('rerolling after the footprint was deleted does not bring the footprint back',()=>{
+  const store=createWorldStore(),s=()=>store.getState();
+  const map=MapDocSchema.parse({id:'m',name:'City',kind:'settlement',bounds:{x:0,y:0,w:320,h:240},grid:{size:10,visible:false},
+    layers:[{id:'l',name:'Base',visible:true,locked:false,gmOnly:false}],entities:{left:district('left',0,320)},generators:{},revision:0,deleted:{},fog:{enabled:false,revealed:[]}});
+  s().loadWorld({id:'w',name:'World',formatVersion:1,maps:[{id:'m',name:'City',kind:'settlement'}],themes:{}},{m:map});
+  s().execute('generator.run',{mapId:'m',type:'city',genId:'left',seed:9,regionEntityId:'left',layerId:'l'});
+  s().execute('entity.delete',{mapId:'m',entityId:'left'});
+  s().execute('generator.reroll',{mapId:'m',genId:'left',seed:10});
+  expect(s().world!.maps.m!.entities.left).toBeUndefined();
+  expect(Object.values(s().world!.maps.m!.entities).some(e=>e.genId==='left')).toBe(true);
+});
+
 it('generates deterministic rectangular street-facing buildings and reachable blocks',()=>{
   const input=source(), result=generateCity(input);
   expect(result).toEqual(generateCity(input));

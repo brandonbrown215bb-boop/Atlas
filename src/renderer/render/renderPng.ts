@@ -94,6 +94,12 @@ export async function renderMapToPngBase64(
       ? createWallHatchTest(Object.values(options.map.entities), options.map.generators)
       : false;
     const renderList = (view === 'player' ? playerRenderList(options.map, options.labels) : geographicEntities(options.map)) as Entity[];
+    const itemsByLayer = new Map<string, Entity[]>();
+    for (const r of renderList) {
+      if (view === 'player' && r.gmOnly) continue;
+      const list = itemsByLayer.get(r.layerId);
+      if (list) list.push(r); else itemsByLayer.set(r.layerId, [r]);
+    }
     const outlineDone = new Set<string>();
     const wallDone = new Set<string>();
 
@@ -102,7 +108,7 @@ export async function renderMapToPngBase64(
       if (entity.type === 'path' && entity.routeTier === 'sewer' && !showUndercity) continue;
       const lc = layerMap.get(entity.layerId);
       if (!lc) continue;
-      const layerItems = renderList.filter((r) => r.layerId === entity.layerId && !(view === 'player' && r.gmOnly));
+      const layerItems = itemsByLayer.get(entity.layerId) ?? [];
       const needsOutlineHere =
         !outlineDone.has(entity.layerId) &&
         ((entity.type === 'path' && entity.role !== 'cityWall') ||

@@ -43,8 +43,8 @@ export function transformChildren(maps:Record<string,MapDoc>,parentId:string,t:N
     }
     for(const r of Object.values(child.generators))if(r.boundary)r.boundary=r.boundary.map(ring=>ring.map(local));
     for(const g of Object.values(child.groups??{}))if(g.boundary)g.boundary=g.boundary.map(ring=>ring.map(local));
-    for(const [id,p]of Object.entries(child.riverNodes??{}))child.riverNodes![id]=local(p);
     child.fog.revealed=child.fog.revealed.map(p=>p.map(r=>r.map(local)));
+    if(child.fog.explored)child.fog.explored=child.fog.explored.map(p=>p.map(r=>r.map(local)));
     for(const model of Object.values(child.terrain??{})){model.cells=model.cells.map(c=>({...c,...local(c)}));const a=local(model.bounds);model.bounds={...a,w:model.bounds.w*scale,h:model.bounds.h*scale};}
     transformChildren(maps,child.id,{...t,point:local});
   }

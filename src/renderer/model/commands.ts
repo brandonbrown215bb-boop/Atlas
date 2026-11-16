@@ -15,6 +15,7 @@ import { validateWorld, WorldDocumentSchema } from './transfer';
 import { mergeFogPolygons, paintFog, rectRing } from '../geom/fog';
 import { castLosPolygons } from '../geom/visibility';
 import { z } from 'zod';
+import { isDraft, original } from 'immer';
 import { clipAndInheritEntities } from '../geom/clipInherit';
 import { getPlaceBounds } from '../geom/places';
 import { getChildRectInParent, listKeptEditedEntities } from '../geom/pullFromParent';
@@ -56,7 +57,7 @@ export interface CommandDef<TInput = unknown, TResult = unknown> {
 
 const registry = new Map<string, CommandDef<any, any>>();
 
-export function registerCommand<TInput, TResult>(
+function registerCommand<TInput, TResult>(
   def: CommandDef<TInput, TResult>,
 ): CommandDef<TInput, TResult> {
   registry.set(def.name, def);
@@ -99,6 +100,15 @@ function getMapOrThrow(draft: WorldDocument, mapId: string): MapDoc {
   }
   return map;
 }
+
+function assertEditableLayer(map: MapDoc, layerId: string): void {
+  const layer = map.layers.find((l) => l.id === layerId);
+  if (!layer) throw new Error(`Layer not found: ${layerId}`);
+  if (layer.locked) throw new Error(`Unlock the layer "${layer.name}" first.`);
+}
+
+// Fields that move or reshape an entity; notes, names and door state stay editable on locked layers.
+const GEOMETRY_FIELDS = ['x', 'y', 'w', 'h', 'rotation', 'rings', 'points', 'a', 'b', 'closed'];
 
 registerCommand({
   name: 'generator.run',
@@ -376,6 +386,7 @@ registerCommand({
     if (map.entities[input.entity.id]) {
       throw new Error(`Entity already exists: ${input.entity.id}`);
     }
+    assertEditableLayer(map, input.entity.layerId);
     map.revision += 1;
     const entity: Entity = {
       ...input.entity,
@@ -403,13 +414,18 @@ registerCommand({
     if (!existing) {
       throw new Error(`Entity not found: ${input.entityId}`);
     }
+    if (typeof input.patch.layerId === 'string' && input.patch.layerId !== existing.layerId) {
+      assertEditableLayer(map, existing.layerId);
+      assertEditableLayer(map, input.patch.layerId);
+    }
+    if (GEOMETRY_FIELDS.some((key) => key in input.patch)) assertEditableLayer(map, existing.layerId);
     map.revision += 1;
     const candidate = {
       ...existing,
       ...input.patch,
       id: existing.id,
       type: existing.type,
-      origin: existing.origin === 'manual' ? 'manual' : 'manual',
+      origin: 'manual', // any edit makes generated/inherited content manual
       rev: map.revision,
     };
     const validated = EntitySchema.parse(candidate);
@@ -428,9 +444,8 @@ registerCommand({
       }
     }
     if(validated.type==='path'&&validated.role==='river'){
-      map.riverNodes??={};
+      // Rivers sharing a junction id keep their shared end together.
       for(const [nodeId,p] of [[validated.startNodeId,validated.points[0]!],[validated.endNodeId,validated.points[validated.points.length-1]!]] as const)if(nodeId){
-        map.riverNodes[nodeId]={...p};
         for(const other of Object.values(map.entities))if(other.type==='path'&&other.role==='river'&&other.id!==validated.id){
           if(other.startNodeId===nodeId){other.points[0]={...p};other.origin='manual';other.rev=map.revision;}
           if(other.endNodeId===nodeId){other.points[other.points.length-1]={...p};other.origin='manual';other.rev=map.revision;}
@@ -452,9 +467,11 @@ registerCommand({
   input: EntityDeleteInputSchema,
   run(draft, input) {
     const map = getMapOrThrow(draft, input.mapId);
-    if (!map.entities[input.entityId]) {
+    const existing = map.entities[input.entityId];
+    if (!existing) {
       throw new Error(`Entity not found: ${input.entityId}`);
     }
+    assertEditableLayer(map, existing.layerId);
     map.revision += 1;
     delete map.entities[input.entityId];
     map.deleted[input.entityId] = map.revision;
@@ -482,13 +499,20 @@ registerCommand({
   run(draft, input) {
     const map = getMapOrThrow(draft, input.mapId);
     const createdIds: string[] = [];
+    for (const id of input.entityIds) {
+      const existing = map.entities[id];
+      if (existing) assertEditableLayer(map, existing.layerId);
+    }
     map.revision += 1;
       const idMap=new Map(input.entityIds.map(id=>[id,crypto.randomUUID()]));
       const groupMap=new Map<string,string>(),nodeMap=new Map<string,string>();
-      for(const e of Object.values(map.entities))if(input.entityIds.includes(e.id)&&e.groupId&&Object.values(map.entities).filter(p=>p.groupId===e.groupId).every(p=>input.entityIds.includes(p.id))){
+      // A group is copied as a group only when every member is selected.
+      const selected=new Set(input.entityIds),groupSize=new Map<string,number>(),selectedInGroup=new Map<string,number>();
+      for(const e of Object.values(map.entities))if(e.groupId){groupSize.set(e.groupId,(groupSize.get(e.groupId)??0)+1);if(selected.has(e.id))selectedInGroup.set(e.groupId,(selectedInGroup.get(e.groupId)??0)+1);}
+      for(const e of Object.values(map.entities))if(selected.has(e.id)&&e.groupId&&selectedInGroup.get(e.groupId)===groupSize.get(e.groupId)){
         if(!groupMap.has(e.groupId)){const id=crypto.randomUUID();groupMap.set(e.groupId,id);map.groups??={};const g=map.groups[e.groupId];map.groups[id]={name:`${g?.name??'Group'} copy`,boundary:g?.boundary?.map(r=>r.map(p=>({x:p.x+input.dx,y:p.y+input.dy})))};}
       }
-      const cloneNode=(id:string|undefined,p:Point)=>{if(!id)return undefined;if(!nodeMap.has(id))nodeMap.set(id,crypto.randomUUID());map.riverNodes??={};const key=nodeMap.get(id)!;map.riverNodes[key]={x:p.x+input.dx,y:p.y+input.dy};return key;};
+      const cloneNode=(id:string|undefined)=>{if(!id)return undefined;if(!nodeMap.has(id))nodeMap.set(id,crypto.randomUUID());return nodeMap.get(id)!;};
     for (const sourceId of input.entityIds) {
       const existing = map.entities[sourceId];
       if (!existing) {
@@ -506,7 +530,7 @@ registerCommand({
         inheritedFrom: undefined,
         rev: map.revision,
       });
-        if(clone.type==='path'&&existing.type==='path'){clone.startNodeId=cloneNode(existing.startNodeId,existing.points[0]!);clone.endNodeId=cloneNode(existing.endNodeId,existing.points[existing.points.length-1]!);}
+        if(clone.type==='path'&&existing.type==='path'){clone.startNodeId=cloneNode(existing.startNodeId);clone.endNodeId=cloneNode(existing.endNodeId);}
         if(clone.type==='place')clone.entityIds=clone.entityIds.map(id=>idMap.get(id)??id);
       map.entities[newId] = clone;
       createdIds.push(newId);
@@ -1001,7 +1025,6 @@ function buildChildMapDoc(
     entities,
     groups: { inherited: { name: 'Inherited geography', boundary: [rectRing({x:0,y:0,w:rect.w,h:rect.h})] } },
     terrain: inheritTerrain(parentMap,rect),
-    riverNodes: Object.fromEntries(inherited.flatMap(e=>e.type==='path'&&e.role==='river'?[[e.startNodeId,e.points[0]],[e.endNodeId,e.points[e.points.length-1]]].filter(([id])=>!!id):[])),
     outsideLandIsWater: parentMap.outsideLandIsWater ?? ['world','region'].includes(parentMap.kind),
     generators: {},
     revision: 1,
@@ -1213,7 +1236,6 @@ registerCommand({
 
     childMap.groups??={};childMap.groups.inherited??={name:'Inherited geography',boundary:[rectRing(childMap.bounds)]};
     childMap.terrain=inheritTerrain(parentMap,rect);
-    childMap.riverNodes=Object.fromEntries(Object.values(childMap.entities).flatMap(e=>e.type==='path'&&e.role==='river'?[[e.startNodeId,e.points[0]],[e.endNodeId,e.points[e.points.length-1]]].filter(([id])=>!!id):[]));
 
     return {
       mapId: childMap.id,
@@ -1267,7 +1289,7 @@ registerCommand({
   input:z.object({before:WorldDocumentSchema,after:WorldDocumentSchema}),
   run(draft,input) {
     // Saved snapshots are schema-parsed; normalize the live document's field order too.
-    if(JSON.stringify(WorldDocumentSchema.parse(draft))!==JSON.stringify(input.before)) throw new Error('World changed during transfer. The target copy is safe; reopen it or retry from the current source.');
+    if(JSON.stringify(WorldDocumentSchema.parse(isDraft(draft)?original(draft):draft))!==JSON.stringify(input.before)) throw new Error('World changed during transfer. The target copy is safe; reopen it or retry from the current source.');
     const next=validateWorld(input.after);
     if(next.meta.id!==draft.meta.id) throw new Error('Transfer cannot replace the open world identity');
     // Assign per map so undo/redo marks each touched map file as unsaved.
@@ -1309,7 +1331,8 @@ registerCommand({
   run(draft,input) {
     const map=getMapOrThrow(draft,input.mapId), members=Object.values(map.entities).filter(e=>e.groupId===input.groupId);
     if(members.some(e=>map.layers.find(l=>l.id===e.layerId)?.locked))throw new Error('Unlock all group layers before transforming this result.');
-    if(members.some(e=>!input.changes.some(c=>c.entityId===e.id)))throw new Error('Select the complete group before transforming it.');
+    const changed=new Set(input.changes.map(c=>c.entityId));
+    if(members.some(e=>!changed.has(e.id)))throw new Error('Select the complete group before transforming it.');
     const oldBoundary=map.groups?.[input.groupId]?.boundary?.map(r=>r.map(p=>({...p})));
       const reference=members.find(e=>e.type==='area'&&e.rings[0]!.length>=3);
       const changedReference=reference&&input.changes.find(c=>c.entityId===reference.id);
@@ -1326,7 +1349,6 @@ registerCommand({
     if(transform){
       for(const [id,record]of Object.entries(map.generators))if(record.groupId===input.groupId){const model=map.terrain?.[id];if(model){model.cells=model.cells.map(c=>({...c,...transform.point(c)}));model.bounds={...map.bounds};}}
       transformChildren(draft.maps,map.id,transform,child=>child.parent?.footprintEntityId?members.some(e=>e.id===child.parent!.footprintEntityId):!!oldBoundary&&pointInPolygon({x:child.parent!.x+child.bounds.w/2,y:child.parent!.y+child.bounds.h/2},oldBoundary));
-      for(const e of Object.values(map.entities))if(e.type==='path'){map.riverNodes??={};if(e.startNodeId)map.riverNodes[e.startNodeId]=e.points[0]!;if(e.endNodeId)map.riverNodes[e.endNodeId]=e.points[e.points.length-1]!;}
     }
     return {groupId:input.groupId};
   },
@@ -1347,7 +1369,8 @@ registerCommand({
     const brush=clipping.intersection(toPolygons(stroke),toPolygons(geo.land));
     if(!brush.length)return;
     map.revision++;
-    for(const e of Object.values(map.entities))if(e.type==='area'&&e.role.startsWith('biome:')&&(!input.erase||e.origin==='manual')){
+    const locked=new Set(map.layers.filter(l=>l.locked).map(l=>l.id));
+    for(const e of Object.values(map.entities))if(e.type==='area'&&e.role.startsWith('biome:')&&!locked.has(e.layerId)&&(!input.erase||e.origin==='manual')){
       const pieces=fromPolygons(clipping.difference(toPolygons([e.rings]),brush));
       if(!pieces.length){delete map.entities[e.id];map.deleted[e.id]=map.revision;}else{e.rings=pieces[0]!;e.rev=map.revision;for(const rings of pieces.slice(1)){const id=crypto.randomUUID();map.entities[id]={...e,id,rings};}}
     }
@@ -1515,7 +1538,7 @@ registerCommand({
 registerCommand({
   name:'map.applyTrace',description:'Accept reviewed backdrop geography. Trace pixels are converted to world coordinates before this command.',
   input:z.object({mapId:z.string(),sourceImageId:z.string(),layerId:z.string(),entities:z.array(EntitySchema),sourceRevision:z.number().optional()}),
-  run(draft,input){const map=getMapOrThrow(draft,input.mapId);if(input.sourceRevision!==undefined&&map.revision!==input.sourceRevision)throw new Error('The map changed. Review the trace again.');if(map.entities[input.sourceImageId]?.type!=='image')throw new Error('Backdrop is missing.');if(!map.layers.some(l=>l.id===input.layerId))throw new Error('Choose an existing layer for the trace.');map.revision++;const groupId=crypto.randomUUID();map.groups??={};map.groups[groupId]={name:'Traced geography'};for(const e of input.entities){if(map.entities[e.id])throw new Error('Trace entity id already exists.');map.entities[e.id]={...e,groupId,layerId:input.layerId,origin:'manual',rev:map.revision};}map.outsideLandIsWater=true;map.riverNodes??={};for(const e of input.entities)if(e.type==='path'){if(e.startNodeId)map.riverNodes[e.startNodeId]=e.points[0]!;if(e.endNodeId)map.riverNodes[e.endNodeId]=e.points[e.points.length-1]!;}return {groupId};},
+  run(draft,input){const map=getMapOrThrow(draft,input.mapId);if(input.sourceRevision!==undefined&&map.revision!==input.sourceRevision)throw new Error('The map changed. Review the trace again.');if(map.entities[input.sourceImageId]?.type!=='image')throw new Error('Backdrop is missing.');if(!map.layers.some(l=>l.id===input.layerId))throw new Error('Choose an existing layer for the trace.');map.revision++;const groupId=crypto.randomUUID();map.groups??={};map.groups[groupId]={name:'Traced geography'};for(const e of input.entities){if(map.entities[e.id])throw new Error('Trace entity id already exists.');map.entities[e.id]={...e,groupId,layerId:input.layerId,origin:'manual',rev:map.revision};}map.outsideLandIsWater=true;return {groupId};},
 });
 registerCommand({
   name:'map.repair',description:'Apply reviewed, non-destructive repairs: recover explicit world extent and generator boundaries; preserve all geometry.',
@@ -1530,13 +1553,20 @@ registerCommand({
   name:'world.applyGenerated',description:'Apply a worker generation result only if the source world is unchanged. One undo step.',
   input:z.object({source:WorldDocumentSchema,after:WorldDocumentSchema}),
   run(draft,input){
-    const current=WorldDocumentSchema.parse(draft);
+    // Parse the plain base state, not the Immer proxy, which is far slower to walk.
+    const base=(isDraft(draft)?original(draft):draft) as WorldDocument,current=WorldDocumentSchema.parse(base);
     if(JSON.stringify(current)!==JSON.stringify(input.source))throw new Error('The world changed while generating. Generate again to use the latest edits.');
     const after=validateWorld(input.after);
     if(JSON.stringify(current.meta)!==JSON.stringify(after.meta))draft.meta=after.meta;
     // Keep untouched maps alive, including their expensive resolved-geography caches.
     for(const id of Object.keys(draft.maps))if(!after.maps[id])delete draft.maps[id];
-    for(const [id,map]of Object.entries(after.maps))if(JSON.stringify(current.maps[id])!==JSON.stringify(map))draft.maps[id]=map;
+    for(const [id,map]of Object.entries(after.maps)){
+      if(JSON.stringify(current.maps[id])===JSON.stringify(map))continue;
+      // Reuse unchanged entity objects so undo history shares them instead of keeping copies.
+      const was=current.maps[id]?.entities??{},old=base.maps[id]?.entities??{};
+      map.entities=Object.fromEntries(Object.entries(map.entities).map(([eid,e])=>[eid,old[eid]&&JSON.stringify(was[eid])===JSON.stringify(e)?old[eid]!:e]));
+      draft.maps[id]=map;
+    }
   },
 });
 
@@ -1546,7 +1576,10 @@ registerCommand({
   run(draft,input){
     const map=getMapOrThrow(draft,input.mapId);if(input.entity.role!=='river')throw new Error('Choose the river role.');
     if(map.entities[input.entity.id])throw new Error('River already exists.');
-    map.revision++;map.riverNodes??={};
+    map.revision++;
+    // Junctions are derived from the rivers on the map now, so deleted rivers leave none behind.
+    const junctions=new Map<string,Point>();
+    for(const r of Object.values(map.entities))if(r.type==='path'&&r.role==='river'){if(r.startNodeId)junctions.set(r.startNodeId,r.points[0]!);if(r.endNodeId)junctions.set(r.endNodeId,r.points[r.points.length-1]!);}
     const attach=(p:{x:number;y:number})=>{
       let best:{river:Extract<Entity,{type:'path'}>;index:number;point:{x:number;y:number};distance:number}|undefined;
       for(const river of Object.values(map.entities))if(river.type==='path'&&river.role==='river')for(let i=0;i<river.points.length-1;i++){
@@ -1556,15 +1589,15 @@ registerCommand({
         if(distance<input.snapDistance&&(!best||distance<best.distance))best={river,index:i,point,distance};
       }
       if(best){const r=best.river,q=best.point;
-        if(Math.hypot(q.x-r.points[0]!.x,q.y-r.points[0]!.y)<1e-7){r.startNodeId??=crypto.randomUUID();map.riverNodes![r.startNodeId]={...r.points[0]!};return{id:r.startNodeId,point:r.points[0]!};}
-        if(Math.hypot(q.x-r.points[r.points.length-1]!.x,q.y-r.points[r.points.length-1]!.y)<1e-7){r.endNodeId??=crypto.randomUUID();map.riverNodes![r.endNodeId]={...r.points[r.points.length-1]!};return{id:r.endNodeId,point:r.points[r.points.length-1]!};}
+        if(Math.hypot(q.x-r.points[0]!.x,q.y-r.points[0]!.y)<1e-7){r.startNodeId??=crypto.randomUUID();junctions.set(r.startNodeId,r.points[0]!);return{id:r.startNodeId,point:r.points[0]!};}
+        if(Math.hypot(q.x-r.points[r.points.length-1]!.x,q.y-r.points[r.points.length-1]!.y)<1e-7){r.endNodeId??=crypto.randomUUID();junctions.set(r.endNodeId,r.points[r.points.length-1]!);return{id:r.endNodeId,point:r.points[r.points.length-1]!};}
         const nodeId=crypto.randomUUID(),id=crypto.randomUUID(),oldEnd=r.endNodeId;
         const left=[...r.points.slice(0,best.index+1),q],right=[q,...r.points.slice(best.index+1)];
         map.entities[id]={...r,id,points:right,startNodeId:nodeId,endNodeId:oldEnd,origin:'manual',rev:map.revision};
-        r.points=left;r.endNodeId=nodeId;r.origin='manual';r.rev=map.revision;map.riverNodes![nodeId]={...q};return{id:nodeId,point:q};
+        r.points=left;r.endNodeId=nodeId;r.origin='manual';r.rev=map.revision;junctions.set(nodeId,q);return{id:nodeId,point:q};
       }
-      const existing=Object.entries(map.riverNodes!).find(([,q])=>Math.hypot(q.x-p.x,q.y-p.y)<input.snapDistance);
-      const id=existing?.[0]??crypto.randomUUID(),point=existing?.[1]??p;map.riverNodes![id]={...point};return{id,point};
+      const existing=[...junctions].find(([,q])=>Math.hypot(q.x-p.x,q.y-p.y)<input.snapDistance);
+      const id=existing?.[0]??crypto.randomUUID(),point={...(existing?.[1]??p)};junctions.set(id,point);return{id,point};
     };
     const a=attach(input.entity.points[0]!),b=attach(input.entity.points[input.entity.points.length-1]!);
     const points=[...input.entity.points];points[0]={...a.point};points[points.length-1]={...b.point};

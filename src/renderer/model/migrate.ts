@@ -1,6 +1,6 @@
 import { MapDocSchema, WorldMetaSchema, type MapDoc, type WorldMeta } from './schema';
 
-export const CURRENT_FORMAT_VERSION = 2;
+const CURRENT_FORMAT_VERSION = 2;
 
 /** Older layer deletion left its contents pointing at a nonexistent layer. Recover them intact. */
 export function restoreMissingLayers(map: MapDoc): void {
@@ -12,13 +12,13 @@ export function restoreMissingLayers(map: MapDoc): void {
   }
 }
 
-export type MigrationStep = (data: Record<string, unknown>) => Record<string, unknown>;
+type MigrationStep = (data: Record<string, unknown>) => Record<string, unknown>;
 
 /**
  * Ordered upgrade functions keyed by source `formatVersion` (e.g. 1 -> 2).
  */
-export const WORLD_MIGRATIONS: Record<number, MigrationStep> = { 1: data => ({...data}) };
-export const MAP_MIGRATIONS: Record<number, MigrationStep> = { 1: data => {
+const WORLD_MIGRATIONS: Record<number, MigrationStep> = { 1: data => ({...data}) };
+const MAP_MIGRATIONS: Record<number, MigrationStep> = { 1: data => {
   const map = structuredClone(data) as unknown as MapDoc;
   map.groups ??= {};
   for(const [id,r] of Object.entries(map.generators ?? {})) {

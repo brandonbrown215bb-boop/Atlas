@@ -327,7 +327,6 @@ export const MapDocSchema = z.object({
   entities: z.record(z.string(), EntitySchema),
   generators: z.record(z.string(), GeneratorRecordSchema),
   groups: z.record(z.string(), z.object({ name: z.string(), genId: z.string().optional(), boundary: z.array(z.array(PointSchema)).optional() })).optional(),
-  riverNodes: z.record(z.string(), PointSchema).optional(),
   outsideLandIsWater: z.boolean().optional(),
   riverWidthMode: z.enum(['cartographic', 'physical']).optional(),
   level: z.number().int().optional(),
@@ -411,7 +410,7 @@ export const WorldMetaSchema = z.object({
 });
 export type WorldMeta = z.infer<typeof WorldMetaSchema>;
 
-export const AssetIndexEntrySchema = z.object({
+const AssetIndexEntrySchema = z.object({
   originalName: z.string(),
   packName: z.string(),
   pxPerSquare: z.number().positive(),

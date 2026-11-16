@@ -50,10 +50,23 @@ function isAuthorized(req: IncomingMessage, expectedToken: string): boolean {
   return timingSafeEqual(a, b);
 }
 
+const MAX_BODY_BYTES = 64 * 1024 * 1024;
+
+class BodyTooLargeError extends Error {}
+
 function readJsonBody(req: IncomingMessage): Promise<unknown> {
   return new Promise((resolve, reject) => {
     const chunks: Buffer[] = [];
-    req.on('data', (chunk: Buffer) => chunks.push(chunk));
+    let size = 0;
+    req.on('data', (chunk: Buffer) => {
+      size += chunk.length;
+      if (size > MAX_BODY_BYTES) {
+        reject(new BodyTooLargeError('Request body is larger than 64 MB'));
+        req.destroy();
+        return;
+      }
+      chunks.push(chunk);
+    });
     req.on('end', () => {
       const raw = Buffer.concat(chunks).toString('utf-8');
       if (!raw) {
@@ -71,6 +84,8 @@ function readJsonBody(req: IncomingMessage): Promise<unknown> {
 }
 
 const DEFAULT_AGENT_PORT = 47474;
+// Whole-world copies, exports and generation can take far longer than an edit.
+const SLOW_METHODS = new Set(['world_sync_map', 'world_copy_map', 'world_fork', 'export_uvtt', 'export_player_image', 'render_png', 'trace_backdrop', 'command_run']);
 
 function parsePreferredPort(): number {
   const raw = process.env.ATLAS_AGENT_PORT;
@@ -142,12 +157,13 @@ export async function startAgentServer(
       return Promise.reject(new Error('Main window is not available'));
     }
     const reqId = randomBytes(12).toString('hex');
+    const timeoutMs = SLOW_METHODS.has(method) ? 120_000 : 15_000;
     return new Promise((resolve, reject) => {
       const timer = setTimeout(() => {
         if (pendingCalls.delete(reqId)) {
-          reject(new Error(`Agent call timed out: ${method}`));
+          reject(new Error(`Agent call timed out after ${timeoutMs / 1000} s: ${method}. The app may still finish it; check world_status before retrying.`));
         }
-      }, 15_000);
+      }, timeoutMs);
 
       pendingCalls.set(reqId, {
         resolve: (val) => {
@@ -482,7 +498,7 @@ export async function startAgentServer(
         await transport.handleRequest(req, res, body);
       } catch (err) {
         if (!res.headersSent) {
-          res.writeHead(500, { 'Content-Type': 'application/json' });
+          res.writeHead(err instanceof BodyTooLargeError ? 413 : 500, { 'Content-Type': 'application/json' });
           res.end(
             JSON.stringify({
               error: err instanceof Error ? err.message : 'Internal error',

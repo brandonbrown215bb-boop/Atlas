@@ -1,4 +1,4 @@
-import { isWorldSymbol } from '../../geom/geography';
+import { isWorldSymbol, signedArea } from '../../geom/geography';
 import type { MultiPolygon } from 'polygon-clipping';
 import clipping from '../../geom/polygonClipping';
 import { z } from 'zod';
@@ -22,7 +22,7 @@ export type CityParams = z.infer<typeof CityParamsSchema>;
 type Area = Extract<Entity, {type:'area'}>;
 type Street = { points: Point[]; width: number };
 const base = {origin:'generated' as const,layerId:'generated',rev:0};
-export const ringArea = (r: Point[]) => Math.abs(r.reduce((s,a,i)=>{const b=r[(i+1)%r.length]!;return s+a.x*b.y-b.x*a.y;},0)/2);
+export const ringArea = (r: Point[]) => Math.abs(signedArea(r));
 const area = (p: Point[][]) => ringArea(p[0]!) - p.slice(1).reduce((s,r)=>s+ringArea(r),0);
 const union = (parts: MultiPolygon[]): MultiPolygon => parts.length ? clipping.union(parts[0]!,...parts.slice(1)) : [];
 export function bufferLine(points: Point[], radius: number, closed = false): MultiPolygon {

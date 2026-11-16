@@ -147,7 +147,7 @@ export function distanceToSegment(pt: Point, a: Point, b: Point): number {
   return Math.hypot(pt.x - projX, pt.y - projY);
 }
 
-function pointInRing(pt: Point, ring: readonly Point[]): boolean {
+export function pointInRing(pt: Point, ring: readonly Point[]): boolean {
   let inside = false;
   for (let i = 0, j = ring.length - 1; i < ring.length; j = i++) {
     const pi = ring[i]!;

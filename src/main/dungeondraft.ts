@@ -1,5 +1,5 @@
 import { createHash, randomUUID } from 'node:crypto';
-import { mkdir, open, stat } from 'node:fs/promises';
+import { mkdir, open, rm, stat } from 'node:fs/promises';
 import { basename, dirname, extname, join, resolve } from 'node:path';
 import type { FileHandle } from 'node:fs/promises';
 import { imageDimensions } from './packs';
@@ -64,39 +64,45 @@ export async function extractDungeondraft(source: string, userData: string, prog
     const images = files.filter(isImage);
     if (!images.length) throw new Error('This pack contains no supported images.');
     const root = join(userData, 'unpacked-packs', randomUUID());
-    const chunk = Buffer.alloc(1024*1024);
-    let done = 0;
-    for (const file of files) {
-      const image = isImage(file);
-      const hasChecksum = !/^0+$/.test(file.md5);
-      if (image || hasChecksum) {
-        const md5 = createHash('md5');
-        let output: FileHandle | null = null;
-        try {
-          if (image) {
-            const target = join(root, file.path);
-            await mkdir(dirname(target), { recursive: true });
-            output = await open(target, 'wx');
-          }
-          let copied = 0;
-          while (copied < file.size) {
-            const n = Math.min(chunk.length, file.size-copied);
-            const { bytesRead } = await handle.read(chunk,0,n,file.offset+copied);
-            if (bytesRead !== n) throw fail();
-            const bytes = chunk.subarray(0,n);
-            if (image && copied === 0 && !imageDimensions(bytes)) throw new Error(`Unreadable pack image: ${file.path}`);
-            md5.update(bytes);
-            if (output) await output.writeFile(bytes);
-            copied += n;
-          }
-          if (image && file.size === 0) throw fail();
-          if (hasChecksum && md5.digest('hex') !== file.md5) throw new Error(`Pack checksum failed: ${file.path}`);
-        } finally { await output?.close(); }
+    try {
+      const chunk = Buffer.alloc(1024*1024);
+      let done = 0;
+      for (const file of files) {
+        const image = isImage(file);
+        const hasChecksum = !/^0+$/.test(file.md5);
+        if (image || hasChecksum) {
+          const md5 = createHash('md5');
+          let output: FileHandle | null = null;
+          try {
+            if (image) {
+              const target = join(root, file.path);
+              await mkdir(dirname(target), { recursive: true });
+              output = await open(target, 'wx');
+            }
+            let copied = 0;
+            while (copied < file.size) {
+              const n = Math.min(chunk.length, file.size-copied);
+              const { bytesRead } = await handle.read(chunk,0,n,file.offset+copied);
+              if (bytesRead !== n) throw fail();
+              const bytes = chunk.subarray(0,n);
+              if (image && copied === 0 && !imageDimensions(bytes)) throw new Error(`Unreadable pack image: ${file.path}`);
+              md5.update(bytes);
+              if (output) await output.writeFile(bytes);
+              copied += n;
+            }
+            if (image && file.size === 0) throw fail();
+            if (hasChecksum && md5.digest('hex') !== file.md5) throw new Error(`Pack checksum failed: ${file.path}`);
+          } finally { await output?.close(); }
+        }
+        progress?.(++done,files.length);
       }
-      progress?.(++done,files.length);
+      const after = await stat(source);
+      if (info.size !== after.size || info.mtimeMs !== after.mtimeMs) throw new Error('Pack changed during import. Try again.');
+      return { root, name: basename(source,extname(source)) };
+    } catch (error) {
+      // A failed import leaves nothing behind in userData.
+      await rm(root, { recursive: true, force: true });
+      throw error;
     }
-    const after = await stat(source);
-    if (info.size !== after.size || info.mtimeMs !== after.mtimeMs) throw new Error('Pack changed during import. Try again.');
-    return { root, name: basename(source,extname(source)) };
   } finally { await handle.close(); }
 }

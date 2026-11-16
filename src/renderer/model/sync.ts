@@ -3,7 +3,7 @@ import { rotateEntityPatch, scaleEntityPatch, translateEntityPatch } from '../ge
 
 export type SyncChoices=Record<string,'mine'|'theirs'>;
 export interface SyncConflict {id:string;name:string;mine:Entity|null;theirs:Entity|null;reason:'both changed'|'changed versus deleted'}
-export function convertLinkedEntity(entity:Entity, transform:NonNullable<MapDoc['link']>['transform']):Entity {
+function convertLinkedEntity(entity:Entity, transform:NonNullable<MapDoc['link']>['transform']):Entity {
   const e=structuredClone(entity);
   if(!transform)return e;
   Object.assign(e,scaleEntityPatch(e,{x:0,y:0},transform.scale,transform.scale));
@@ -22,10 +22,10 @@ export function planSync(mine:MapDoc,theirs:MapDoc,choices:SyncChoices={}) {
   const revision=mine.revision+1;
   for(const id of ids) {
     const local=mine.entities[id],other=theirs.entities[id];
-    const remote=other?convertLinkedEntity(other,link.transform):undefined;
     const myRev=local?.rev??mine.deleted[id]??0, theirRev=other?.rev??theirs.deleted[id]??0;
     const myChanged=myRev>link.syncedMyRev,theirChanged=theirRev>link.syncedTheirRev;
     if(!theirChanged)continue;
+    const remote=other?convertLinkedEntity(other,link.transform):undefined;
     const equal=content(local)===content(remote);
     if(myChanged&&!equal) {
       conflicts.push({id,name:local?.name??remote?.name??id,mine:local??null,theirs:remote??null,reason:!local||!remote?'changed versus deleted':'both changed'});
@@ -60,7 +60,6 @@ export function planSync(mine:MapDoc,theirs:MapDoc,choices:SyncChoices={}) {
     }
   }
   // Keep junction positions consistent with the chosen entity revisions, including local edits.
-  if(Object.values(map.entities).some(e=>e.type==='path'&&(e.startNodeId||e.endNodeId))){map.riverNodes={};for(const e of Object.values(map.entities))if(e.type==='path'){if(e.startNodeId)map.riverNodes[e.startNodeId]=e.points[0]!;if(e.endNodeId)map.riverNodes[e.endNodeId]=e.points[e.points.length-1]!;}}
   if(changed)map.revision=revision;
   map.link!.syncedMyRev=map.revision;map.link!.syncedTheirRev=theirs.revision;
   const updated=JSON.stringify(map)!==JSON.stringify(mine);

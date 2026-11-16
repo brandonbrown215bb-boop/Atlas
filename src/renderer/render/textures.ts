@@ -5,6 +5,9 @@ const textureCache = new Map<string, Texture>();
 const inflight = new Map<string, Promise<Texture | null>>();
 const owners = new Map<object, Set<string>>();
 const unloading = new Map<string, Promise<void>>();
+// Missing or broken files are retried after a pause, not on every pan step.
+const failedAt = new Map<string, number>();
+const RETRY_FAILED_MS = 30_000;
 let collectionTimer: ReturnType<typeof setTimeout> | null = null;
 
 export function updateTextureUsage(owner: object, urls: Set<string>): void {
@@ -28,7 +31,7 @@ export function entityAssetId(entity: Entity): string | null {
   return null;
 }
 
-export function buildWorldAssetUrl(
+function buildWorldAssetUrl(
   worldPath: string,
   assetId: string,
   ext: string,
@@ -53,6 +56,9 @@ export function loadAssetTexture(
   if (existing) {
     return Promise.resolve(existing);
   }
+  if (Date.now() - (failedAt.get(url) ?? -Infinity) < RETRY_FAILED_MS) {
+    return Promise.resolve(null);
+  }
   const pending = inflight.get(url);
   if (pending) {
     if (onLoaded) {
@@ -66,6 +72,7 @@ export function loadAssetTexture(
   const promise = Promise.resolve(unloading.get(url)).then(() => Assets.load<Texture>(url))
     .then((tex) => {
       textureCache.set(url, tex);
+      failedAt.delete(url);
       inflight.delete(url);
       onLoaded?.();
       // A view can disappear while its image is still loading.
@@ -74,6 +81,7 @@ export function loadAssetTexture(
     })
     .catch((error: unknown) => {
       console.warn('Failed to load map image:', url, error);
+      failedAt.set(url, Date.now());
       inflight.delete(url);
       return null;
     });

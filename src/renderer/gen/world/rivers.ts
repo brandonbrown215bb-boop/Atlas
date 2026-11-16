@@ -3,6 +3,7 @@ import { drainTerrain } from './drainage';
 import type { Entity, Point } from '../../model/schema';
 import type { Terrain } from './terrain';
 import { clipOutside } from '../../geom/clipOutside';
+import { bboxFromPoints } from '../../geom/hitTest';
 
 export interface RiverRoute { cells: number[]; points: Point[]; elevations: number[]; flow: number; outlet?: 'water' | 'junction' | 'boundary'; waterfalls?: Point[] }
 
@@ -21,11 +22,10 @@ export function buildRivers(terrain: Terrain, rainfall: number[], threshold: num
   active.forEach((yes, i) => { if (yes) incoming[downhill[i]!]!++; });
   const result: RiverRoute[] = [];
   const epsilon = 2e-8;
+  const { minX, minY } = bboxFromPoints(terrain.region[0]!)!;
   const sharedMidpoint = (a: number, b: number): Point => {
     const shared = cells[a]!.ring.filter(p => cells[b]!.ring.some(q => Math.hypot(p.x - q.x, p.y - q.y) < epsilon));
     if (shared.length < 2) throw new Error('River cells do not share an edge.');
-    const origin = terrain.region[0]!;
-    const minX = Math.min(...origin.map(p => p.x)), minY = Math.min(...origin.map(p => p.y));
     return { x: minX + (shared[0]!.x + shared[1]!.x) / 2 * terrain.size, y: minY + (shared[0]!.y + shared[1]!.y) / 2 * terrain.size };
   };
   for (const start of order) {

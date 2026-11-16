@@ -5,8 +5,6 @@ import { fromPolygons, rectRing, toPolygons, type Rect } from '../geom/fog';
 import { collectLightBlockers, computeLightVisibilityPolygon } from '../geom/visibility';
 import type { Entity, MapDoc } from '../model/schema';
 
-export { collectLightBlockers, computeLightVisibilityPolygon };
-
 export type LightingMode = 'ambient' | 'lights';
 
 export function drawRoomLightingOverlay(

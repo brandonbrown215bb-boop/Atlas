@@ -8,14 +8,33 @@ export interface Segment {
   b: Point;
 }
 
+/** Parts of wall segment a-b that are not covered by a door lying on it. */
+export function wallSegmentOutsideDoors(a: Point, b: Point, doors: readonly { a: Point; b: Point }[]): Segment[] {
+  const dx = b.x - a.x, dy = b.y - a.y, l2 = dx * dx + dy * dy;
+  if (!l2) return [];
+  let pieces: Array<[number, number]> = [[0, 1]];
+  for (const door of doors) {
+    const cross = (p: Point) => Math.abs((p.x - a.x) * dy - (p.y - a.y) * dx) / Math.sqrt(l2);
+    if (cross(door.a) > 0.001 || cross(door.b) > 0.001) continue;
+    const t = (p: Point) => ((p.x - a.x) * dx + (p.y - a.y) * dy) / l2;
+    const start = Math.max(0, Math.min(t(door.a), t(door.b))), end = Math.min(1, Math.max(t(door.a), t(door.b)));
+    if (start >= end) continue;
+    pieces = pieces.flatMap(([lo, hi]): Array<[number, number]> => end <= lo || start >= hi ? [[lo, hi]]
+      : [...(start > lo ? [[lo, start] as [number, number]] : []), ...(end < hi ? [[end, hi] as [number, number]] : [])]);
+  }
+  return pieces.map(([lo, hi]) => ({ a: { x: a.x + lo * dx, y: a.y + lo * dy }, b: { x: a.x + hi * dx, y: a.y + hi * dy } }));
+}
+
 export function collectLightBlockers(entities: Entity[]): Segment[] {
   const segs: Segment[] = [];
+  // Doors sit on top of walls; an open door leaves a gap in the wall under it.
+  const openDoors = entities.filter((e): e is Extract<Entity, { type: 'door' }> => e.type === 'door' && !!e.open && e.kind !== 'secret');
   for (const e of entities) {
     if (e.type === 'wall') {
       const ch = resolveWallChannels(e);
       if (!ch.blocksLight && !ch.blocksSight) continue;
       for (let i = 1; i < e.points.length; i++) {
-        segs.push({ a: e.points[i - 1]!, b: e.points[i]! });
+        segs.push(...wallSegmentOutsideDoors(e.points[i - 1]!, e.points[i]!, openDoors));
       }
     } else if (e.type === 'door' && !e.open && e.kind !== 'secret') {
       segs.push({ a: e.a, b: e.b });

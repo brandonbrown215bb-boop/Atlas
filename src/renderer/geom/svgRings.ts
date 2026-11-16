@@ -1,6 +1,7 @@
 import type { MultiPolygon, Ring } from 'polygon-clipping';
 import clipping from './polygonClipping';
 import type { Point } from '../model/schema';
+import { signedArea } from './geography';
 
 /** Turn SVG contours into separate areas, preserving holes and islands. */
 export function svgAreaRings(contours: Point[][], fillRule: 'nonzero' | 'evenodd'): Point[][][] {
@@ -13,12 +14,9 @@ export function svgAreaRings(contours: Point[][], fillRule: 'nonzero' | 'evenodd
       regions.set(1, clipping.xor(regions.get(1) ?? [], polygon));
       continue;
     }
-    const signedArea = points.reduce((sum, p, i) => {
-      const q = points[(i + 1) % points.length]!;
-      return sum + p.x * q.y - q.x * p.y;
-    }, 0);
-    if (signedArea === 0) continue;
-    const direction = Math.sign(signedArea);
+    const area = signedArea(points);
+    if (area === 0) continue;
+    const direction = Math.sign(area);
     const next = new Map<number, MultiPolygon>();
     const add = (winding: number, region: MultiPolygon) => {
       if (winding !== 0 && region.length) {

@@ -1,5 +1,6 @@
 import { validateAuthoredRivers } from './manualRivers';
 import { drainTerrain } from './drainage';
+import { bboxFromPoints } from '../../geom/hitTest';
 import { z } from 'zod';
 import { registerGenerator, type GeneratorInput } from '../framework';
 import { buildTerrain, TerrainParamsSchema, terrainEntities } from './terrain';
@@ -21,8 +22,8 @@ export function generateWorld(input: GeneratorInput<WorldParams>) {
   if (input.params.rivers) drainTerrain(terrain).forEach((next, i) => { terrain.cells[i]!.downstream = next; });
   const climate = buildClimate(terrain, input);
   const rivers = input.params.rivers ? riverEntities(terrain, buildRivers(terrain, climate.values.map(v => v.moisture), input.params.riverThreshold), input.constraints) : [];
-  const p=input.region[0]!,x=Math.min(...p.map(q=>q.x)),y=Math.min(...p.map(q=>q.y));
-  input.terrainResult={algorithmVersion:input.params.algorithmVersion,seed:input.seed,bounds:{x,y,w:Math.max(...p.map(q=>q.x))-x,h:Math.max(...p.map(q=>q.y))-y},plates:terrain.plates??[],cells:terrain.cells.map(c=>({...c.point,elevation:c.elevation,land:c.land,plate:c.plate??0,downstream:c.downstream}))};
+  const box=bboxFromPoints(input.region[0]!)!,x=box.minX,y=box.minY;
+  input.terrainResult={algorithmVersion:input.params.algorithmVersion,seed:input.seed,bounds:{x,y,w:box.maxX-x,h:box.maxY-y},plates:terrain.plates??[],cells:terrain.cells.map(c=>({...c.point,elevation:c.elevation,land:c.land,plate:c.plate??0,downstream:c.downstream}))};
   return [...terrainEntities(terrain).filter(e=>input.params.mode!=='populate'||e.type==='area'&&e.role==='water'), ...climate.entities, ...rivers, ...decorateWorld(terrain, climate.values, input, rivers)];
 }
 registerGenerator({ type: 'world', title: 'World / continent', params: WorldParamsSchema, generate: generateWorld });

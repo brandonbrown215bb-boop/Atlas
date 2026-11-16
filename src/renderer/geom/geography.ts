@@ -8,8 +8,16 @@ export const isOcean = (e: Entity) => e.type === 'area' && e.role === 'water' &&
   (e.waterKind === 'ocean' || (!e.waterKind && e.name === 'Ocean' && (!!e.genId || e.origin === 'inherited')));
 export const isWorldSymbol = (e: Entity) => e.type === 'prop' &&
   (!!e.symbolKind || ['mountain', 'hill', 'forest', 'settlement'].includes(e.builtin ?? ''));
+/** Shoelace area: positive for counter-clockwise rings in y-up space. */
+export function signedArea(ring: readonly Point[]): number {
+  return ring.reduce((sum, a, i) => {
+    const b = ring[(i + 1) % ring.length]!;
+    return sum + a.x * b.y - b.x * a.y;
+  }, 0) / 2;
+}
+/** Outer ring area minus holes. */
 export const polygonArea = (rings: Point[][]) => rings.reduce((sum, r, i) => {
-  const a = Math.abs(r.reduce((s, p, j) => { const q = r[(j + 1) % r.length]!; return s + p.x * q.y - q.x * p.y; }, 0) / 2);
+  const a = Math.abs(signedArea(r));
   return sum + (i ? -a : a);
 }, 0);
 const union = (parts: MultiPolygon[]): MultiPolygon => parts.length ? clipping.union(...parts as [MultiPolygon, ...MultiPolygon[]]) : [];

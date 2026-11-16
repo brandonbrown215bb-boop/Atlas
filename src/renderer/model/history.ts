@@ -1,6 +1,6 @@
 import { applyPatches, type Patch } from 'immer';
 
-export const HISTORY_CAP = 200;
+const HISTORY_CAP = 200;
 
 export interface HistoryEntry {
   label: string;
