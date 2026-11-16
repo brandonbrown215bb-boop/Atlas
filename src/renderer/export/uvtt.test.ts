@@ -20,6 +20,32 @@ it('exports a fixture room, door, secret door and light in grid units without pr
   expect(result.secretDoors).toEqual(['secret']);
   expect(JSON.stringify(doc)).not.toContain('fog');
 });
+it('exports terrain LOS into objects_line_of_sight, skips transparent glass, and preserves locked doors', () => {
+  const base = { origin: 'manual', rev: 1, layerId: 'l' };
+  const map = MapDocSchema.parse({
+    id: 'm',
+    name: 'Keep',
+    kind: 'interior',
+    bounds: { x: 0, y: 0, w: 20, h: 20 },
+    grid: { size: 2, visible: true },
+    layers: [{ id: 'l', name: 'Art', visible: true, locked: false, gmOnly: false }],
+    entities: {
+      rock: { ...base, id: 'rock', type: 'wall', wallKind: 'terrain', points: [{ x: 2, y: 2 }, { x: 6, y: 2 }], blocksMove: true, blocksSight: true },
+      windowGlass: { ...base, id: 'windowGlass', type: 'wall', wallKind: 'window', points: [{ x: 0, y: 8 }, { x: 4, y: 8 }], blocksMove: true, blocksSight: false },
+      curtainScreen: { ...base, id: 'curtainScreen', type: 'wall', wallKind: 'invisible', points: [{ x: 0, y: 12 }, { x: 4, y: 12 }], blocksMove: true, blocksSight: true },
+      vaultDoor: { ...base, id: 'vaultDoor', type: 'door', a: { x: 8, y: 2 }, b: { x: 10, y: 2 }, kind: 'door', open: false, locked: true },
+    },
+    generators: {},
+    revision: 1,
+    deleted: {},
+    fog: { enabled: false, revealed: [] },
+  });
+  const doc = exportUvtt(map, 'PNG', 100).document;
+  expect(doc.objects_line_of_sight).toHaveLength(1);
+  expect(doc.line_of_sight).toHaveLength(1);
+  expect(doc.portals[0]).toMatchObject({ closed: true, locked: true });
+});
+
 it('clips crossing and disjoint wall segments',()=>{
   expect(clipSegment({x:-5,y:5},{x:15,y:5},{x:0,y:0,w:10,h:10})).toEqual([{x:0,y:5},{x:10,y:5}]);
   expect(clipSegment({x:-5,y:-5},{x:-1,y:-1},{x:0,y:0,w:10,h:10})).toBeNull();

@@ -2,6 +2,7 @@
 :root[data-theme='dark'] {
   --atlas-bg: #0d1117;
   --atlas-surface: #161b22;
+  --atlas-hud-bg: rgba(22, 27, 34, 0.9);
   --atlas-surface-alt: #21262d;
   --atlas-border: #30363d;
   --atlas-text: #e6edf3;
@@ -13,6 +14,7 @@
 :root[data-theme='light'] {
   --atlas-bg: #f6f8fa;
   --atlas-surface: #ffffff;
+  --atlas-hud-bg: rgba(255, 255, 255, 0.92);
   --atlas-surface-alt: #eaeef2;
   --atlas-border: #d0d7de;
   --atlas-text: #1f2328;

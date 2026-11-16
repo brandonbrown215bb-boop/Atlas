@@ -48,6 +48,7 @@ export function createPortalTool(): MapTool {
           x: pos.x,
           y: pos.y,
           targetMapId,
+          ...(vs.portalConnectorKind !== 'portal' ? { connectorKind: vs.portalConnectorKind } : {}),
         },
       });
       ctx.setSelectedIds([id]);

@@ -1,12 +1,10 @@
 import { viewStore } from '../model/viewStore';
 import { useState } from 'react';
-import type { IDockviewPanelProps } from 'dockview-react';
 import { useStore } from 'zustand';
 import type { Layer } from '../model/schema';
 import { worldStore } from '../model/store';
-import { PanelHeaderBar } from './PanelHeaderBar';
 
-export function LayersPanel(props: IDockviewPanelProps) {
+export function LayersPanel({ panelId = 'layers' }: { panelId?: string }) {
   const world = useStore(worldStore, (s) => s.world);
   const activeMapId = useStore(worldStore, (s) => s.activeMapId);
   const map = activeMapId && world ? world.maps[activeMapId] : undefined;
@@ -74,7 +72,7 @@ export function LayersPanel(props: IDockviewPanelProps) {
 
   return (
     <div
-      data-testid={`panel-${props.api.id}`}
+      data-testid={`panel-${panelId}`}
       style={{
         display: 'flex',
         flexDirection: 'column',
@@ -85,7 +83,6 @@ export function LayersPanel(props: IDockviewPanelProps) {
         fontSize: 12,
       }}
     >
-      <PanelHeaderBar title="Layers" panelProps={props} />
 
       {!map ? (
         <div style={{ padding: 12, color: 'var(--atlas-text-muted)' }}>

@@ -84,6 +84,7 @@ export function startWorldPersistence(): () => void {
     void flushDirtyWorld();
   };
   window.addEventListener('beforeunload', onBeforeUnload);
+  window.atlasApi?.setBeforeCloseFlush?.(() => flushDirtyWorld());
 
   return () => {
     unsubscribe();
@@ -96,5 +97,6 @@ export function startWorldPersistence(): () => void {
       backupTimer = null;
     }
     window.removeEventListener('beforeunload', onBeforeUnload);
+    window.atlasApi?.setBeforeCloseFlush?.(null);
   };
 }

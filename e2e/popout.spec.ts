@@ -31,14 +31,20 @@ test('map panel pops out, renders while main is minimised, docks back, and retur
         else win?.restore();
       }, minimized);
 
-    // 1. Pop out: canvas has non-zero size and renders
+    // 1. Open a secondary map HUD and pop it out: canvas has non-zero size and renders
+    await main.getByTestId('btn-add-map').click();
+    const mapHud = main.locator('[data-testid^="hud-map-"]').first();
+    await expect(mapHud).toBeVisible({ timeout: 10_000 });
+    const hudTestId = await mapHud.getAttribute('data-testid');
+    const panelId = hudTestId!.replace(/^hud-/, '');
+
     let popoutPromise = app.waitForEvent('window');
-    await main.getByTestId('popout-btn-map-main').click();
+    await main.getByTestId(`popout-btn-${panelId}`).click();
     const popout = await popoutPromise;
-    const popoutPanel = popout.getByTestId('panel-map-main');
+    const popoutPanel = popout.getByTestId(`panel-${panelId}`);
     await expect(popoutPanel).toBeVisible({ timeout: 10_000 });
     await expect(popoutPanel).toHaveAttribute('data-location-type', 'popout');
-    const popoutCanvas = popout.locator('[data-testid="canvas-host-map-main"] canvas');
+    const popoutCanvas = popout.locator(`[data-testid="canvas-host-${panelId}"] canvas`);
     const box = await popoutCanvas.boundingBox();
     expect(box).not.toBeNull();
     expect(box!.width).toBeGreaterThan(50);
@@ -53,12 +59,12 @@ test('map panel pops out, renders while main is minimised, docks back, and retur
     await expect.poll(() => renders(popoutPanel)).toBeGreaterThan(beforeMinimized);
     await setMainMinimized(false);
 
-    // 3. Docks back and still renders
-    await popout.getByTestId('dockback-btn-map-main').click();
-    const mainPanel = main.getByTestId('panel-map-main');
+    // 3. Docks back as a floating HUD and still renders
+    await popout.getByTestId(`dockback-btn-${panelId}`).click();
+    const mainPanel = main.getByTestId(`panel-${panelId}`);
     await expect(mainPanel).toBeVisible({ timeout: 10_000 });
     await expect(mainPanel).toHaveAttribute('data-location-type', 'grid');
-    const mainCanvas = main.locator('[data-testid="canvas-host-map-main"] canvas');
+    const mainCanvas = main.locator(`[data-testid="canvas-host-${panelId}"] canvas`);
     await expect(mainCanvas).toBeVisible();
     await expect.poll(() => renders(mainPanel)).toBeGreaterThan(0);
     const beforeWheel = await renders(mainPanel);
@@ -66,15 +72,13 @@ test('map panel pops out, renders while main is minimised, docks back, and retur
     await main.mouse.wheel(0, -120);
     await expect.poll(() => renders(mainPanel)).toBeGreaterThan(beforeWheel);
 
-    // 4. Closing the popout window returns the panel to the main window
+    // 4. Closing the popout window closes the secondary map panel cleanly
     popoutPromise = app.waitForEvent('window');
-    await main.getByTestId('popout-btn-map-main').click();
+    await main.getByTestId(`popout-btn-${panelId}`).click();
     const popout2 = await popoutPromise;
-    await expect(popout2.getByTestId('panel-map-main')).toBeVisible({ timeout: 10_000 });
+    await expect(popout2.getByTestId(`panel-${panelId}`)).toBeVisible({ timeout: 10_000 });
     await popout2.close();
-    await expect(mainPanel).toBeVisible({ timeout: 10_000 });
-    await expect(mainPanel).toHaveAttribute('data-location-type', 'grid');
-    await expect(mainCanvas).toBeVisible();
+    await expect(mainPanel).toHaveCount(0, { timeout: 10_000 });
   } finally {
     await app.close();
     rmSync(tempBase, { recursive: true, force: true });

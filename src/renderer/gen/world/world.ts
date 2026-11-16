@@ -12,6 +12,7 @@ export const WorldParamsSchema = TerrainParamsSchema.extend({
   riverThreshold: z.number().min(2).max(200).default(12),
   density: z.number().min(0).max(3).default(1),
   settlements: z.number().int().min(0).max(50).default(12),
+  renderSeed: z.number().int().optional(),
 });
 export type WorldParams = z.infer<typeof WorldParamsSchema>;
 export function generateWorld(input: GeneratorInput<WorldParams>) {

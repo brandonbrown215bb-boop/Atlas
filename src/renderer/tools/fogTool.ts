@@ -4,7 +4,7 @@ import type { MapTool } from './types';
 
 export function createFogTool(): MapTool {
   let points: Point[] = [], hover: Point | null = null;
-  let mode: 'reveal' | 'hide' = 'reveal', radius = 3;
+  let mode: 'reveal' | 'los' | 'memory' | 'hide' = 'reveal', radius = 3;
   return {
     id:'fog',
     onPointerDown(pt,e,ctx) {

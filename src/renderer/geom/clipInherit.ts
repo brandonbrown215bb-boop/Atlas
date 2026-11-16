@@ -242,8 +242,17 @@ export function clipAndInheritEntities(
       case 'label': {
         if (pointInRect(entity, rect)) {
           const translated = translatePoint(entity, rect);
+          const parentSpan = Math.max(1, Math.max(parentMap.bounds.w, parentMap.bounds.h));
+          const rectSpan = Math.max(1, Math.max(rect.w, rect.h));
+          const symbolScale = entity.type === 'prop' && isWorldSymbol(entity) && rectSpan < parentSpan
+            ? Math.min(1, Math.max(0.08, (rectSpan / parentSpan) * 2.2))
+            : 1;
           result.push({
             ...entity,
+            ...(entity.type === 'prop' && symbolScale < 1 ? {
+              ...(entity.w !== undefined ? { w: entity.w * symbolScale } : {}),
+              ...(entity.h !== undefined ? { h: entity.h * symbolScale } : {}),
+            } : {}),
             genId: undefined, groupId: undefined,
             id: createId(),
             layerId: targetLayerId,

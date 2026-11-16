@@ -1,11 +1,23 @@
 import { createStore } from 'zustand/vanilla';
-import type { AreaRole, AssetsIndex, MapKind, PathRole, Point } from './schema';
+import type {
+  AreaRole,
+  AssetsIndex,
+  ConnectorKind,
+  MapKind,
+  PathRole,
+  Point,
+  RoofShape,
+  RouteTier,
+  WallKind,
+} from './schema';
 import type { CameraState } from '../render/camera';
 import type { TravelSchedule } from '../geom/measure';
 
 export type ToolId =
   | 'fog'
   | 'biome'
+  | 'landBrush'
+  | 'waterBrush'
   | 'select'
   | 'prop'
   | 'area'
@@ -47,12 +59,13 @@ export interface ViewStoreState {
   biomeName: string;
   biomeRadius: number;
   biomeErase: boolean;
+  geoBrushRadius: number;
   zoomThrough: boolean;
   editParts: boolean;
   fitRequest: { panelId: string; bounds?: { x: number; y: number; w: number; h: number }; nonce: number } | null;
   draftUndo: boolean;
   draftRedo: boolean;
-  fogMode: 'reveal' | 'hide';
+  fogMode: 'reveal' | 'los' | 'memory' | 'hide';
   fogRadius: number;
   panels: Record<string, PanelViewState>;
   activeMapPanelId: string | null;
@@ -95,6 +108,19 @@ export interface ViewStoreState {
   measureDeparture: string;
   measureSchedule: TravelSchedule | null;
   measureMarkers: boolean;
+  wallKind: WallKind;
+  wallBlocksLight: boolean;
+  wallBlocksSound: boolean;
+  doorLocked: boolean;
+  portalConnectorKind: ConnectorKind;
+  pathRouteTier: RouteTier;
+  roofMode: 'detailed' | 'simple' | 'hidden';
+  roofShapePref: RoofShape;
+  lightingMode: 'ambient' | 'lights';
+  showUndercity: boolean;
+  measureTerrainWeighted: boolean;
+  showHorizonRing: boolean;
+  blueprintMode: boolean;
 
   setPanelMap: (panelId: string, mapId: string | null) => void;
   setPanelCamera: (panelId: string, camera: CameraState) => void;
@@ -112,7 +138,19 @@ export interface ViewStoreState {
   setWallSnapToGrid: (snap: boolean) => void;
   setWallBlocksMove: (blocks: boolean) => void;
   setWallBlocksSight: (blocks: boolean) => void;
+  setWallKind: (kind: WallKind) => void;
+  setWallBlocksLight: (blocks: boolean) => void;
+  setWallBlocksSound: (blocks: boolean) => void;
   setDoorKind: (kind: DoorKind) => void;
+  setDoorLocked: (locked: boolean) => void;
+  setPortalConnectorKind: (kind: ConnectorKind) => void;
+  setPathRouteTier: (tier: RouteTier) => void;
+  setRoofMode: (mode: 'detailed' | 'simple' | 'hidden') => void;
+  setLightingMode: (mode: 'ambient' | 'lights') => void;
+  setShowUndercity: (show: boolean) => void;
+  setMeasureTerrainWeighted: (enabled: boolean) => void;
+  setShowHorizonRing: (show: boolean) => void;
+  setBlueprintMode: (enabled: boolean) => void;
   setLightRadius: (radius: number) => void;
   setLightColor: (color: string) => void;
   setLabelText: (text: string) => void;
@@ -140,7 +178,7 @@ export interface ViewStoreState {
 export const viewStore = createStore<ViewStoreState>((set) => ({
   interactionMessage: '',
   diagnosticEntityIds: [],
-  biomeName: 'forest', biomeRadius: 1000, biomeErase: false,
+  biomeName: 'forest', biomeRadius: 1000, biomeErase: false, geoBrushRadius: 1000,
   zoomThrough: true,
   editParts: false,
   fitRequest: null,
@@ -186,6 +224,19 @@ export const viewStore = createStore<ViewStoreState>((set) => ({
   measureDeparture: '08:00',
   measureSchedule: null,
   measureMarkers: false,
+  wallKind: 'solid',
+  wallBlocksLight: true,
+  wallBlocksSound: true,
+  doorLocked: false,
+  portalConnectorKind: 'portal',
+  pathRouteTier: 'road',
+  roofMode: 'detailed',
+  roofShapePref: 'gable',
+  lightingMode: 'ambient',
+  showUndercity: false,
+  measureTerrainWeighted: true,
+  showHorizonRing: false,
+  blueprintMode: false,
 
   setPanelMap(panelId, mapId) {
     set((state) => {
@@ -282,8 +333,56 @@ export const viewStore = createStore<ViewStoreState>((set) => ({
     set({ wallBlocksSight });
   },
 
+  setWallKind(wallKind) {
+    set({ wallKind });
+  },
+
+  setWallBlocksLight(wallBlocksLight) {
+    set({ wallBlocksLight });
+  },
+
+  setWallBlocksSound(wallBlocksSound) {
+    set({ wallBlocksSound });
+  },
+
   setDoorKind(doorKind) {
     set({ doorKind });
+  },
+
+  setDoorLocked(doorLocked) {
+    set({ doorLocked });
+  },
+
+  setPortalConnectorKind(portalConnectorKind) {
+    set({ portalConnectorKind });
+  },
+
+  setPathRouteTier(pathRouteTier) {
+    set({ pathRouteTier });
+  },
+
+  setRoofMode(roofMode) {
+    set({ roofMode });
+  },
+
+  setLightingMode(lightingMode) {
+    set({ lightingMode });
+  },
+
+  setShowUndercity(showUndercity) {
+    set({ showUndercity });
+  },
+
+  setMeasureTerrainWeighted(measureTerrainWeighted) {
+    set({ measureTerrainWeighted });
+  },
+
+  setShowHorizonRing(showHorizonRing) {
+    set({ showHorizonRing });
+  },
+
+  setBlueprintMode(blueprintMode) {
+    set({ blueprintMode });
   },
 
   setLightRadius(lightRadius) {

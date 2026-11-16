@@ -1,4 +1,4 @@
-import type { Entity, MapDoc, Point } from '../model/schema';
+import { resolveWallChannels, type Entity, type MapDoc, type Point } from '../model/schema';
 import { ExportRectSchema, imageSize } from './imageSize';
 import type { Rect } from '../geom/fog';
 
@@ -25,8 +25,12 @@ export function exportUvtt(map: MapDoc, image: string, pixelsPerSquare=200, sele
   const doors=entities.filter((e):e is Extract<Entity,{type:'door'}>=>e.type==='door');
   const unit=(p:Point):Point=>({x:(p.x-rect.x)/map.grid.size,y:(p.y-rect.y)/map.grid.size});
   const line_of_sight: Point[][]=[];
+  const objects_line_of_sight: Point[][]=[];
   for(const wall of entities) {
-    if(wall.type!=='wall' || !wall.blocksSight) continue;
+    if(wall.type!=='wall') continue;
+    const channels = resolveWallChannels(wall);
+    if(!channels.blocksSight && !channels.blocksLight) continue;
+    const target = channels.wallKind === 'terrain' ? objects_line_of_sight : line_of_sight;
     for(let i=1;i<wall.points.length;i++) {
       const a=wall.points[i-1]!,b=wall.points[i]!,dx=b.x-a.x,dy=b.y-a.y,l2=dx*dx+dy*dy;
       if(!l2) continue;
@@ -42,7 +46,7 @@ export function exportUvtt(map: MapDoc, image: string, pixelsPerSquare=200, sele
       }
       for(const [lo,hi] of pieces) {
         const clipped=clipSegment({x:a.x+lo*dx,y:a.y+lo*dy},{x:a.x+hi*dx,y:a.y+hi*dy},rect);
-        if(clipped) line_of_sight.push(clipped.map(unit));
+        if(clipped) target.push(clipped.map(unit));
       }
     }
   }
@@ -51,11 +55,11 @@ export function exportUvtt(map: MapDoc, image: string, pixelsPerSquare=200, sele
     const segment=clipSegment(d.a,d.b,rect);
     if(!segment) return [];
     if(d.kind==='secret') secretDoors.push(d.name || d.id);
-    return [{position:unit({x:(segment[0].x+segment[1].x)/2,y:(segment[0].y+segment[1].y)/2}),bounds:segment.map(unit),rotation:Math.atan2(d.b.y-d.a.y,d.b.x-d.a.x),closed:d.kind==='secret'||!d.open,freestanding:false,...(d.kind==='secret'?{secret:true}:{})}];
+    return [{position:unit({x:(segment[0].x+segment[1].x)/2,y:(segment[0].y+segment[1].y)/2}),bounds:segment.map(unit),rotation:Math.atan2(d.b.y-d.a.y,d.b.x-d.a.x),closed:d.kind==='secret'||!d.open,freestanding:false,...(d.locked?{locked:true}:{}),...(d.kind==='secret'?{secret:true}:{})}];
   });
   const lights=entities.flatMap(e=>e.type==='light' && e.x>=rect.x && e.x<=rect.x+rect.w && e.y>=rect.y && e.y<=rect.y+rect.h?
     [{position:unit(e),range:e.radius/map.grid.size,intensity:1,color:`ff${/^#[0-9a-f]{6}$/i.test(e.color)?e.color.slice(1):'fde047'}`,shadows:true}]:[]);
   return { document:{format:0.2,resolution:{map_origin:{x:0,y:0},map_size:{x:rect.w/map.grid.size,y:rect.h/map.grid.size},pixels_per_grid:size.pixelsPerGrid},
-    line_of_sight,objects_line_of_sight:[],portals,lights,environment:{baked_lighting:false,ambient_light:'ffffffff'},image},
+    line_of_sight,objects_line_of_sight,portals,lights,environment:{baked_lighting:false,ambient_light:'ffffffff'},image},
     secretDoors,report:secretDoors.length?`Secret doors exported as closed portals with secret:true: ${secretDoors.join(', ')}. Set them to secret doors in Foundry after importing.`:''};
 }

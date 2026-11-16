@@ -84,8 +84,9 @@ export function PlayerControls() {
       </>}
       {showFogControls && <>
         <label><input type="checkbox" checked={world?.maps[activeMap??'']?.fog.enabled ?? false} onChange={e => worldStore.getState().execute('fog.paint',{mapId:activeMap,mode:e.target.checked?'enable':'disable'})} disabled={!activeMap} />Fog on {world?.maps[activeMap??'']?.name??'edited map'}</label>
-        <select aria-label="Fog brush mode" value={fogMode} onChange={e => viewStore.setState({fogMode:e.target.value as 'reveal'|'hide'})}><option value="reveal">Reveal</option><option value="hide">Hide</option></select>
+        <select aria-label="Fog brush mode" value={fogMode} onChange={e => viewStore.setState({fogMode:e.target.value as 'reveal'|'los'|'memory'|'hide'})}><option value="reveal">Reveal active</option><option value="los">Torch / Wall LOS</option><option value="memory">Memory only</option><option value="hide">Hide completely</option></select>
         <label>Brush radius (m) <input aria-label="Fog brush radius" type="number" min="0.1" value={fogRadius} style={{width:55}} onChange={e => {const n=Number(e.target.value); if(n>0 && Number.isFinite(n)) viewStore.setState({fogRadius:n});}} /></label>
+        <button type="button" disabled={!activeMap} onClick={() => worldStore.getState().execute('fog.paint',{mapId:activeMap,mode:'dimActive'})}>Dim active → memory</button>
         <button type="button" disabled={!activeMap} onClick={() => worldStore.getState().execute('fog.paint',{mapId:activeMap,mode:'revealAll'})}>Reveal all</button>
         <button type="button" disabled={!activeMap} onClick={() => worldStore.getState().execute('fog.paint',{mapId:activeMap,mode:'hideAll'})}>Hide all</button>
       </>}

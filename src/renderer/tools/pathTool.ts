@@ -49,6 +49,7 @@ export function createPathTool(): MapTool {
         origin: 'manual',
         rev: 0,
         role: vs.pathRole,
+        ...(vs.pathRole === 'road' || vs.pathRole === 'trail' ? { routeTier: vs.pathRouteTier } : {}),
         points: pts,
         width: Math.max(0.05, vs.pathWidth),
         closed: vs.pathClosed,

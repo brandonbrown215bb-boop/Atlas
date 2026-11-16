@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
-import { EntitySchema, type Entity, type Point } from '../../model/schema';
+import { EntitySchema, MapDocSchema, type Entity, type Point } from '../../model/schema';
 import { distanceToSegment, pointInPolygon } from '../../geom/hitTest';
+import { auditDungeonTopology } from './audit';
 import { dungeonLayout, generateDungeon, DungeonParamsSchema } from './layout';
 
 const region=[[{x:0,y:0},{x:30,y:0},{x:30,y:24},{x:0,y:24}]];
@@ -46,7 +47,7 @@ describe('dungeon layouts', () => {
     const reflected=normal.map(e=>e.type==='area'?{...e,rings:e.rings.map(r=>r.map(p=>({x:30-p.x,y:p.y})))}:e);
     expect(floorPoints(mirrored)).toEqual(floorPoints(reflected));
   });
-  for(const mode of ['building','dungeon','chamber'] as const) it(`${mode} is deterministic and every room is reachable from an entrance`, () => {
+  for(const mode of ['building','dungeon','chamber','cave'] as const) it(`${mode} is deterministic and every room is reachable from an entrance`, () => {
     for(let seed=1;seed<=8;seed++) {
       const input={seed,params:DungeonParamsSchema.parse({mode}),region,constraints:[],theme:{},grid:1};
       const result=dungeonLayout(input);
@@ -71,5 +72,76 @@ describe('dungeon layouts', () => {
     expect(constraints).toEqual(snapshot);
     reachable([...result,...constraints],region);
     expect(()=>dungeonLayout({seed:1,params:DungeonParamsSchema.parse({}),region,constraints:constraints.slice(0,1),theme:{},grid:1})).toThrow('manual wall seals');
+  });
+  it('injects flanking loops in building mode instead of a pure spanning tree', () => {
+    const result=dungeonLayout({seed:4,params:DungeonParamsSchema.parse({mode:'building',rooms:8}),region,constraints:[],theme:{},grid:1});
+    const floors=result.filter(e=>e.type==='area'&&e.role==='floor');
+    const doors=result.filter(e=>e.type==='door');
+    // 1 exterior entrance + (rooms - 1) tree doors + at least 1 loop door => doors.length > floors.length
+    expect(doors.length).toBeGreaterThan(floors.length);
+  });
+  it('generates curved terrain walls in cave mode and honors blueprint keepouts', () => {
+    const blueprintKeepout: Entity = {
+      id: 'bp-pillar',
+      type: 'area',
+      role: 'plateau',
+      usage: 'blueprint',
+      origin: 'manual',
+      layerId: 'base',
+      rev: 0,
+      rings: [[{ x: 13, y: 9 }, { x: 17, y: 9 }, { x: 17, y: 14 }, { x: 13, y: 14 }]],
+    };
+    const cave = dungeonLayout({
+      seed: 11,
+      params: DungeonParamsSchema.parse({ mode: 'cave', rooms: 5 }),
+      region,
+      constraints: [blueprintKeepout],
+      theme: {},
+      grid: 1,
+    });
+    const curvedWall = cave.find((e) => e.type === 'wall' && e.wallKind === 'terrain' && e.points.length > 4);
+    expect(curvedWall).toBeDefined();
+    expect(
+      cave.filter((e): e is Extract<Entity, { type: 'area' }> => e.type === 'area' && e.role === 'floor').every((e) => !pointInPolygon({ x: 15, y: 11.5 }, e.rings)),
+    ).toBe(true);
+  });
+  it('audits loops and single-secret choke risks', () => {
+    const base = { origin: 'manual' as const, layerId: 'base', rev: 0 };
+    const map = MapDocSchema.parse({
+      id: 'crypt',
+      name: 'Crypt',
+      kind: 'site',
+      bounds: { x: 0, y: 0, w: 30, h: 20 },
+      grid: { size: 1, visible: true },
+      layers: [{ id: 'base', name: 'Base', visible: true, locked: false, gmOnly: false }],
+      entities: {
+        r1: { ...base, id: 'r1', type: 'area', role: 'floor', name: 'Entry', rings: [[{ x: 0, y: 0 }, { x: 10, y: 0 }, { x: 10, y: 10 }, { x: 0, y: 10 }]] },
+        r2: { ...base, id: 'r2', type: 'area', role: 'floor', name: 'Sanctum', rings: [[{ x: 10, y: 0 }, { x: 20, y: 0 }, { x: 20, y: 10 }, { x: 10, y: 10 }]] },
+        sec: { ...base, id: 'sec', type: 'door', name: 'Hidden Panel', a: { x: 10, y: 3 }, b: { x: 10, y: 7 }, kind: 'secret', open: false },
+      },
+      generators: {},
+      revision: 1,
+      deleted: {},
+      fog: { enabled: false, revealed: [] },
+    });
+    const audit = auditDungeonTopology(map);
+    expect(audit.singleSecretChokes).toEqual(['Hidden Panel']);
+    expect(audit.sevenPillars).toHaveLength(7);
+    expect(audit.sevenPillars.find((p) => p.id === 'secrets')?.passed).toBe(false);
+    expect(audit.fakeForks).toEqual([]);
+    expect(audit.threeClueCount).toBe(0);
+    expect(audit.stockingCounts.Empty).toBe(0);
+
+    // Verify generated dungeons emit Moldvay room Place records and at least one vertical portal.
+    const gen = generateDungeon({
+      seed: 19,
+      params: DungeonParamsSchema.parse({ mode: 'dungeon', rooms: 8, density: 1 }),
+      region: [[{ x: 0, y: 0 }, { x: 60, y: 0 }, { x: 60, y: 60 }, { x: 0, y: 60 }]],
+      grid: 2,
+      theme: {},
+      constraints: [],
+    });
+    expect(gen.some((e) => e.type === 'place' && e.stockingRole !== undefined)).toBe(true);
+    expect(gen.some((e) => e.type === 'portal')).toBe(true);
   });
 });

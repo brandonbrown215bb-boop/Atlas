@@ -56,4 +56,31 @@ describe('open-interior generator flow',()=>{
     store.getState().execute('map.generateInterior',input);
     expect(Object.values(store.getState().world!.maps.town!.entities).find(e=>e.type==='place')).toMatchObject({name:'The Anchor',childMapId:'inside',entityIds:['building']});
   });
+
+  it('infers temple interior rooms from building identity instead of taprooms', () => {
+    const templeParent = structuredClone(parent);
+    templeParent.entities.building = {
+      ...templeParent.entities.building!,
+      type: 'area',
+      role: 'building',
+      name: 'Grand Temple',
+    } as Entity;
+    templeParent.entities.place = {
+      ...templeParent.entities.place!,
+      type: 'place',
+      name: 'Grand Temple',
+      category: 'Temple',
+    } as Entity;
+    const preview = previewInterior(templeParent, {
+      buildingId: 'building',
+      childMapId: 'temple-inside',
+      name: 'Grand Temple Interior',
+      seed: 7,
+      params: { purpose: 'random' },
+      theme: {},
+    });
+    const labels = Object.values(preview.entities).filter((e): e is Extract<Entity, { type: 'label' }> => e.type === 'label').map((l) => l.text);
+    expect(labels.some((t) => t === 'Sanctuary' || t === 'Shrine')).toBe(true);
+    expect(labels.includes('Taproom')).toBe(false);
+  });
 });

@@ -1,20 +1,26 @@
 import { activateMapPanel, navigateToMap } from '../model/navigation';
+import { auditDungeonTopology } from '../gen/dungeon/audit';
+import { formatFloorLabel } from '../geom/expandMap';
+import { ExteriorElevations, InteriorPreview } from './InteriorPreview';
 import { useEffect, useRef, useState } from 'react';
-import type { IDockviewPanelProps } from 'dockview-react';
 import { useStore } from 'zustand';
 import {
   DEFAULT_BIOMES,
   DistrictProfileSchema,
+  WALL_PRESET_DEFAULTS,
+  resolveWallChannels,
   type AreaRole,
+  type ConnectorKind,
   type Entity,
   type MapDoc,
   type PathRole,
   type PlaceEntity,
+  type RouteTier,
+  type WallKind,
 } from '../model/schema';
 import { DistrictControls } from './DistrictControls';
 import { worldStore } from '../model/store';
 import { viewStore } from '../model/viewStore';
-import { PanelHeaderBar } from './PanelHeaderBar';
 import { GenerationControls, useGenerationTarget } from './GenerationControls';
 import { resolveGenerationContext } from '../model/generationContext';
 import {
@@ -26,15 +32,14 @@ import {
 } from '../model/generationState';
 import { MapSettings } from './MapSettings';
 
-function ContextSettings({ map, target, props }: { map: MapDoc; target: SettingsTarget; props: IDockviewPanelProps }) {
+function ContextSettings({ map, target, panelId }: { map: MapDoc; target: SettingsTarget; panelId: string }) {
   const { context } = useGenerationTarget(map, target.panelId);
   const valid = target.mode === 'map' || context.key === target.key;
   useEffect(() => { if (!valid) generationState.setState({ settings: null }); }, [valid]);
   if (!valid) return null;
-  return <div data-testid={`panel-${props.api.id}`} style={{ height: '100%', overflow: 'auto' }}>
-    <PanelHeaderBar title={target.mode === 'map' ? 'Map settings' : 'Generation settings'} panelProps={props} />
+  return <div data-testid={`panel-${panelId}`} style={{ height: '100%', overflow: 'auto', padding: 8 }}>
     <button onClick={() => generationState.setState({ settings: null })}>Back to selection</button>
-    {target.mode === 'map' ? <MapSettings key={map.id} map={map} /> : <GenerationControls map={map} panelId={target.panelId} api={props.containerApi} detailed />}
+    {target.mode === 'map' ? <MapSettings key={map.id} map={map} /> : <GenerationControls map={map} panelId={target.panelId} detailed />}
   </div>;
 }
 
@@ -206,7 +211,7 @@ function TextAreaField(props: {
   );
 }
 
-export function InspectorPanel(props: IDockviewPanelProps) {
+export function InspectorPanel({ panelId = 'inspector' }: { panelId?: string }) {
   const world = useStore(worldStore, (s) => s.world);
   const activeMapId = useStore(worldStore, (s) => s.activeMapId);
   const selectedIds = useStore(viewStore, (s) => s.selectedEntityIds);
@@ -264,12 +269,12 @@ export function InspectorPanel(props: IDockviewPanelProps) {
   const single = selectedEntities.length === 1 ? selectedEntities[0]! : null;
 
   if (settings && settings.worldId === world?.meta.id && settings.mapId === activeMapId && map) {
-    return <ContextSettings map={map} target={settings} props={props} />;
+    return <ContextSettings map={map} target={settings} panelId={panelId} />;
   }
 
   return (
     <div
-      data-testid={`panel-${props.api.id}`}
+      data-testid={`panel-${panelId}`}
       style={{
         display: 'flex',
         flexDirection: 'column',
@@ -280,7 +285,6 @@ export function InspectorPanel(props: IDockviewPanelProps) {
         fontSize: 12,
       }}
     >
-      <PanelHeaderBar title="Inspector" panelProps={props} />
 
       <div
         style={{
@@ -301,9 +305,75 @@ export function InspectorPanel(props: IDockviewPanelProps) {
           <details><summary>More…</summary><button onClick={()=>worldStore.getState().execute('entity.returnToGenerated',{mapId:map.id,entityIds:selectedEntities.filter(e=>e.origin==='manual'&&e.genId).map(e=>e.id)})}>Allow regeneration of this part</button></details>
         </div>}
         {!map || selectedEntities.length === 0 ? (
-          <div style={{ color: 'var(--atlas-text-muted)' }}>
-            Select an entity to inspect
-          </div>
+          map && (map.kind === 'interior' || map.kind === 'site') && world ? (() => {
+            const groupId = map.floorGroupId ?? map.id;
+            const stack = Object.values(world.maps)
+              .filter((m) => (m.floorGroupId ?? m.id) === groupId)
+              .sort((a, b) => (a.level ?? 0) - (b.level ?? 0));
+            const audit = auditDungeonTopology(map);
+            return (
+              <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+                <div style={{ color: 'var(--atlas-text-muted)', fontSize: 11 }}>
+                  {map.name} · Level {formatFloorLabel(map.level ?? 0)} ({stack.length} {stack.length === 1 ? 'floor' : 'floors'})
+                </div>
+                <InteriorPreview map={map} />
+                <ExteriorElevations map={map} />
+                <div
+                  data-testid="dungeon-topology-audit"
+                  style={{
+                    display: 'flex',
+                    flexDirection: 'column',
+                    gap: 5,
+                    padding: 8,
+                    border: '1px solid var(--atlas-border)',
+                    borderRadius: 4,
+                    background: 'var(--atlas-surface)',
+                  }}
+                >
+                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                    <strong>Topology &amp; 7 Pillars</strong>
+                    <span style={{ fontSize: 11, color: audit.loops > 0 ? '#22c55e' : '#f59e0b' }}>
+                      {audit.xanderingRating} ({audit.loops} {audit.loops === 1 ? 'loop' : 'loops'})
+                    </span>
+                  </div>
+                  <div style={{ fontSize: 11, color: 'var(--atlas-text-muted)' }}>
+                    Rooms: {audit.roomCount} · Doors: {audit.doorCount} · Entrances: {audit.entranceCount} · Max dead-end: {audit.maxDeadEndDepth}
+                  </div>
+                  {audit.maxDeadEndDepth >= 3 && (
+                    <div style={{ fontSize: 11, color: '#fbbf24' }}>
+                      ⚠ Long dead-end branch (depth {audit.maxDeadEndDepth}): add a loop stair or secret passage.
+                    </div>
+                  )}
+                  {audit.singleSecretChokes.length > 0 && (
+                    <div style={{ fontSize: 11, color: '#f87171' }}>
+                      ⚠ Single-secret choke ({audit.singleSecretChokes.join(', ')}): add 3-clue redundancy or alternate route.
+                    </div>
+                  )}
+                  {audit.fakeForks.length > 0 && (
+                    <div style={{ fontSize: 11, color: '#fbbf24' }}>
+                      ⚠ Melan fake fork ({audit.fakeForks.join(', ')}): branch converges directly back without tactical detour.
+                    </div>
+                  )}
+                  <div style={{ fontSize: 11, color: 'var(--atlas-text-muted)' }}>
+                    OSE Stocking: Empty {audit.stockingCounts.Empty} · Monster {audit.stockingCounts.Monster} · Special {audit.stockingCounts.Special} · Trap {audit.stockingCounts.Trap}
+                    {audit.secretCount > 0 ? ` · Clues: ${audit.threeClueCount}/${audit.secretCount * 3}` : ''}
+                  </div>
+                  <div style={{ display: 'flex', flexDirection: 'column', gap: 3 }}>
+                    {audit.sevenPillars.map((p) => (
+                      <div key={p.id} title={p.tip} style={{ fontSize: 11, color: p.passed ? '#86efac' : '#fde68a' }}>
+                        {p.passed ? '✓' : '○'} {p.label}
+                      </div>
+                    ))}
+                  </div>
+                </div>
+                <div style={{ color: 'var(--atlas-text-muted)' }}>Select an entity to inspect details</div>
+              </div>
+            );
+          })() : (
+            <div style={{ color: 'var(--atlas-text-muted)' }}>
+              Select an entity to inspect
+            </div>
+          )
         ) : !single ? (
           <>
             <div style={{ fontWeight: 600 }}>
@@ -559,6 +629,26 @@ export function InspectorPanel(props: IDockviewPanelProps) {
                     ))}
                   </select>
                 </label>
+                {(single.role === 'road' || single.role === 'trail') && (
+                  <label style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                    <span style={{ width: 78, color: 'var(--atlas-text-muted)' }}>
+                      Route tier
+                    </span>
+                    <select
+                      value={single.routeTier ?? single.role}
+                      onChange={(e) =>
+                        updateEntity(single.id, { routeTier: e.target.value as RouteTier })
+                      }
+                      style={{ flex: 1 }}
+                    >
+                      <option value="highway">Highway (+50%)</option>
+                      <option value="road">Main road</option>
+                      <option value="track">Cart track (-20%)</option>
+                      <option value="gameTrail">Game trail (-35%)</option>
+                      <option value="secret">Secret path (-45%)</option>
+                    </select>
+                  </label>
+                )}
                 <NumberField
                   label="Path width (ft)"
                   value={single.width/.3048}
@@ -578,30 +668,72 @@ export function InspectorPanel(props: IDockviewPanelProps) {
               </>
             )}
 
-            {single.type === 'wall' && (
-              <>
-                <label style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
-                  <input
-                    type="checkbox"
-                    checked={single.blocksMove}
-                    onChange={(e) =>
-                      updateEntity(single.id, { blocksMove: e.target.checked })
-                    }
-                  />
-                  <span>Blocks movement</span>
-                </label>
-                <label style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
-                  <input
-                    type="checkbox"
-                    checked={single.blocksSight}
-                    onChange={(e) =>
-                      updateEntity(single.id, { blocksSight: e.target.checked })
-                    }
-                  />
-                  <span>Blocks sight</span>
-                </label>
-              </>
-            )}
+            {single.type === 'wall' && (() => {
+              const ch = resolveWallChannels(single);
+              return (
+                <>
+                  <label style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                    <span style={{ width: 78, color: 'var(--atlas-text-muted)' }}>
+                      Wall preset
+                    </span>
+                    <select
+                      value={ch.wallKind}
+                      onChange={(e) => {
+                        const kind = e.target.value as WallKind;
+                        updateEntity(single.id, { wallKind: kind, ...WALL_PRESET_DEFAULTS[kind] });
+                      }}
+                      style={{ flex: 1 }}
+                    >
+                      <option value="solid">Solid wall</option>
+                      <option value="terrain">Terrain / one-way</option>
+                      <option value="invisible">Invisible barrier</option>
+                      <option value="ethereal">Illusion / curtain</option>
+                      <option value="window">Window / slit</option>
+                    </select>
+                  </label>
+                  <label style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                    <input
+                      type="checkbox"
+                      checked={single.blocksMove}
+                      onChange={(e) =>
+                        updateEntity(single.id, { blocksMove: e.target.checked })
+                      }
+                    />
+                    <span>Blocks movement</span>
+                  </label>
+                  <label style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                    <input
+                      type="checkbox"
+                      checked={single.blocksSight}
+                      onChange={(e) =>
+                        updateEntity(single.id, { blocksSight: e.target.checked })
+                      }
+                    />
+                    <span>Blocks sight</span>
+                  </label>
+                  <label style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                    <input
+                      type="checkbox"
+                      checked={ch.blocksLight}
+                      onChange={(e) =>
+                        updateEntity(single.id, { blocksLight: e.target.checked })
+                      }
+                    />
+                    <span>Blocks light</span>
+                  </label>
+                  <label style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                    <input
+                      type="checkbox"
+                      checked={ch.blocksSound}
+                      onChange={(e) =>
+                        updateEntity(single.id, { blocksSound: e.target.checked })
+                      }
+                    />
+                    <span>Blocks sound</span>
+                  </label>
+                </>
+              );
+            })()}
 
             {single.type === 'door' && (
               <>
@@ -629,6 +761,27 @@ export function InspectorPanel(props: IDockviewPanelProps) {
                     }
                   />
                   <span>Open</span>
+                </label>
+                <label style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                  <input
+                    type="checkbox"
+                    checked={Boolean(single.locked)}
+                    onChange={(e) =>
+                      updateEntity(single.id, { locked: e.target.checked })
+                    }
+                  />
+                  <span>Locked</span>
+                </label>
+                <label style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                  <span style={{ width: 78, color: 'var(--atlas-text-muted)' }}>
+                    Swing
+                  </span>
+                  <button
+                    type="button"
+                    onClick={() => updateEntity(single.id, { swing: single.swing === -1 ? 1 : -1 })}
+                  >
+                    Flip swing ({single.swing === -1 ? 'reverse' : 'normal'})
+                  </button>
                 </label>
               </>
             )}
@@ -742,6 +895,37 @@ export function InspectorPanel(props: IDockviewPanelProps) {
                 />
                 <label style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
                   <span style={{ width: 78, color: 'var(--atlas-text-muted)' }}>
+                    Connector
+                  </span>
+                  <select
+                    value={single.connectorKind ?? 'portal'}
+                    onChange={(e) =>
+                      updateEntity(single.id, { connectorKind: e.target.value as ConnectorKind })
+                    }
+                    style={{ flex: 1 }}
+                  >
+                    <option value="portal">Map link (portal)</option>
+                    <option value="stairsUp">Stairs Up</option>
+                    <option value="stairsDown">Stairs Down</option>
+                    <option value="spiralStairs">Spiral Stairs</option>
+                    <option value="ladder">Ladder / Hatch</option>
+                    <option value="slope">Slope / Ramp</option>
+                    <option value="chute">Shaft / Chute</option>
+                    <option value="balcony">Balcony / Drop</option>
+                    <option value="rubble">Rubble Choke</option>
+                    <option value="pit">Pit Drop</option>
+                    <option value="secretStair">Secret Stair</option>
+                    <option value="elevator">Elevator / Pulley</option>
+                    <option value="waterfall">Underground Waterfall</option>
+                    <option value="siphon">U-Bend Siphon</option>
+                    <option value="teleport">Teleport Rune</option>
+                    <option value="hatch">Floor Hatch</option>
+                    <option value="chimney">Natural Chimney</option>
+                    <option value="passwall">Brute-Force Passwall</option>
+                  </select>
+                </label>
+                <label style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                  <span style={{ width: 78, color: 'var(--atlas-text-muted)' }}>
                     Target map
                   </span>
                   <select
@@ -832,7 +1016,6 @@ export function InspectorPanel(props: IDockviewPanelProps) {
                           const panelId =
                             viewStore.getState().activeMapPanelId ?? 'map-main';
                           activateMapPanel(panelId, map.id);
-                          props.containerApi.getPanel(panelId)?.api.setActive();
                           void generateFromContext(
                             map,
                             ctx,
@@ -913,6 +1096,13 @@ export function InspectorPanel(props: IDockviewPanelProps) {
                     }}
                   >
                     <div style={{ fontWeight: 600 }}>Place &amp; Notes</div>
+                    {isSettlementBuilding && single.type === 'area' && (
+                      <ExteriorElevations
+                        map={map}
+                        building={single}
+                        stories={linkedPlace?.childMapId ? world?.maps[linkedPlace.childMapId]?.elevationStories : undefined}
+                      />
+                    )}
                     <TextField
                       label="Category"
                       list="inspector-place-categories"
@@ -971,9 +1161,6 @@ export function InspectorPanel(props: IDockviewPanelProps) {
                                 viewStore.getState().activeMapPanelId ??
                                 'map-main';
                               activateMapPanel(panelId, map.id);
-                              props.containerApi
-                                .getPanel(panelId)
-                                ?.api.setActive();
                               void generateFromContext(
                                 map,
                                 ctx,

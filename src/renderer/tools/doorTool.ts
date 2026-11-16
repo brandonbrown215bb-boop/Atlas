@@ -37,6 +37,7 @@ export function createDoorTool(): MapTool {
           b: placement.b,
           kind,
           open: false,
+          ...(viewStore.getState().doorLocked ? { locked: true } : {}),
           gmOnly: kind === 'secret' ? true : undefined,
         },
       });

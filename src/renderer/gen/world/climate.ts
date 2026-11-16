@@ -85,6 +85,19 @@ export function buildClimate(terrain: Terrain, input: GeneratorInput<unknown>) {
   const air = new Float64Array(cells.length);
   const oroRain = new Float64Array(cells.length);
   const winds = lats.map(windVector);
+  const mountainProps = input.constraints.filter(
+    (e): e is Extract<Entity, { type: 'prop' }> => e.type === 'prop' && e.symbolKind === 'mountain',
+  );
+  const propLift = cells.map((c) => {
+    if (!c.land || !mountainProps.length) return 0;
+    let boost = 0;
+    for (const m of mountainProps) {
+      const r = Math.max(m.w ?? 0, m.h ?? 0, terrain.size * 0.025);
+      const d = Math.hypot(c.point.x - m.x, c.point.y - m.y);
+      if (d < r * 1.4) boost = Math.max(boost, (1 - d / (r * 1.4)) * 0.22);
+    }
+    return boost;
+  });
 
   if (cells.length > 0) {
     for (let i = 0; i < cells.length; i++) air[i] = isOcean[i] ? 1.0 : 0.35;
@@ -111,7 +124,7 @@ export function buildClimate(terrain: Terrain, input: GeneratorInput<unknown>) {
           if (align > 0.05) {
             wSum += align;
             aSum += align * air[j]!;
-            eSum += align * cj.elevation;
+            eSum += align * (cj.elevation + propLift[j]!);
             dSum += align * len;
           }
         }
@@ -123,7 +136,7 @@ export function buildClimate(terrain: Terrain, input: GeneratorInput<unknown>) {
         const upwindElev = eSum / wSum;
         const stepDist = dSum / wSum;
         const decay = Math.exp(-1.8 * (stepDist / (terrain.size || 1)));
-        const climb = Math.max(0, ci.elevation - upwindElev);
+        const climb = Math.max(0, (ci.elevation + propLift[i]!) - upwindElev);
         const condensed = Math.min(upwindAir * 0.72, climb * 2.4 * upwindAir);
         oroRain[i] = condensed * 1.45;
         const lakeBoost = ci.lake ? 0.14 : 0;
@@ -135,12 +148,17 @@ export function buildClimate(terrain: Terrain, input: GeneratorInput<unknown>) {
   const values = cells.map((c, i) => {
     const { x, y } = coords[i]!;
     const lat = lats[i]!;
+    // Western coastal waters chill slightly vs warm eastern ocean gyres in temperate belts
+    const hasWestOcean = c.land && c.neighbors.some((n) => isOcean[n] && cells[n]!.point.x < c.point.x);
+    const hasEastOcean = c.land && c.neighbors.some((n) => isOcean[n] && cells[n]!.point.x > c.point.x);
+    const gyreTemp = hasWestOcean && !hasEastOcean ? -0.04 : hasEastOcean && !hasWestOcean ? 0.04 : 0;
+    const gyreRain = hasWestOcean && !hasEastOcean ? -0.03 : hasEastOcean && !hasWestOcean ? 0.04 : 0;
     const temperature = clamp(
-      1 - Math.abs(lat) / 90 - Math.max(0, c.elevation - 0.45) * 0.75 + settings.temperature + noise(x * 3 + 12, y * 3) * 0.07,
+      1 - Math.abs(lat) / 90 - Math.max(0, c.elevation + propLift[i]! - 0.45) * 0.75 + settings.temperature + gyreTemp + noise(x * 3 + 12, y * 3) * 0.07,
     );
     const localNoise = noise(x * 3, y * 3 + 21) * 0.16 + noise(x * 8, y * 8) * 0.06;
     const baseMoisture = hasWaterCells || cells.some(cell => cell.elevation <= seaLevel)
-      ? 0.26 + air[i]! * 0.46 + oroRain[i]! * 0.45 + latitudeMoistureBias(lat)
+      ? 0.26 + air[i]! * 0.46 + oroRain[i]! * 0.45 + latitudeMoistureBias(lat) + gyreRain
       : 0.5 + noise(x * 3, y * 3 + 21) * 0.14;
     const moisture = clamp(baseMoisture + localNoise + settings.moisture);
     const rule =

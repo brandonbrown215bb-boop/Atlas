@@ -69,9 +69,23 @@ export function runGenerator(map: MapDoc, options: {
   if(options.type==='world'&&options.params.mode==='populate'&&source?.type==='area'&&source.role==='land'&&source.usage!=='boundary')input.constraints.push(source);
   if (options.type === 'city' && region.district) input.params = definition.params.parse({...options.params,...region.district});
   if (options.type === 'city') {
-    const bounds=getEntityBounds(region)!;
-    input.constraints.push(...geographicEntities(map).filter(e=>e.origin==='generated'&&e.genId!==options.genId&&!isWorldSymbol(e)&&
-      e.id!==region.id&&!!getEntityBounds(e)&&boxesIntersect(bounds,getEntityBounds(e)!)));
+    const bounds = getEntityBounds(region)!;
+    const nearBounds = {
+      minX: bounds.minX - 36,
+      minY: bounds.minY - 36,
+      maxX: bounds.maxX + 36,
+      maxY: bounds.maxY + 36,
+    };
+    const existingIds = new Set(input.constraints.map((c) => c.id));
+    input.constraints.push(
+      ...geographicEntities(map).filter((e) => {
+        if (existingIds.has(e.id) || e.id === region.id || isWorldSymbol(e) || e.usage === 'reference') return false;
+        const eb = getEntityBounds(e);
+        if (!eb) return false;
+        if (e.origin === 'generated') return e.genId !== options.genId && boxesIntersect(bounds, eb);
+        return e.type === 'area' && e.role === 'water' && boxesIntersect(nearBounds, eb);
+      }),
+    );
   }
   const groupId = map.generators[options.genId]?.groupId ?? options.genId;
   map.groups ??= {};
@@ -100,21 +114,26 @@ export function runGenerator(map: MapDoc, options: {
     e.entityIds=e.entityIds.filter(id=>!!map.entities[id]);e.rev=map.revision;
   }
   const ids: string[] = [];
+  const idMap = new Map(validated.map(e => [e.id, `${options.genId}:${map.revision}:${e.id}`]));
   for (const entity of validated) {
-    const id = `${options.genId}:${map.revision}:${entity.id}`;
+    const id = idMap.get(entity.id)!;
     if (map.entities[id]) throw new Error(`Generated id already exists: ${id}`);
-    map.entities[id] = { ...entity, id, genId: options.genId, groupId, rev: map.revision, layerId: layer.id };
+    const remapped = entity.type === 'place'
+      ? { ...entity, entityIds: entity.entityIds.map(eid => idMap.get(eid) ?? eid) }
+      : entity;
+    map.entities[id] = { ...remapped, id, genId: options.genId, groupId, rev: map.revision, layerId: layer.id };
     if(entity.type==='path'&&entity.role==='river'){map.riverNodes??={};if(entity.startNodeId)map.riverNodes[entity.startNodeId]=entity.points[0]!;if(entity.endNodeId)map.riverNodes[entity.endNodeId]=entity.points[entity.points.length-1]!;}
     delete map.deleted[id]; ids.push(id);
   }
   map.generators[options.genId] = { type: options.type, seed: options.seed, params: options.params,
     regionEntityId: region.id, boundary: region.rings.map(r=>r.map(p=>({...p}))), groupId, algorithmVersion: Number(options.params.algorithmVersion ?? 2), layerId: layer.id, themeName: options.themeName ?? 'default' };
   if (input.terrainResult) { map.terrain ??= {}; map.terrain[options.genId] = input.terrainResult; }
-  if (options.type === 'world') {
-    // Paint terrain beneath deliberate edits, with rivers and symbols above the area fills.
+  if (options.type === 'world' || options.type === 'city') {
+    // Paint terrain/district fills beneath deliberate edits, with buildings/rivers/symbols above.
     const outputIds = new Set(ids), entities = Object.values(map.entities);
-    const backgrounds = entities.filter(e => outputIds.has(e.id) && e.type === 'area');
-    const foregrounds = entities.filter(e => outputIds.has(e.id) && e.type !== 'area');
+    const isBackground = (e: Entity) => e.type === 'area' && (options.type === 'world' || e.role !== 'building');
+    const backgrounds = entities.filter(e => outputIds.has(e.id) && isBackground(e));
+    const foregrounds = entities.filter(e => outputIds.has(e.id) && !isBackground(e));
     const kept = entities.filter(e => e.id !== region.id && !outputIds.has(e.id));
     map.entities = Object.fromEntries([region, ...backgrounds, ...kept, ...foregrounds].map(e => [e.id, e]));
   }

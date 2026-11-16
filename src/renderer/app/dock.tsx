@@ -1,5 +1,5 @@
-import type { DockviewApi } from 'dockview-react';
-import { recoverablePanel } from './PanelErrorBoundary';
+import { PanelErrorBoundary } from './PanelErrorBoundary';
+import type { FloatingPanelState } from './hudStore';
 import { InspectorPanel } from '../panels/InspectorPanel';
 import { LayersPanel } from '../panels/LayersPanel';
 import { MapsPanel } from '../panels/MapsPanel';
@@ -7,50 +7,39 @@ import { PlacesPanel } from '../panels/PlacesPanel';
 import { SettingsPanel } from '../panels/SettingsPanel';
 import { AssetsPanel } from '../panels/AssetsPanel';
 import { GeneratorPanel } from '../panels/GeneratorPanel';
+import { ToolsPanel } from '../panels/ToolsPanel';
 import { MapView } from '../render/MapView';
 
-export interface MapPanelParams {
-  mapId?: string;
-}
-
-export const panelComponents = {
-  map: recoverablePanel(MapView),
-  maps: recoverablePanel(MapsPanel),
-  layers: recoverablePanel(LayersPanel),
-  inspector: recoverablePanel(InspectorPanel),
-  places: recoverablePanel(PlacesPanel),
-  settings: recoverablePanel(SettingsPanel),
-  assets: recoverablePanel(AssetsPanel),
-  generator: recoverablePanel(GeneratorPanel),
-};
-
-export type PanelComponentKey = keyof typeof panelComponents;
-
-export function buildDefaultLayout(api: DockviewApi): void {
-  api.clear();
-  const mapsPanel = api.addPanel({
-    id: 'maps',
-    component: 'maps',
-    title: 'Maps',
-  });
-  const mapPanel = api.addPanel({
-    id: 'map-main',
-    component: 'map',
-    title: 'Map',
-    params: {},
-    position: { referencePanel: mapsPanel, direction: 'right' },
-  });
-  api.addPanel({
-    id: 'layers',
-    component: 'layers',
-    title: 'Layers',
-    position: { referencePanel: mapPanel, direction: 'right' },
-  });
-  api.addPanel({
-    id: 'inspector',
-    component: 'inspector',
-    title: 'Inspector',
-    position: { referencePanel: 'layers', direction: 'below' },
-  });
-  mapsPanel.api.setSize({ width: 220 });
+export function renderPanelBody(panel: FloatingPanelState) {
+  let content = null;
+  switch (panel.kind) {
+    case 'tools':
+      content = <ToolsPanel />;
+      break;
+    case 'maps':
+      content = <MapsPanel panelId={panel.id} />;
+      break;
+    case 'layers':
+      content = <LayersPanel panelId={panel.id} />;
+      break;
+    case 'inspector':
+      content = <InspectorPanel panelId={panel.id} />;
+      break;
+    case 'generator':
+      content = <GeneratorPanel panelId={panel.id} />;
+      break;
+    case 'assets':
+      content = <AssetsPanel />;
+      break;
+    case 'places':
+      content = <PlacesPanel panelId={panel.id} />;
+      break;
+    case 'settings':
+      content = <SettingsPanel panelId={panel.id} />;
+      break;
+    case 'map':
+      content = <MapView panelId={panel.id} isPopout={panel.mode === 'popout'} />;
+      break;
+  }
+  return <PanelErrorBoundary>{content}</PanelErrorBoundary>;
 }

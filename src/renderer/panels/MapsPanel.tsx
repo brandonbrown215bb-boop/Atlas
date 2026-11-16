@@ -1,8 +1,8 @@
+import { formatFloorLabel } from '../geom/expandMap';
 import { TraceGeographyDialog } from './TraceGeographyDialog';
 import { FOOT, MILE } from '../model/mapDefaults';
 import { navigateToMap } from '../model/navigation';
 import { useState } from 'react';
-import type { IDockviewPanelProps } from 'dockview-react';
 import { useStore } from 'zustand';
 import { hasParentChanged } from '../geom/pullFromParent';
 import { parseSvg, type SvgDrawing } from '../import/svg';
@@ -26,7 +26,7 @@ function buildMapTree(
   return result;
 }
 
-export function MapsPanel(props: IDockviewPanelProps) {
+export function MapsPanel({ panelId = 'maps' }: { panelId?: string }) {
   const world = useStore(worldStore, (s) => s.world);
   const worldPath = useStore(worldStore, (s) => s.worldPath);
   const activeMapId = useStore(worldStore, (s) => s.activeMapId);
@@ -104,7 +104,7 @@ export function MapsPanel(props: IDockviewPanelProps) {
 
   return (
     <div
-      data-testid={`panel-${props.api.id}`}
+      data-testid={`panel-${panelId}`}
       style={{
         display: 'flex',
         flexDirection: 'column',
@@ -216,6 +216,96 @@ export function MapsPanel(props: IDockviewPanelProps) {
           }}
         >
           <div style={{ fontWeight: 600 }}>New Map</div>
+          {activeMap && (activeMap.kind === 'interior' || activeMap.kind === 'site') && world && (() => {
+            const groupId = activeMap.floorGroupId ?? activeMap.id;
+            const stack = Object.values(world.maps)
+              .filter((m) => (m.floorGroupId ?? m.id) === groupId)
+              .sort((a, b) => (a.level ?? 0) - (b.level ?? 0));
+            const topLevel = stack[stack.length - 1]?.level ?? 0;
+            const botLevel = stack[0]?.level ?? 0;
+            return (
+              <div style={{ display: 'flex', flexWrap: 'wrap', alignItems: 'center', gap: 4 }}>
+                <span style={{ fontSize: 11, color: 'var(--atlas-text-muted)' }}>Floors:</span>
+                {stack.map((fl) => (
+                  <button
+                    key={fl.id}
+                    type="button"
+                    data-testid={`btn-floor-${formatFloorLabel(fl.level ?? 0)}`}
+                    onClick={() => navigateToMap(fl.id)}
+                    style={{
+                      padding: '2px 6px',
+                      fontSize: 11,
+                      fontWeight: fl.id === activeMap.id ? 700 : 400,
+                      borderColor: fl.id === activeMap.id ? 'var(--atlas-accent)' : 'var(--atlas-border)',
+                    }}
+                  >
+                    {formatFloorLabel(fl.level ?? 0)}
+                  </button>
+                ))}
+                <button
+                  type="button"
+                  data-testid="btn-add-basement"
+                  title="Add Basement Level Below"
+                  onClick={() => {
+                    const lowest = stack[0] ?? activeMap;
+                    const newId = `map-${crypto.randomUUID().slice(0, 8)}`;
+                    const res = worldStore.getState().execute('map.createFloor', {
+                      sourceMapId: lowest.id,
+                      levelDelta: -1,
+                      newId,
+                    }) as { id: string };
+                    navigateToMap(res.id);
+                  }}
+                  style={{ padding: '2px 5px', fontSize: 11 }}
+                >
+                  +{formatFloorLabel(botLevel - 1)}
+                </button>
+                <button
+                  type="button"
+                  data-testid="btn-add-upper-floor"
+                  title="Add Upper Floor Level"
+                  onClick={() => {
+                    const highest = stack[stack.length - 1] ?? activeMap;
+                    const newId = `map-${crypto.randomUUID().slice(0, 8)}`;
+                    const res = worldStore.getState().execute('map.createFloor', {
+                      sourceMapId: highest.id,
+                      levelDelta: 1,
+                      newId,
+                    }) as { id: string };
+                    navigateToMap(res.id);
+                  }}
+                  style={{ padding: '2px 5px', fontSize: 11 }}
+                >
+                  +{formatFloorLabel(topLevel + 1)}
+                </button>
+              </div>
+            );
+          })()}
+          {activeMap && (activeMap.kind === 'world' || activeMap.kind === 'region') && (
+            <div style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
+              <span style={{ fontSize: 11, color: 'var(--atlas-text-muted)' }}>Expand Seam:</span>
+              {(['N', 'S', 'E', 'W'] as const).map((dir) => (
+                <button
+                  key={dir}
+                  type="button"
+                  data-testid={`btn-expand-${dir}`}
+                  title={`Create seam-matched ${dir} neighbor map`}
+                  onClick={() => {
+                    const id = `map-${crypto.randomUUID().slice(0, 8)}`;
+                    worldStore.getState().execute('map.expandNeighbor', {
+                      sourceMapId: activeMap.id,
+                      direction: dir,
+                      newId: id,
+                    });
+                    navigateToMap(id);
+                  }}
+                  style={{ flex: 1, padding: '2px 4px', fontSize: 11 }}
+                >
+                  +{dir}
+                </button>
+              ))}
+            </div>
+          )}
           <div style={{ display: 'flex', gap: 4 }}>
             <input
               type="text"

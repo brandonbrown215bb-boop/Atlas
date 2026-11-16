@@ -5,6 +5,7 @@ import { viewStore, type ToolId } from '../model/viewStore';
 import type { AreaRole, MapKind, PathRole } from '../model/schema';
 
 const names: Record<ToolId, string> = { select: 'Select', prop: 'Objects', area: 'Area', biome: 'Paint biome',
+  landBrush: 'Paint land', waterBrush: 'Paint water',
   path: 'Path', pointEdit: 'Edit outline', wall: 'Wall', door: 'Door', light: 'Light', label: 'Label',
   portal: 'Portal', developArea: 'Create location', measure: 'Measure', fog: 'Fog' };
 
@@ -31,6 +32,8 @@ interface QuickAction {
 function quickActionsForMap(kind?: MapKind): QuickAction[] {
   if (kind === 'world' || kind === 'region') {
     return [
+      { id: 'land-brush', label: 'Paint land', tool: 'landBrush' },
+      { id: 'water-brush', label: 'Paint water', tool: 'waterBrush' },
       { id: 'land', label: 'Land', tool: 'area', areaRole: 'land' },
       { id: 'water', label: 'Water', tool: 'area', areaRole: 'water' },
       { id: 'river', label: 'River', tool: 'path', pathRole: 'river' },

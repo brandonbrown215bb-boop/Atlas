@@ -1,10 +1,9 @@
 import { useEffect, useState } from 'react';
-import type { IDockviewPanelProps } from 'dockview-react';
 import { PackSettings } from './PackSettings';
 
 type AgentServerInfo = Awaited<ReturnType<typeof window.atlasApi.getAgentInfo>>;
 
-export function SettingsPanel(props: IDockviewPanelProps) {
+export function SettingsPanel({ panelId = 'settings' }: { panelId?: string }) {
   const [info, setInfo] = useState<AgentServerInfo | null>(null);
   const [copied, setCopied] = useState(false);
 
@@ -45,7 +44,7 @@ export function SettingsPanel(props: IDockviewPanelProps) {
 
   return (
     <div
-      data-testid={`panel-${props.api.id}`}
+      data-testid={`panel-${panelId}`}
       style={{
         display: 'flex',
         flexDirection: 'column',

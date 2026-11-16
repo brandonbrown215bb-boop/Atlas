@@ -15,6 +15,12 @@ ipcRenderer.on('atlas:history', (_event, action: 'undo' | 'redo') => {
   }));
 });
 
+let beforeCloseFlush: (() => Promise<void>) | null = null;
+ipcRenderer.on('atlas:before-close', () => {
+  const job = beforeCloseFlush ? beforeCloseFlush() : Promise.resolve();
+  void job.finally(() => ipcRenderer.send('atlas:ready-to-close'));
+});
+
 export interface RecentWorldInfo {
   id: string;
   name: string;
@@ -60,7 +66,17 @@ export interface AtlasApi {
   setPackScale: (id: string, pxPerSquare: number) => Promise<Pack[]>;
   onPackProgress: (handler: (progress: PackProgress) => void) => () => void;
   platform: NodeJS.Platform;
+  getMainWindowBounds: () => Promise<{ x: number; y: number; width: number; height: number } | null>;
   closePopout: (frameName: string) => Promise<void>;
+  onPopoutDragOverMain: (
+    handler: (payload: { id: string; over: boolean; relX: number; relY: number }) => void,
+  ) => () => void;
+  onPopoutDockBack: (
+    handler: (payload: { id: string; relX: number; relY: number }) => void,
+  ) => () => void;
+  onPopoutClosed: (handler: (id: string) => void) => () => void;
+  loadUiLayout: () => Promise<unknown | null>;
+  saveUiLayout: (layout: unknown) => Promise<{ ok: boolean }>;
   pickFolder: (title?: string) => Promise<string | null>;
   createWorld: (worldDir: string, name: string) => Promise<WorldActionResult>;
   openWorld: (worldDir: string) => Promise<OpenWorldResult>;
@@ -94,6 +110,7 @@ export interface AtlasApi {
     reqId: string,
     payload: { ok: boolean; result?: unknown; error?: string },
   ) => void;
+  setBeforeCloseFlush: (fn: (() => Promise<void>) | null) => void;
 }
 
 const api: AtlasApi = {
@@ -121,7 +138,31 @@ const api: AtlasApi = {
     return () => ipcRenderer.removeListener('atlas:packs-progress', listener);
   },
   platform: process.platform,
+  getMainWindowBounds: () => ipcRenderer.invoke('atlas:get-main-window-bounds'),
   closePopout: (frameName: string) => ipcRenderer.invoke('atlas:close-popout', frameName),
+  onPopoutDragOverMain: (handler) => {
+    const listener = (
+      _event: Electron.IpcRendererEvent,
+      payload: { id: string; over: boolean; relX: number; relY: number },
+    ) => handler(payload);
+    ipcRenderer.on('atlas:popout-drag-over-main', listener);
+    return () => ipcRenderer.removeListener('atlas:popout-drag-over-main', listener);
+  },
+  onPopoutDockBack: (handler) => {
+    const listener = (
+      _event: Electron.IpcRendererEvent,
+      payload: { id: string; relX: number; relY: number },
+    ) => handler(payload);
+    ipcRenderer.on('atlas:popout-dock-back', listener);
+    return () => ipcRenderer.removeListener('atlas:popout-dock-back', listener);
+  },
+  onPopoutClosed: (handler) => {
+    const listener = (_event: Electron.IpcRendererEvent, id: string) => handler(id);
+    ipcRenderer.on('atlas:popout-closed', listener);
+    return () => ipcRenderer.removeListener('atlas:popout-closed', listener);
+  },
+  loadUiLayout: () => ipcRenderer.invoke('atlas:ui-layout-load'),
+  saveUiLayout: (layout: unknown) => ipcRenderer.invoke('atlas:ui-layout-save', layout),
   pickFolder: (title?: string) => ipcRenderer.invoke('atlas:pick-folder', title),
   createWorld: (worldDir: string, name: string) =>
     ipcRenderer.invoke('atlas:world-create', worldDir, name),
@@ -160,6 +201,9 @@ const api: AtlasApi = {
   },
   sendAgentReply: (reqId, payload) => {
     ipcRenderer.send('atlas:agent-reply', reqId, payload);
+  },
+  setBeforeCloseFlush: (fn) => {
+    beforeCloseFlush = fn;
   },
 };
 

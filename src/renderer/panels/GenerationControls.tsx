@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from 'react';
 import { useStore } from 'zustand';
-import type { DockviewApi } from 'dockview-react';
+import { hudStore } from '../app/hudStore';
 import { resolveGenerationContext, resultContext, resultName } from '../model/generationContext';
 import { defaultGenerationDraft, draftKey, generationState, generateFromContext, selectGenerationResult,
   cancelGeneration, prepareTerrainUpgrade, type GenerationDraft } from '../model/generationState';
@@ -9,10 +9,11 @@ import { viewStore } from '../model/viewStore';
 import { activateMapPanel, navigateToMap } from '../model/navigation';
 import type { MapDoc } from '../model/schema';
 import { ROOM_PURPOSES } from '../gen/dungeon/dressing';
-import { DistrictControls, districtPresets } from './DistrictControls';
+import { DistrictControls, districtPresets, matchingPresetName } from './DistrictControls';
 import { WorldClimateEditor } from './WorldClimateEditor';
 import { SettlementSuggestions } from './SettlementSuggestions';
 import { cityDiagnostics } from '../gen/city/diagnostics';
+import { auditDungeonTopology } from '../gen/dungeon/audit';
 import { FOOT } from '../model/mapDefaults';
 import { WorldUpgradePreview } from './WorldUpgradePreview';
 import { applyGenerationPreview } from '../render/generationJob';
@@ -41,16 +42,14 @@ export function useGenerationTarget(map: MapDoc, panelId: string) {
   return { context, draft, update, patchParams, worldId, key };
 }
 
-export function openGenerationSettings(map: MapDoc, panelId: string, key: string, api: DockviewApi, mode: 'generation' | 'map' = 'generation') {
+export function openGenerationSettings(map: MapDoc, panelId: string, key: string, mode: 'generation' | 'map' = 'generation') {
   activateMapPanel(panelId, map.id);
   generationState.setState({ settings: { worldId: worldStore.getState().world!.meta.id, mapId: map.id, panelId, key, mode } });
-  let panel = api.getPanel('inspector');
-  if (!panel) panel = api.addPanel({ id: 'inspector', component: 'inspector', title: 'Inspector' });
-  panel.api.setActive();
+  hudStore.getState().openOrFocusPanel('inspector');
 }
 
-export function GenerationControls({ map, panelId, api, detailed = false }: {
-  map: MapDoc; panelId: string; api: DockviewApi; detailed?: boolean;
+export function GenerationControls({ map, panelId, detailed = false }: {
+  map: MapDoc; panelId: string; detailed?: boolean;
 }) {
   const { context: c, draft: d, update, patchParams: patch, worldId } = useGenerationTarget(map, panelId);
   const [upgrade, setUpgrade] = useState<Awaited<ReturnType<typeof prepareTerrainUpgrade>>>(null);
@@ -83,7 +82,7 @@ export function GenerationControls({ map, panelId, api, detailed = false }: {
   const chooseResult = (id: string, settings = false) => {
     activate();
     selectGenerationResult(map, id);
-    if (settings) openGenerationSettings(map, panelId, resultContext(map, id).key, api);
+    if (settings) openGenerationSettings(map, panelId, resultContext(map, id).key);
   };
   const number = (key: string, label: string, min: number, max: number, step = 1, scale = 1) => <label className="generation-field" key={key}>
     {label} <input aria-label={label} type="number" min={min} max={max} step={step} value={Number((Number(p[key]) / scale).toFixed(3))}
@@ -112,10 +111,19 @@ export function GenerationControls({ map, panelId, api, detailed = false }: {
         {p.mode !== 'populate' && <label className="generation-field">Land amount <input aria-label="Land amount" type="range" min="0.15" max="0.85" step="0.05" value={1 - p.seaLevel} onChange={e => patch({ seaLevel: Number((1 - Number(e.target.value)).toFixed(2)) })} /></label>}
         {number('ruggedness', 'Ruggedness', 0, 1, .05)}{check('rivers', 'Rivers')}
       </> : c.type === 'city' ? <>
-        <label className="generation-field">Preset <select aria-label="District preset" value="" onChange={e => patch(districtPresets[e.target.value]!)}><option value="">Custom</option>{Object.keys(districtPresets).map(name => <option key={name}>{name}</option>)}</select></label>
+        <label className="generation-field" title="Hamlet: 4-8 buildings on a lane; Town/City: full street blocks">Scale <select aria-label="Settlement scale" value={p.scale ?? 'town'} onChange={e => patch({ scale: e.target.value })}>
+          <option value="hamlet">Hamlet (4-8 buildings)</option><option value="village">Village</option><option value="town">Town</option><option value="city">City</option>
+        </select></label>
+        {p.scale !== 'hamlet' && <label className="generation-field" title="Auto adds walls above 250k m²; Walled forces walls to fit">Walls <select aria-label="City walls" value={p.walls ?? 'auto'} onChange={e => patch({ walls: e.target.value })}>
+          <option value="auto">Walls: Auto</option><option value="walled">Walled</option><option value="open">Open (no walls)</option>
+        </select></label>}
+        <label className="generation-field">Preset <select aria-label="District preset" value={matchingPresetName({ density: p.density, wealth: p.wealth, activity: p.activity, access: p.access })} onChange={e => { if (e.target.value) patch(districtPresets[e.target.value]!); }}><option value="">Custom</option>{Object.keys(districtPresets).map(name => <option key={name}>{name}</option>)}</select></label>
         {number('density', 'District density', 0, 1, .05)}
-      </> : c.type === 'glade' ? <>{number('clearings', 'Clearing count', 1, 20)}{number('density', 'Tree density', 0, 3, .25)}</> : <>
-        {(c.kind !== 'building' || detailed) && <label className="generation-field">Layout <select aria-label="Layout mode" value={p.mode} onChange={e => patch({ mode: e.target.value })}><option value="building">Building rooms</option><option value="dungeon">Dungeon and corridors</option><option value="chamber">Chamber and alcoves</option></select></label>}
+      </> : c.type === 'glade' ? <>
+        <label className="generation-field">Preset <select aria-label="Outdoor preset" value={p.preset ?? 'woodland'} onChange={e => patch({ preset: e.target.value })}><option value="woodland">Woodland glades</option><option value="roadside">Roadside hedgerows</option><option value="ruins">Overgrown ruins</option></select></label>
+        {number('clearings', 'Clearing count', 1, 20)}{number('density', 'Tree density', 0, 3, .25)}
+      </> : <>
+        {(c.kind !== 'building' || detailed) && <label className="generation-field">Layout <select aria-label="Layout mode" value={p.mode} onChange={e => patch({ mode: e.target.value })}><option value="building">Building rooms</option><option value="dungeon">Dungeon and corridors</option><option value="chamber">Chamber and alcoves</option><option value="cave">Natural cave</option></select></label>}
         {number('rooms', 'Room count', 1, 20)}{purpose()}
       </>}
     </>}
@@ -127,7 +135,7 @@ export function GenerationControls({ map, panelId, api, detailed = false }: {
         {changed && <button disabled={!!job || !hasBoundary} onClick={() => run('apply')}>Apply changes</button>}
       </>}
     </>}
-    {!detailed && c.type && !interiorId && <button onClick={() => openGenerationSettings(map, panelId, c.key, api)}>Settings…</button>}
+    {!detailed && c.type && !interiorId && <button onClick={() => openGenerationSettings(map, panelId, c.key)}>Settings…</button>}
     {editParts ? <button onClick={() => {
       const groups = new Set(activeSelection.map(id => map.entities[id]?.groupId).filter(Boolean));
       viewStore.setState({ editParts: false, selectedEntityIds: Object.values(map.entities).filter(e =>
@@ -143,11 +151,27 @@ export function GenerationControls({ map, panelId, api, detailed = false }: {
       {activeSelection.some(id => map.entities[id]?.origin === 'manual' && map.generators[map.entities[id]?.genId ?? '']) && <button disabled={!!job} onClick={() => worldStore.getState().execute('entity.returnToGenerated', { mapId: map.id, entityIds: activeSelection.filter(id => map.entities[id]?.origin === 'manual' && map.generators[map.entities[id]?.genId ?? '']) })}>Allow regeneration of this part</button>}
       {c.type === 'dungeon' && isResult && <button disabled={!!job} onClick={() => run('dressing')}>Rearrange furniture only</button>}
       {map.kind === 'site' && c.kind === 'generate' && <button onClick={() => generationState.setState(s => ({ siteTypes: Object.fromEntries(Object.entries(s.siteTypes).filter(([key]) => key !== `${worldId}:${map.id}`)) }))}>Choose woodland or dungeon</button>}
-      <button onClick={() => openGenerationSettings(map, panelId, c.key, api, 'map')}>Map settings…</button>
+      <button onClick={() => openGenerationSettings(map, panelId, c.key, 'map')}>Map settings…</button>
       {!detailed && Object.keys(map.generators).length > 0 && resultList}
     </div></details>
     {detailed && c.type && <>
       <label>Seed <input aria-label="Generator seed" type="number" value={d.seed} onChange={e => update({ seed: Number(e.target.value) })} /></label>
+      <label>Render seed <input aria-label="Render jitter seed" type="number" value={Number(p.renderSeed ?? 0)} onChange={e => patch({ renderSeed: Number(e.target.value) })} /></label>
+      {isResult && (
+        <button
+          type="button"
+          disabled={!!job}
+          title="Keep geometry/roads/rooms locked; vary ink jitter, clutter, and labels (Ctrl+Enter)"
+          onClick={() => {
+            const nextRenderSeed = (Number(p.renderSeed ?? 0) + 1) | 0;
+            patch({ renderSeed: nextRenderSeed });
+            const nextDraft = { ...d, params: { ...d.params, renderSeed: nextRenderSeed } };
+            void generateFromContext(map, c, { ...nextDraft, placeId: place?.id }, panelId, c.type === 'dungeon' ? 'dressing' : 'apply');
+          }}
+        >
+          Re-jitter dressing / ink
+        </button>
+      )}
       <label>Theme <select aria-label="Generator theme" value={d.themeName} onChange={e => update({ themeName: e.target.value })}>{[...new Set(['default', ...Object.keys(world?.meta.themes ?? {})])].map(name => <option key={name}>{name}</option>)}</select></label>
       {c.type === 'world' ? <>
         <label>Land shape <select aria-label="World generation mode" value={p.mode} onChange={e => patch({ mode: e.target.value })}><option value="new">Generate land around existing edits</option><option value="populate">Follow existing land</option></select></label>
@@ -163,18 +187,39 @@ export function GenerationControls({ map, panelId, api, detailed = false }: {
       </> : c.type === 'city' ? <>
         <DistrictControls detailsOnly value={{ density: p.density, wealth: p.wealth, activity: p.activity, access: p.access }} onChange={patch} />
         {number('blockSize', 'City block size (ft)', 30 / FOOT, 180 / FOOT, 1, FOOT)}{number('streetWidth', 'City street width (ft)', 3 / FOOT, 16 / FOOT, 1, FOOT)}{number('lotDepth', 'City lot depth (ft)', 8 / FOOT, 30 / FOOT, 1, FOOT)}{check('fringe', 'City gardens and outskirts')}
+        <p style={{ fontSize: 11, opacity: 0.75, margin: '4px 0 0' }}>
+          Block size sets street grid spacing; Lot depth sets building depth; Gardens &amp; outskirts adds ribbon suburbs and orchards outside walls.
+        </p>
       </> : c.type === 'glade' ? <>
         {check('water', 'Outdoor water')}{p.water && <>{check('stream', 'Stream crossing')}{check('pond', 'Pond')}</>}
         <details><summary>Entrances</summary><p>Without custom entrances, paths enter at the north and south edges.</p>
           {(p.entrances as Array<{ x: number; y: number }>).map((point, i) => <div key={i}>{(['x', 'y'] as const).map(axis => <label key={axis}>{axis.toUpperCase()} (ft)<input aria-label={`Entrance ${i + 1} ${axis} (ft)`} type="number" value={Number((point[axis] / FOOT).toFixed(3))} onChange={e => patch({ entrances: p.entrances.map((q: typeof point, j: number) => j === i ? { ...q, [axis]: Number(e.target.value) * FOOT } : q) })} /></label>)}<button onClick={() => patch({ entrances: p.entrances.filter((_: unknown, j: number) => j !== i) })}>Remove entrance {i + 1}</button></div>)}
           <button disabled={p.entrances.length >= 8} onClick={() => { const area = map.entities[c.regionId ?? '']; const points = area?.type === 'area' ? area.rings[0]! : [{ x: map.bounds.x, y: map.bounds.y }, { x: map.bounds.x + map.bounds.w, y: map.bounds.y + map.bounds.h }]; patch({ entrances: [...p.entrances, { x: (Math.min(...points.map(q => q.x)) + Math.max(...points.map(q => q.x))) / 2, y: Math.min(...points.map(q => q.y)) }] }); }}>Add entrance</button>
         </details>
-      </> : <>{!isRoom && <>{number('corridorWidth', 'Corridor width', 1, 6)}{check('mirror', 'Mirror left/right')}</>}{number('density', 'Dressing density', 0, 3, .25)}</>}
+      </> : <>{!isRoom && <>{number('corridorWidth', 'Corridor width', 1, 6)}{check('mirror', 'Mirror left/right')}</>}{number('density', 'Dressing density', 0, 3, .25)}
+        {(() => {
+          const audit = auditDungeonTopology(map);
+          if (audit.roomCount === 0) return null;
+          return (
+            <div data-testid="generation-dungeon-audit" style={{ marginTop: 6, padding: 6, border: '1px solid var(--atlas-border)', borderRadius: 4, fontSize: 11 }}>
+              <strong>Topology: {audit.xanderingRating} ({audit.loops} {audit.loops === 1 ? 'loop' : 'loops'})</strong>
+              <div>Max dead-end depth: {audit.maxDeadEndDepth}{audit.singleSecretChokes.length > 0 ? ` · ⚠ Secret choke: ${audit.singleSecretChokes.length}` : ''}</div>
+              <div style={{ display: 'flex', flexWrap: 'wrap', gap: 4, marginTop: 4 }}>
+                {audit.sevenPillars.map((pill) => (
+                  <span key={pill.id} title={pill.tip} style={{ opacity: pill.passed ? 1 : 0.72 }}>
+                    {pill.passed ? '✓' : '○'} {pill.label}
+                  </span>
+                ))}
+              </div>
+            </div>
+          );
+        })()}
+      </>}
       {Object.keys(map.generators).length > 0 && <details><summary>Find a generated result</summary>{resultList}</details>}
     </>}
-    {!hasBoundary && <div role="alert">This result needs a boundary. Select an area while editing parts, then choose it in Map repair.<button onClick={() => openGenerationSettings(map, panelId, c.key, api, 'map')}>Map repair…</button></div>}
+    {!hasBoundary && <div role="alert">This result needs a boundary. Select an area while editing parts, then choose it in Map repair.<button onClick={() => openGenerationSettings(map, panelId, c.key, 'map')}>Map repair…</button></div>}
     {error?.mapId === map.id && <div className="generation-error" role="alert">{error.message}
-      {/layer/i.test(error.message) && <button onClick={() => { let panel = api.getPanel('layers'); if (!panel) panel = api.addPanel({ id: 'layers', component: 'layers', title: 'Layers' }); panel.api.setActive(); }}>Open Layers</button>}
+      {/layer/i.test(error.message) && <button onClick={() => hudStore.getState().openOrFocusPanel('layers')}>Open Layers</button>}
       {c.type === 'city' && c.regionId && <button onClick={() => { try { viewStore.setState({ diagnosticEntityIds: cityDiagnostics(map, c.regionId!)?.blockerIds ?? [] }); } catch { /* The error above already explains invalid boundaries. */ } }}>Highlight obstacles</button>}
     </div>}
   </div>;

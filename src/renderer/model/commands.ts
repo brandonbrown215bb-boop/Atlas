@@ -10,9 +10,10 @@ import '../gen/world/world';
 import '../gen/city/city';
 import { climateContext } from '../gen/world/context';
 import { previewInterior } from '../gen/dungeon/interior';
-import { pointInPolygon } from '../geom/hitTest';
+import { distanceToSegment, getEntityBounds, pointInPolygon } from '../geom/hitTest';
 import { validateWorld, WorldDocumentSchema } from './transfer';
-import { paintFog, rectRing } from '../geom/fog';
+import { mergeFogPolygons, paintFog, rectRing } from '../geom/fog';
+import { castLosPolygons } from '../geom/visibility';
 import { z } from 'zod';
 import { clipAndInheritEntities } from '../geom/clipInherit';
 import { getPlaceBounds } from '../geom/places';
@@ -21,6 +22,8 @@ import { translateEntityPatch } from '../geom/transform';
 import { resolveGeography, geographicEntities, isOcean, polygonArea } from '../geom/geography';
 import { fromPolygons, toPolygons } from '../geom/fog';
 import clipping from '../geom/polygonClipping';
+import { rearrangeLabels } from '../gen/world/decoration';
+import { createStackedFloorMap, expandNeighborMap, formatFloorLabel } from '../geom/expandMap';
 import { CLOCK_TIME, measureRoute } from '../geom/measure';
 import {
   EntitySchema,
@@ -165,13 +168,38 @@ registerCommand({
     if (input.action === 'dismiss') {
       delete map.entities[entity.id]; map.deleted[entity.id] = map.revision;
       for (const e of Object.values(map.entities)) if (e.type === 'place' && e.entityIds.includes(entity.id)) {
-        e.entityIds = e.entityIds.filter(id => id !== entity.id); e.rev = map.revision;
+        e.entityIds = e.entityIds.filter(id => id !== entity.id);
+        if (e.origin === 'generated') {
+          for (const lid of [...e.entityIds]) {
+            const linked = map.entities[lid];
+            if (linked?.type === 'label' && linked.origin === 'generated') {
+              delete map.entities[lid]; map.deleted[lid] = map.revision;
+              e.entityIds = e.entityIds.filter(id => id !== lid);
+            }
+          }
+          if (!e.entityIds.length) { delete map.entities[e.id]; map.deleted[e.id] = map.revision; continue; }
+        }
+        e.rev = map.revision;
       }
       return { id: entity.id };
     }
     entity.name = input.name ?? entity.name?.replace(' suggestion', '') ?? 'Settlement';
     entity.origin = 'manual'; entity.gmOnly = false; entity.rev = map.revision;
+    delete entity.genId; delete entity.groupId;
     delete entity.suggestedSettlement;
+    const existingPlace = Object.values(map.entities).find((e): e is Extract<Entity, { type: 'place' }> => e.type === 'place' && e.entityIds.includes(entity.id));
+    if (existingPlace) {
+      existingPlace.name = entity.name; existingPlace.origin = 'manual'; existingPlace.gmOnly = false; existingPlace.rev = map.revision;
+      delete existingPlace.genId; delete existingPlace.groupId;
+      for (const lid of existingPlace.entityIds) {
+        const linked = map.entities[lid];
+        if (linked?.type === 'label') {
+          linked.text = entity.name; linked.origin = 'manual'; linked.gmOnly = false; linked.rev = map.revision;
+          delete linked.genId; delete linked.groupId;
+        }
+      }
+      return { id: entity.id, placeId: existingPlace.id };
+    }
     const id = crypto.randomUUID();
     map.entities[id] = { id, type: 'place', name: entity.name, category: 'settlement', notes: '', gmNotes: '',
       entityIds: [entity.id], layerId: entity.layerId, origin: 'manual', rev: map.revision };
@@ -385,6 +413,19 @@ registerCommand({
     };
     const validated = EntitySchema.parse(candidate);
     map.entities[existing.id] = validated;
+    if (validated.type === 'area' && validated.role === 'building') {
+      const b = getEntityBounds(validated);
+      if (b) {
+        for (const child of Object.values(draft.maps)) {
+          if (child.parent?.mapId === map.id && child.parent.footprintEntityId === validated.id) {
+            child.parent.x = b.minX;
+            child.parent.y = b.minY;
+            child.bounds = { x: 0, y: 0, w: Math.max(1, b.maxX - b.minX), h: Math.max(1, b.maxY - b.minY) };
+            child.revision += 1;
+          }
+        }
+      }
+    }
     if(validated.type==='path'&&validated.role==='river'){
       map.riverNodes??={};
       for(const [nodeId,p] of [[validated.startNodeId,validated.points[0]!],[validated.endNodeId,validated.points[validated.points.length-1]!]] as const)if(nodeId){
@@ -688,6 +729,123 @@ registerCommand({
   },
 });
 
+const MapExpandNeighborInputSchema = z.object({
+  sourceMapId: z.string().min(1),
+  direction: z.enum(['N', 'S', 'E', 'W']),
+  newId: z.string().min(1),
+  newName: z.string().min(1).optional(),
+});
+
+registerCommand({
+  name: 'map.expandNeighbor',
+  description: 'Create an adjacent N/S/E/W map sheet that seamlessly mirrors coastline, rivers, roads, and border terrain.',
+  input: MapExpandNeighborInputSchema,
+  run(draft, input) {
+    const source = getMapOrThrow(draft, input.sourceMapId);
+    if (draft.maps[input.newId]) {
+      throw new Error(`Map already exists: ${input.newId}`);
+    }
+    const dirLabel = { N: 'North', S: 'South', E: 'East', W: 'West' }[input.direction];
+    const name = input.newName ?? `${source.name} (${dirLabel})`;
+    const neighbor = expandNeighborMap(source, input.direction, input.newId, name);
+    draft.maps[neighbor.id] = neighbor;
+    draft.meta.maps.push({
+      id: neighbor.id,
+      name: neighbor.name,
+      kind: neighbor.kind,
+      parentId: neighbor.parent?.mapId,
+    });
+    return { id: neighbor.id };
+  },
+});
+
+const MapCreateFloorInputSchema = z.object({
+  sourceMapId: z.string().min(1),
+  levelDelta: z.union([z.literal(1), z.literal(-1)]),
+  newId: z.string().min(1),
+});
+
+registerCommand({
+  name: 'map.createFloor',
+  description: 'Create an upper or lower stacked floor map sharing floorGroupId and aligned stair portals.',
+  input: MapCreateFloorInputSchema,
+  run(draft, input) {
+    const source = getMapOrThrow(draft, input.sourceMapId);
+    if (draft.maps[input.newId]) {
+      throw new Error(`Map already exists: ${input.newId}`);
+    }
+    const groupId = source.floorGroupId ?? source.id;
+    const sourceLevel = source.level ?? 0;
+    const targetLevel = sourceLevel + input.levelDelta;
+    const existing = Object.values(draft.maps).find(
+      (m) => (m.floorGroupId ?? m.id) === groupId && (m.level ?? 0) === targetLevel,
+    );
+    if (existing) {
+      return { id: existing.id, created: false };
+    }
+    source.floorGroupId = groupId;
+    source.level = sourceLevel;
+    source.revision += 1;
+
+    const { floorMap, sourceStairPos, sourcePortalKind } = createStackedFloorMap(source, targetLevel, input.newId);
+    const stairId = `stairs-to-${formatFloorLabel(targetLevel).toLowerCase()}-${input.newId.slice(0, 6)}`;
+    source.entities[stairId] = {
+      id: stairId,
+      type: 'portal',
+      layerId: source.layers[0]?.id ?? 'layer-base',
+      origin: 'manual',
+      rev: source.revision,
+      name: `Stairs ${input.levelDelta > 0 ? 'Up' : 'Down'} (${formatFloorLabel(targetLevel)})`,
+      x: sourceStairPos.x,
+      y: sourceStairPos.y,
+      targetMapId: floorMap.id,
+      connectorKind: sourcePortalKind,
+      elevationDelta: input.levelDelta,
+    };
+
+    const stories = Math.max(source.elevationStories ?? 1, targetLevel >= 0 ? targetLevel + 1 : 1);
+    for (const m of Object.values(draft.maps)) {
+      if ((m.floorGroupId ?? m.id) === groupId) {
+        m.elevationStories = stories;
+      }
+    }
+    floorMap.elevationStories = stories;
+
+    draft.maps[floorMap.id] = floorMap;
+    draft.meta.maps.push({
+      id: floorMap.id,
+      name: floorMap.name,
+      kind: floorMap.kind,
+      parentId: floorMap.parent?.mapId,
+    });
+    return { id: floorMap.id, created: true };
+  },
+});
+
+registerCommand({
+  name: 'map.rearrangeLabels',
+  description: 'De-overlap and cleanly reposition map text labels in one undoable step.',
+  input: z.object({ mapId: z.string().min(1) }),
+  run(draft, input) {
+    const map = getMapOrThrow(draft, input.mapId);
+    const updates = rearrangeLabels(map);
+    const ids = Object.keys(updates);
+    if (ids.length === 0) return { movedCount: 0 };
+    map.revision += 1;
+    let movedCount = 0;
+    for (const id of ids) {
+      const existing = map.entities[id];
+      const patch = updates[id];
+      if (!existing || existing.type !== 'label' || !patch) continue;
+      if ('x' in patch && typeof patch.x === 'number') existing.x = patch.x;
+      if ('y' in patch && typeof patch.y === 'number') existing.y = patch.y;
+      existing.rev = map.revision;
+      movedCount++;
+    }
+    return { movedCount };
+  },
+});
+
 const ThemeSetRoleInputSchema = z.object({
   themeName: z.string().min(1).default('default'),
   role: z.string().min(1),
@@ -968,6 +1126,67 @@ registerCommand({
 
     childMap.revision += 1;
     let replacedCount = 0;
+    if (childMap.kind === 'interior' && childMap.parent.footprintEntityId) {
+      const building = parentMap.entities[childMap.parent.footprintEntityId];
+      if (!building || building.type !== 'area' || building.role !== 'building') {
+        throw new Error(`Parent building footprint missing: ${childMap.parent.footprintEntityId}`);
+      }
+      const b = getEntityBounds(building)!;
+      const local = (p: { x: number; y: number }) => ({ x: p.x - b.minX, y: p.y - b.minY });
+      childMap.parent.x = b.minX;
+      childMap.parent.y = b.minY;
+      childMap.bounds = { x: 0, y: 0, w: Math.max(1, b.maxX - b.minX), h: Math.max(1, b.maxY - b.minY) };
+      for (const [eid, ent] of Object.entries(childMap.entities)) {
+        if (ent.origin === 'inherited') {
+          delete childMap.entities[eid];
+          childMap.deleted[eid] = childMap.revision;
+          replacedCount += 1;
+        }
+      }
+      const keptEdited = listKeptEditedEntities(childMap);
+      const editedParentIds = new Set(keptEdited.map((k) => k.parentEntityId));
+      let addedCount = 0;
+      if (!editedParentIds.has(building.id)) {
+        const footprint: Extract<Entity, { type: 'area' }> = {
+          ...building,
+          id: 'interior-footprint',
+          layerId: targetLayerId,
+          origin: 'inherited',
+          rev: childMap.revision,
+          rings: building.rings.map((r) => r.map(local)),
+          inheritedFrom: { entityId: building.id, parentRev: building.rev },
+        };
+        delete footprint.genId;
+        delete footprint.groupId;
+        delete footprint.texture;
+        delete childMap.deleted['interior-footprint'];
+        childMap.entities = { 'interior-footprint': footprint, ...childMap.entities };
+        addedCount += 1;
+      }
+      for (const e of Object.values(parentMap.entities)) {
+        if (e.type !== 'door' || editedParentIds.has(e.id)) continue;
+        const mid = { x: (e.a.x + e.b.x) / 2, y: (e.a.y + e.b.y) / 2 };
+        const onBoundary = building.rings.some((r) => r.some((a, i) => distanceToSegment(mid, a, r[(i + 1) % r.length]!) < 0.05));
+        if (!onBoundary && !pointInPolygon(mid, building.rings)) continue;
+        const id = `inherited-door:${e.id}`;
+        childMap.entities[id] = {
+          ...e,
+          id,
+          genId: undefined,
+          groupId: undefined,
+          layerId: targetLayerId,
+          origin: 'inherited',
+          rev: childMap.revision,
+          a: local(e.a),
+          b: local(e.b),
+          inheritedFrom: { entityId: e.id, parentRev: e.rev },
+        };
+        delete childMap.deleted[id];
+        addedCount += 1;
+      }
+      return { mapId: childMap.id, replacedCount, addedCount, keptEdited };
+    }
+
     for (const [eid, ent] of Object.entries(childMap.entities)) {
       if (ent.origin === 'inherited') {
         delete childMap.entities[eid];
@@ -1005,16 +1224,38 @@ registerCommand({
 });
 
 registerCommand({
-  name:'fog.paint', description:'Enable/disable fog, reveal/hide a brush stroke (radius in metres), or reveal/hide the whole map. One stroke is one undo step.',
-  input:z.object({mapId:z.string().min(1),mode:z.enum(['enable','disable','reveal','hide','revealAll','hideAll']),points:z.array(PointSchema).max(10000).default([]),radius:z.number().positive().finite().default(3)}),
+  name:'fog.paint', description:'Enable/disable fog, reveal active view, cast wall-blocked Torch/LOS reveal, paint memory fog, dim active view back to memory, hide areas, or reveal/hide the whole map. One stroke is one undo step.',
+  input:z.object({mapId:z.string().min(1),mode:z.enum(['enable','disable','reveal','los','memory','dimActive','hide','revealAll','hideAll']),points:z.array(PointSchema).max(10000).default([]),radius:z.number().positive().finite().default(3)}),
   run(draft,input) {
     const map = getMapOrThrow(draft,input.mapId);
     if (input.mode === 'enable' || input.mode === 'disable') map.fog.enabled = input.mode === 'enable';
     else {
       map.fog.enabled = true;
-      if (input.mode === 'revealAll') map.fog.revealed = [[rectRing(map.bounds)]];
-      else if (input.mode === 'hideAll') map.fog.revealed = [];
-      else map.fog.revealed = paintFog(map.fog.revealed,input.points,input.radius,input.mode === 'hide');
+      if (input.mode === 'revealAll') {
+        const whole = [[rectRing(map.bounds)]];
+        map.fog.revealed = whole;
+        map.fog.explored = whole;
+      } else if (input.mode === 'hideAll') {
+        map.fog.revealed = [];
+        map.fog.explored = [];
+      } else if (input.mode === 'dimActive') {
+        map.fog.explored = mergeFogPolygons(map.fog.explored ?? [], map.fog.revealed);
+        map.fog.revealed = [];
+      } else if (input.mode === 'los') {
+        map.fog.explored = mergeFogPolygons(map.fog.explored ?? [], map.fog.revealed);
+        const vis = castLosPolygons(input.points, input.radius, map);
+        map.fog.revealed = vis;
+        map.fog.explored = mergeFogPolygons(map.fog.explored ?? [], vis);
+      } else if (input.mode === 'memory') {
+        map.fog.explored = paintFog(map.fog.explored ?? [], input.points, input.radius, false);
+        map.fog.revealed = paintFog(map.fog.revealed, input.points, input.radius, true);
+      } else if (input.mode === 'hide') {
+        map.fog.revealed = paintFog(map.fog.revealed, input.points, input.radius, true);
+        if (map.fog.explored?.length) map.fog.explored = paintFog(map.fog.explored, input.points, input.radius, true);
+      } else {
+        map.fog.revealed = paintFog(map.fog.revealed, input.points, input.radius, false);
+        map.fog.explored = paintFog(map.fog.explored ?? [], input.points, input.radius, false);
+      }
     }
     map.revision++;
   },
@@ -1107,6 +1348,164 @@ registerCommand({
       if(!pieces.length){delete map.entities[e.id];map.deleted[e.id]=map.revision;}else{e.rings=pieces[0]!;e.rev=map.revision;for(const rings of pieces.slice(1)){const id=crypto.randomUUID();map.entities[id]={...e,id,rings};}}
     }
     if(!input.erase){const rule=draft.meta.climate?.biomes.find(b=>b.name===input.biome);for(const rings of fromPolygons(brush)){const id=crypto.randomUUID();map.entities[id]={id,type:'area',role:`biome:${input.biome}`,name:input.biome,fill:rule?.color,layerId:input.layerId,origin:'manual',rev:map.revision,rings};}}
+  },
+});
+registerCommand({
+  name: 'map.paintGeography',
+  description: 'Paint land or carve water directly into map geography, cleaning up unedited generated props in new water.',
+  input: z.object({
+    mapId: z.string(),
+    mode: z.enum(['land', 'water']),
+    points: z.array(PointSchema).min(1),
+    radius: z.number().positive(),
+    layerId: z.string(),
+  }),
+  run(draft, input) {
+    const map = getMapOrThrow(draft, input.mapId);
+    if (!map.layers.some((l) => l.id === input.layerId && l.visible && !l.locked)) {
+      throw new Error('Choose a visible unlocked layer.');
+    }
+    const stroke = paintFog([], input.points, input.radius, false);
+    const brush = toPolygons(stroke);
+    if (!brush.length) return;
+    let bMinX = Infinity, bMinY = Infinity, bMaxX = -Infinity, bMaxY = -Infinity;
+    for (const p of input.points) {
+      if (p.x - input.radius < bMinX) bMinX = p.x - input.radius;
+      if (p.y - input.radius < bMinY) bMinY = p.y - input.radius;
+      if (p.x + input.radius > bMaxX) bMaxX = p.x + input.radius;
+      if (p.y + input.radius > bMaxY) bMaxY = p.y + input.radius;
+    }
+    const overlapsBrush = (rings: Point[][]): boolean => {
+      let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
+      for (const ring of rings) {
+        for (const pt of ring) {
+          if (pt.x < minX) minX = pt.x;
+          if (pt.y < minY) minY = pt.y;
+          if (pt.x > maxX) maxX = pt.x;
+          if (pt.y > maxY) maxY = pt.y;
+        }
+      }
+      return maxX >= bMinX && minX <= bMaxX && maxY >= bMinY && minY <= bMaxY;
+    };
+    const safeDiff = (rings: Point[][]): Point[][][] | null => {
+      if (!overlapsBrush(rings)) return null;
+      try {
+        return fromPolygons(clipping.difference(toPolygons([rings]), brush));
+      } catch {
+        return null;
+      }
+    };
+    const lockedLayers = new Set(map.layers.filter((l) => l.locked).map((l) => l.id));
+    map.revision++;
+    if (input.mode === 'water') {
+      for (const e of Object.values(map.entities)) {
+        if (lockedLayers.has(e.layerId)) continue;
+        if (e.type === 'area' && e.usage !== 'boundary' && (e.role === 'land' || e.role.startsWith('biome:'))) {
+          const pieces = safeDiff(e.rings);
+          if (!pieces) continue;
+          if (!pieces.length) {
+            delete map.entities[e.id];
+            map.deleted[e.id] = map.revision;
+          } else if (pieces.length !== 1 || pieces[0]!.length !== e.rings.length || pieces[0]![0]!.length !== e.rings[0]!.length || pieces[0]![0]!.some((p, i) => p.x !== e.rings[0]![i]!.x || p.y !== e.rings[0]![i]!.y)) {
+            e.rings = pieces[0]!;
+            e.origin = 'manual';
+            delete e.genId;
+            delete e.groupId;
+            e.rev = map.revision;
+            for (const rings of pieces.slice(1)) {
+              const id = crypto.randomUUID();
+              map.entities[id] = { ...e, id, rings };
+            }
+          }
+        }
+      }
+      const protectedIds = new Set<string>();
+      for (const e of Object.values(map.entities)) {
+        if (e.origin === 'manual') protectedIds.add(e.id);
+        if (e.type === 'place') {
+          protectedIds.add(e.id);
+          for (const linked of e.entityIds) protectedIds.add(linked);
+        }
+      }
+      for (const child of Object.values(draft.maps)) {
+        if (child.parent?.mapId === map.id && child.parent.footprintEntityId) {
+          protectedIds.add(child.parent.footprintEntityId);
+        }
+      }
+      for (const e of Object.values(map.entities)) {
+        if (lockedLayers.has(e.layerId)) continue;
+        if ((e.type === 'prop' || e.type === 'label') && e.origin === 'generated' && !protectedIds.has(e.id)) {
+          if (stroke.some((poly) => pointInPolygon({ x: e.x, y: e.y }, poly))) {
+            delete map.entities[e.id];
+            map.deleted[e.id] = map.revision;
+          }
+        }
+      }
+    } else {
+      for (const e of Object.values(map.entities)) {
+        if (lockedLayers.has(e.layerId)) continue;
+        if (e.type === 'area' && e.usage !== 'boundary' && e.role === 'water' && !isOcean(e)) {
+          const pieces = safeDiff(e.rings);
+          if (!pieces) continue;
+          if (!pieces.length) {
+            delete map.entities[e.id];
+            map.deleted[e.id] = map.revision;
+          } else {
+            e.rings = pieces[0]!;
+            e.origin = 'manual';
+            delete e.genId;
+            delete e.groupId;
+            e.rev = map.revision;
+            for (const rings of pieces.slice(1)) {
+              const id = crypto.randomUUID();
+              map.entities[id] = { ...e, id, rings };
+            }
+          }
+        }
+      }
+      const touchingLand = Object.values(map.entities).filter(
+        (e): e is Extract<Entity, { type: 'area' }> =>
+          !lockedLayers.has(e.layerId) &&
+          e.type === 'area' &&
+          e.usage !== 'boundary' &&
+          e.role === 'land' &&
+          clipping.intersection(toPolygons([e.rings]), brush).length > 0,
+      );
+      if (touchingLand.length) {
+        const merged = fromPolygons(clipping.union(brush, ...touchingLand.map((e) => toPolygons([e.rings]))));
+        const primary = touchingLand[0]!;
+        for (const extra of touchingLand.slice(1)) {
+          delete map.entities[extra.id];
+          map.deleted[extra.id] = map.revision;
+        }
+        if (merged.length) {
+          primary.rings = merged[0]!;
+          primary.origin = 'manual';
+          delete primary.genId;
+          delete primary.groupId;
+          primary.rev = map.revision;
+          for (const rings of merged.slice(1)) {
+            const id = crypto.randomUUID();
+            map.entities[id] = { ...primary, id, rings };
+          }
+        }
+      } else {
+        for (const rings of fromPolygons(brush)) {
+          const id = crypto.randomUUID();
+          map.entities[id] = {
+            id,
+            type: 'area',
+            role: 'land',
+            name: 'Land',
+            fill: '#89a36f',
+            layerId: input.layerId,
+            origin: 'manual',
+            rev: map.revision,
+            rings,
+          };
+        }
+      }
+    }
   },
 });
 registerCommand({

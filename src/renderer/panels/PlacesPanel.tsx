@@ -1,7 +1,8 @@
 import { activateMapPanel, navigateToMap } from '../model/navigation';
 import { useEffect, useState } from 'react';
-import type { IDockviewPanelProps } from 'dockview-react';
 import { useStore } from 'zustand';
+import { hudStore } from '../app/hudStore';
+import { settlementServiceAudit } from '../gen/city/diagnostics';
 import { filterPlaces, listPlaceCategories } from '../geom/places';
 import { resolveGenerationContext } from '../model/generationContext';
 import {
@@ -13,7 +14,6 @@ import {
 import type { Entity, PlaceEntity } from '../model/schema';
 import { worldStore } from '../model/store';
 import { viewStore } from '../model/viewStore';
-import { PanelHeaderBar } from './PanelHeaderBar';
 
 function PlaceTextField(props: {
   label: string;
@@ -92,17 +92,20 @@ function PlaceTextArea(props: {
   );
 }
 
-export function PlacesPanel(props: IDockviewPanelProps) {
+export function PlacesPanel({ panelId = 'places' }: { panelId?: string }) {
   const world = useStore(worldStore, (s) => s.world);
   const activeMapId = useStore(worldStore, (s) => s.activeMapId);
   const selectedIds = useStore(viewStore, (s) => s.selectedEntityIds);
   const editParts = useStore(viewStore, (s) => s.editParts);
   const activeLayerId = useStore(viewStore, (s) => s.activeLayerId);
   const showOverlay = useStore(viewStore, (s) => s.showPlaceCategoryOverlay);
+  const roofMode = useStore(viewStore, (s) => s.roofMode);
+  const showUndercity = useStore(viewStore, (s) => s.showUndercity);
   const job = useStore(generationState, (s) => s.job);
 
   const [newName, setNewName] = useState('');
   const [newCategory, setNewCategory] = useState('');
+  const [newRumour, setNewRumour] = useState('');
   const [searchQuery, setSearchQuery] = useState('');
   const [categoryFilter, setCategoryFilter] = useState('');
 
@@ -172,7 +175,7 @@ export function PlacesPanel(props: IDockviewPanelProps) {
 
   return (
     <div
-      data-testid={`panel-${props.api.id}`}
+      data-testid={`panel-${panelId}`}
       style={{
         display: 'flex',
         flexDirection: 'column',
@@ -183,7 +186,6 @@ export function PlacesPanel(props: IDockviewPanelProps) {
         fontSize: 12,
       }}
     >
-      <PanelHeaderBar title="Places" panelProps={props} />
 
       <div
         style={{
@@ -199,6 +201,73 @@ export function PlacesPanel(props: IDockviewPanelProps) {
           <div style={{ color: 'var(--atlas-text-muted)' }}>No map open.</div>
         ) : (
           <>
+            {map.kind === 'settlement' && (() => {
+              const audit = settlementServiceAudit(map);
+              return (
+                <div
+                  data-testid="settlement-service-audit"
+                  style={{
+                    display: 'flex',
+                    flexDirection: 'column',
+                    gap: 6,
+                    padding: 8,
+                    border: '1px solid var(--atlas-border)',
+                    borderRadius: 4,
+                    background: 'var(--atlas-surface)',
+                  }}
+                >
+                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                    <strong>OSE Services ({audit.presentCount}/5)</strong>
+                    <span style={{ fontSize: 11, color: audit.complete ? '#22c55e' : '#f59e0b' }}>
+                      {audit.complete ? 'All present' : `Missing: ${audit.missing.length}`}
+                    </span>
+                  </div>
+                  <div style={{ display: 'flex', flexWrap: 'wrap', gap: 4 }}>
+                    {audit.services.map((svc) => (
+                      <span
+                        key={svc.key}
+                        style={{
+                          fontSize: 11,
+                          padding: '2px 6px',
+                          borderRadius: 3,
+                          border: '1px solid var(--atlas-border)',
+                          background: svc.present ? '#14532d66' : '#78350f66',
+                          color: svc.present ? '#86efac' : '#fde68a',
+                        }}
+                      >
+                        {svc.present ? '✓' : '○'} {svc.label}
+                      </span>
+                    ))}
+                  </div>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: 6, flexWrap: 'wrap', fontSize: 11 }}>
+                    <span>Roofs:</span>
+                    {(['detailed', 'simple', 'hidden'] as const).map((rm) => (
+                      <button
+                        key={rm}
+                        type="button"
+                        onClick={() => viewStore.getState().setRoofMode(rm)}
+                        style={{
+                          padding: '2px 6px',
+                          fontSize: 11,
+                          fontWeight: roofMode === rm ? 700 : 400,
+                          borderColor: roofMode === rm ? 'var(--atlas-accent)' : 'var(--atlas-border)',
+                        }}
+                      >
+                        {rm}
+                      </button>
+                    ))}
+                    <label style={{ display: 'inline-flex', alignItems: 'center', gap: 4, marginLeft: 'auto' }}>
+                      <input
+                        type="checkbox"
+                        checked={showUndercity}
+                        onChange={(e) => viewStore.getState().setShowUndercity(e.target.checked)}
+                      />
+                      Undercity
+                    </label>
+                  </div>
+                </div>
+              );
+            })()}
             <div
               style={{
                 display: 'flex',
@@ -404,6 +473,137 @@ export function PlacesPanel(props: IDockviewPanelProps) {
                   />
                   <span>GM Only</span>
                 </label>
+
+                <div style={{ fontWeight: 600, fontSize: 11, marginTop: 4, color: 'var(--atlas-text-muted)' }}>
+                  Urbancrawl Metadata
+                </div>
+                <label style={{ display: 'flex', flexDirection: 'column', gap: 3 }}>
+                  <span style={{ color: 'var(--atlas-text-muted)' }}>District Layer Tier</span>
+                  <select
+                    data-testid="place-edit-layer-tier"
+                    value={selectedPlace.layerTier ?? ''}
+                    onChange={(e) =>
+                      updatePlace(selectedPlace.id, {
+                        layerTier: (e.target.value || undefined) as PlaceEntity['layerTier'],
+                      })
+                    }
+                  >
+                    <option value="">Unassigned</option>
+                    <option value="incidental">Incidental</option>
+                    <option value="focus">Focus</option>
+                    <option value="belligerent">Belligerent</option>
+                  </select>
+                </label>
+                <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
+                  <span style={{ color: 'var(--atlas-text-muted)' }}>Active Hours</span>
+                  <div style={{ display: 'flex', gap: 4 }}>
+                    {(
+                      [
+                        ['morning', 'M'],
+                        ['day', 'D'],
+                        ['evening', 'E'],
+                        ['night', 'N'],
+                      ] as const
+                    ).map(([slot, tag]) => {
+                      const active = Boolean(selectedPlace.activeHours?.[slot]);
+                      return (
+                        <button
+                          key={slot}
+                          type="button"
+                          title={slot}
+                          data-testid={`place-hour-${slot}`}
+                          onClick={() =>
+                            updatePlace(selectedPlace.id, {
+                              activeHours: {
+                                ...selectedPlace.activeHours,
+                                [slot]: !active,
+                              },
+                            })
+                          }
+                          style={{
+                            flex: 1,
+                            fontSize: 11,
+                            fontWeight: active ? 700 : 400,
+                            borderColor: active ? 'var(--atlas-accent)' : 'var(--atlas-border)',
+                          }}
+                        >
+                          {tag}
+                        </button>
+                      );
+                    })}
+                  </div>
+                </div>
+                <PlaceTextField
+                  label="Factions (comma-separated)"
+                  testId="place-edit-factions"
+                  value={(selectedPlace.factionLinks ?? []).join(', ')}
+                  placeholder="Thieves Guild, City Watch"
+                  onCommit={(val) =>
+                    updatePlace(selectedPlace.id, {
+                      factionLinks: val
+                        .split(',')
+                        .map((s) => s.trim())
+                        .filter(Boolean),
+                    })
+                  }
+                />
+                <PlaceTextField
+                  label="Clue / Next Lead"
+                  testId="place-edit-clue-next"
+                  value={selectedPlace.clueNext ?? ''}
+                  placeholder="Points toward Dockside Warehouse #4"
+                  onCommit={(clueNext) => updatePlace(selectedPlace.id, { clueNext })}
+                />
+                <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
+                  <span style={{ color: 'var(--atlas-text-muted)' }}>
+                    Rumour Bin ({(selectedPlace.rumours ?? []).length})
+                  </span>
+                  {(selectedPlace.rumours ?? []).map((r, rIdx) => (
+                    <div key={rIdx} style={{ display: 'flex', gap: 4, alignItems: 'center', fontSize: 11 }}>
+                      <span style={{ flex: 1 }}>• {r}</span>
+                      <button
+                        type="button"
+                        onClick={() =>
+                          updatePlace(selectedPlace.id, {
+                            rumours: (selectedPlace.rumours ?? []).filter((_, j) => j !== rIdx),
+                          })
+                        }
+                      >
+                        ×
+                      </button>
+                    </div>
+                  ))}
+                  <div style={{ display: 'flex', gap: 4 }}>
+                    <input
+                      type="text"
+                      data-testid="place-add-rumour-input"
+                      placeholder="Add local rumour..."
+                      value={newRumour}
+                      onChange={(e) => setNewRumour(e.target.value)}
+                      onKeyDown={(e) => {
+                        if (e.key === 'Enter' && newRumour.trim()) {
+                          updatePlace(selectedPlace.id, {
+                            rumours: [...(selectedPlace.rumours ?? []), newRumour.trim()],
+                          });
+                          setNewRumour('');
+                        }
+                      }}
+                    />
+                    <button
+                      type="button"
+                      data-testid="place-add-rumour-btn"
+                      onClick={() => {
+                        if (!newRumour.trim()) return;
+                        updatePlace(selectedPlace.id, {
+                          rumours: [...(selectedPlace.rumours ?? []), newRumour.trim()],
+                        });
+                        setNewRumour('');
+                      }}
+                    >
+                      +
+                    </button>
+                  </div>
+                </div>
                 {(() => {
                   const linkedBuilding =
                     map.kind === 'settlement'
@@ -442,12 +642,7 @@ export function PlacesPanel(props: IDockviewPanelProps) {
                               viewStore.getState().activeMapPanelId ??
                               'map-main';
                             activateMapPanel(panelId, map.id);
-                            props.containerApi
-                              .getPanel('inspector')
-                              ?.api.setActive();
-                            props.containerApi
-                              .getPanel(panelId)
-                              ?.api.setActive();
+                            hudStore.getState().openOrFocusPanel('inspector');
                             void generateFromContext(
                               map,
                               ctx,
@@ -477,12 +672,7 @@ export function PlacesPanel(props: IDockviewPanelProps) {
                           vs.setPanelMap(targetPanelId, res.id);
                           vs.setSelection([]);
                           navigateToMap(res.id);
-                          props.containerApi
-                            .getPanel('inspector')
-                            ?.api.setActive();
-                          props.containerApi
-                            .getPanel(targetPanelId)
-                            ?.api.setActive();
+                          hudStore.getState().openOrFocusPanel('inspector');
                         }}
                       >
                         {hasChildMap ? 'Open Interior' : 'Create & Open Interior'}

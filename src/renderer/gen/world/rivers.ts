@@ -4,7 +4,7 @@ import type { Entity, Point } from '../../model/schema';
 import type { Terrain } from './terrain';
 import { clipOutside } from '../../geom/clipOutside';
 
-export interface RiverRoute { cells: number[]; points: Point[]; elevations: number[]; flow: number; outlet?: 'water' | 'junction' | 'boundary' }
+export interface RiverRoute { cells: number[]; points: Point[]; elevations: number[]; flow: number; outlet?: 'water' | 'junction' | 'boundary'; waterfalls?: Point[] }
 
 /** Strict descent makes the drainage graph acyclic; depressions retain their water. */
 export function buildRivers(terrain: Terrain, rainfall: number[], threshold: number): RiverRoute[] {
@@ -86,7 +86,12 @@ export function buildRivers(terrain: Terrain, rainfall: number[], threshold: num
       points.push(closest);
       heights.push(terminal.elevation);
     }
-    result.push({ cells: route, points, elevations: heights, flow: flow[start]!, outlet });
+    const waterfalls: Point[] = [];
+    for (let j = 1; j < route.length; j++) {
+      const elevDrop = cells[route[j - 1]!]!.elevation - cells[route[j]!]!.elevation;
+      if (elevDrop >= 0.045) waterfalls.push(sharedMidpoint(route[j - 1]!, route[j]!));
+    }
+    result.push({ cells: route, points, elevations: heights, flow: flow[start]!, outlet, ...(waterfalls.length ? { waterfalls } : {}) });
   }
   return result;
 }
@@ -96,11 +101,17 @@ export function riverEntities(terrain: Terrain, routes: RiverRoute[], constraint
     const joined = joinAuthoredRivers(route.points, constraints);
     let pieces = clipOutside(joined, false, terrain.region[0]!, true);
     for (const hole of terrain.region.slice(1)) pieces = pieces.flatMap(points => clipOutside(points, false, hole));
+    const navigable = route.flow >= 18;
+    const baseName = route.outlet === 'boundary'
+      ? 'River · boundary outlet'
+      : navigable
+        ? 'Navigable river'
+        : 'River';
     return pieces.map((points, j): Entity => ({
       id: `river-${i}-${j}`,
       type: 'path',
       role: 'river',
-      name: route.outlet === 'boundary' ? 'River · boundary outlet' : 'River',
+      name: baseName,
       outlet: joined !== route.points ? 'authored' : route.outlet,
       origin: 'generated',
       layerId: 'base',

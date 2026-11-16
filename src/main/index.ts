@@ -9,22 +9,33 @@ registerAtlasSchemes();
 
 const popoutWindows = new Map<string, BrowserWindow>();
 let mainWindow: BrowserWindow | null = null;
+let closingMain = false;
+
+function sendToMain(channel: string, ...args: unknown[]): void {
+  if (!mainWindow || mainWindow.isDestroyed() || closingMain) return;
+  const wc = mainWindow.webContents;
+  if (wc.isDestroyed() || wc.mainFrame?.isDestroyed()) return;
+  try {
+    wc.send(channel, ...args);
+  } catch {
+    // Ignore if renderer frame was disposed mid-teardown
+  }
+}
 
 function isAllowedPopoutUrl(url: string): boolean {
   const devUrl = process.env['ELECTRON_RENDERER_URL'];
-  if (devUrl) {
-    try {
-      const parsed = new URL(url);
+  try {
+    const parsed = new URL(url);
+    const isPopoutPath =
+      parsed.pathname === '/popout.html' || parsed.pathname === '/player.html';
+    if (devUrl) {
       const devParsed = new URL(devUrl);
-      return (
-        parsed.origin === devParsed.origin &&
-        (parsed.pathname === '/popout.html' || parsed.pathname === '/player.html')
-      );
-    } catch {
-      return false;
+      return parsed.origin === devParsed.origin && isPopoutPath;
     }
+    return parsed.protocol === 'app:' && parsed.hostname === 'atlas' && isPopoutPath;
+  } catch {
+    return false;
   }
-  return url === 'app://atlas/popout.html' || url === 'app://atlas/player.html';
 }
 
 function createMainWindow(): BrowserWindow {
@@ -42,6 +53,30 @@ function createMainWindow(): BrowserWindow {
   });
 
   mainWindow = win;
+  closingMain = false;
+  win.on('close', (e) => {
+    if (closingMain) return;
+    e.preventDefault();
+    closingMain = true;
+    if (win.webContents.isDestroyed() || win.webContents.mainFrame?.isDestroyed()) {
+      win.destroy();
+      return;
+    }
+    const finish = () => {
+      if (!win.isDestroyed()) win.destroy();
+    };
+    const timer = setTimeout(finish, 1500);
+    ipcMain.once('atlas:ready-to-close', () => {
+      clearTimeout(timer);
+      finish();
+    });
+    try {
+      win.webContents.send('atlas:before-close');
+    } catch {
+      clearTimeout(timer);
+      finish();
+    }
+  });
   win.on('closed', () => {
     if (mainWindow === win) {
       mainWindow = null;
@@ -78,9 +113,77 @@ function createMainWindow(): BrowserWindow {
     childWindow.setBounds(clamped);
 
     if (details.frameName) {
-      popoutWindows.set(details.frameName, childWindow);
+      const frameName = details.frameName;
+      popoutWindows.set(frameName, childWindow);
+
+      const isOverMain = () => {
+        if (!mainWindow || mainWindow.isDestroyed() || !mainWindow.isVisible() || childWindow.isDestroyed()) {
+          return { over: false, relX: 0, relY: 0 };
+        }
+        const cb = childWindow.getBounds();
+        const mb = mainWindow.getBounds();
+        const cx = cb.x + cb.width / 2;
+        const cy = cb.y + cb.height / 2;
+        const inset = 24;
+        const over =
+          cx > mb.x + inset &&
+          cx < mb.x + mb.width - inset &&
+          cy > mb.y + inset &&
+          cy < mb.y + mb.height - inset;
+        return { over, relX: cx - mb.x, relY: cy - mb.y };
+      };
+
+      if (frameName !== 'atlas-player') {
+        const readyAt = Date.now() + 500;
+        let wasOver = false;
+        let movesAfterReady = 0;
+        childWindow.on('move', () => {
+          if (Date.now() < readyAt) return;
+          movesAfterReady += 1;
+          const hit = isOverMain();
+          if (hit.over || wasOver) {
+            wasOver = hit.over;
+            sendToMain('atlas:popout-drag-over-main', {
+              id: frameName,
+              over: hit.over,
+              relX: hit.relX,
+              relY: hit.relY,
+            });
+          }
+        });
+        childWindow.on('moved', () => {
+          if (Date.now() < readyAt || movesAfterReady < 2) {
+            movesAfterReady = 0;
+            return;
+          }
+          movesAfterReady = 0;
+          const hit = isOverMain();
+          if (wasOver) {
+            wasOver = false;
+            sendToMain('atlas:popout-drag-over-main', {
+              id: frameName,
+              over: false,
+              relX: hit.relX,
+              relY: hit.relY,
+            });
+          }
+          if (hit.over) {
+            sendToMain('atlas:popout-dock-back', {
+              id: frameName,
+              relX: hit.relX,
+              relY: hit.relY,
+            });
+          }
+        });
+      }
+
       childWindow.on('closed', () => {
-        popoutWindows.delete(details.frameName);
+        if (popoutWindows.get(frameName) === childWindow) {
+          popoutWindows.delete(frameName);
+          if (frameName !== 'atlas-player') {
+            sendToMain('atlas:popout-closed', frameName);
+          }
+        }
       });
     }
   });
@@ -97,7 +200,11 @@ function createMainWindow(): BrowserWindow {
 let agentServer: AgentServerHandle | null = null;
 
 void app.whenReady().then(async () => {
-  const history = (action: 'undo' | 'redo') => BrowserWindow.getFocusedWindow()?.webContents.send('atlas:history', action);
+  const history = (action: 'undo' | 'redo') => {
+    const focused = BrowserWindow.getFocusedWindow();
+    const target = focused && focused === mainWindow ? focused : mainWindow ?? focused;
+    target?.webContents.send('atlas:history', action);
+  };
   Menu.setApplicationMenu(Menu.buildFromTemplate([
     { label: 'File', submenu: [{ role: 'quit' }] },
     { label: 'Edit', submenu: [
@@ -131,6 +238,11 @@ void app.whenReady().then(async () => {
       }
       return roots;
     },
+  });
+
+  ipcMain.handle('atlas:get-main-window-bounds', () => {
+    if (!mainWindow || mainWindow.isDestroyed()) return null;
+    return mainWindow.getBounds();
   });
 
   ipcMain.handle('atlas:close-popout', (_event, frameName: string) => {

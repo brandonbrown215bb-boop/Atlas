@@ -28,7 +28,7 @@ export function validateWorld(input: WorldDocument): WorldDocument {
     for(const [eid,e] of Object.entries(m.entities)) {
       if(eid!==e.id || !m.layers.some(l=>l.id===e.layerId)) throw new Error(`Missing entity layer: ${eid}`);
       if(e.type==='place' && (e.entityIds.some(id=>!m.entities[id]) || (e.childMapId && !w.maps[e.childMapId]))) throw new Error(`Dangling place: ${eid}`);
-      if(e.type==='portal' && (!w.maps[e.targetMapId] || (e.targetPortalId && w.maps[e.targetMapId]!.entities[e.targetPortalId]?.type!=='portal'))) throw new Error(`Dangling portal: ${eid}`);
+      if(e.type==='portal' && !(e.targetMapId==='unlinked' && e.connectorKind && e.connectorKind!=='portal') && (!w.maps[e.targetMapId] || (e.targetPortalId && w.maps[e.targetMapId]!.entities[e.targetPortalId]?.type!=='portal'))) throw new Error(`Dangling portal: ${eid}`);
     }
   }
   return w;

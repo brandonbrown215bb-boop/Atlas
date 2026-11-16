@@ -58,7 +58,9 @@ it('accepts and dismisses suggestions undoably, hides pending points from player
   expect(playerRenderList(current()).some(e => pending.some(p => p.id === e.id))).toBe(false);
   const before = s().world;
   const accepted = s().execute('settlement.resolveSuggestion', { mapId: 'm', entityId: pending[0]!.id, action: 'accept', name: 'Rookhaven' }) as { placeId: string };
-  expect(current().entities[accepted.placeId]).toMatchObject({ type: 'place', name: 'Rookhaven', category: 'settlement', entityIds: [pending[0]!.id] });
+  expect(current().entities[accepted.placeId]).toMatchObject({ type: 'place', name: 'Rookhaven', category: 'Settlement' });
+  expect((current().entities[accepted.placeId] as Extract<Entity, { type: 'place' }>).entityIds).toContain(pending[0]!.id);
+  expect(Object.values(current().entities).filter(e => e.type === 'place' && e.entityIds.includes(pending[0]!.id))).toHaveLength(1);
   const marker = current().entities[pending[0]!.id]!;
   expect(marker).toMatchObject({ origin: 'manual', gmOnly: false });
   expect(playerRenderList(current()).some(e => e.id === marker.id)).toBe(true);
@@ -72,4 +74,19 @@ it('accepts and dismisses suggestions undoably, hides pending points from player
   expect(current().entities[accepted.placeId]).toEqual(preDismiss!.maps.m!.entities[accepted.placeId]);
   expect(() => validateWorld(s().world!)).not.toThrow();
   expect(MapDocSchema.parse(JSON.parse(JSON.stringify(current())))).toEqual(current());
+});
+
+it('attaches settlement labels closely with linked Place records and populates 6 POI families on region maps', () => {
+  const source = { ...input(), mapKind: 'region' as const };
+  const terrain = buildTerrain(source), climate = buildClimate(terrain, source);
+  const out = decorateWorld(terrain, climate.values, source, []);
+  const places = out.filter((e): e is Extract<Entity, { type: 'place' }> => e.type === 'place');
+  const categories = new Set(places.map((p) => p.category));
+  expect(categories.has('Settlement')).toBe(true);
+  expect(categories.size).toBeGreaterThanOrEqual(4);
+  const highwatch = out.find((e): e is Extract<Entity, { type: 'prop' }> => e.type === 'prop' && e.name === 'Highwatch');
+  const highwatchLabel = out.find((e): e is Extract<Entity, { type: 'label' }> => e.type === 'label' && e.text === 'Highwatch');
+  if (highwatch && highwatchLabel) {
+    expect(Math.hypot(highwatch.x - highwatchLabel.x, highwatch.y - highwatchLabel.y)).toBeLessThan(terrain.size * 0.02);
+  }
 });

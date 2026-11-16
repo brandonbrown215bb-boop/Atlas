@@ -1,33 +1,16 @@
 import { geographicEntities } from '../geom/geography';
+import { applyCartographicChrome, mapBackdropStyle } from './backdrop';
 import { drawFog } from './drawFog';
-import { Application, Container, Graphics, Sprite, TilingSprite } from 'pixi.js';
+import { drawRoomLightingOverlay, type LightingMode } from './lighting';
+import { Application, Container, Graphics, TilingSprite } from 'pixi.js';
 import type { Entity, MapDoc } from '../model/schema';
 import type { CameraState } from './camera';
 import { playerRenderList } from '../model/player';
-import { buildEntityDisplay } from './drawEntity';
+import { buildEntityDisplay, buildPathOutlineOverlay, buildWallNetworkOverlay, createWallHatchTest } from './drawEntity';
 import { getProceduralTexture } from './proceduralTextures';
 import { entityAssetId, loadAssetTexture, resolveWorldAssetUrl, updateTextureUsage } from './textures';
 import { worldStore } from '../model/store';
 import { viewStore } from '../model/viewStore';
-
-function mapBackdropStyle(map: MapDoc): { color: number; texKind: 'water' | 'grass' | 'stone' | 'parchment'; texAlpha: number } {
-  if (map.kind === 'world' || map.kind === 'region') {
-    return { color: 0x3a5c68, texKind: 'water', texAlpha: 0.45 };
-  }
-  if (map.kind === 'settlement') {
-    return { color: 0xc8ba9b, texKind: 'grass', texAlpha: 0.24 };
-  }
-  if (map.kind === 'site') {
-    const hasTrees = Object.values(map.entities).some(
-      (e) => e.type === 'prop' && (e.builtin === 'tree' || e.builtin === 'builtin:tree'),
-    );
-    if (hasTrees) {
-      return { color: 0x67754f, texKind: 'grass', texAlpha: 0.55 };
-    }
-    return { color: 0x2b221a, texKind: 'parchment', texAlpha: 0.08 };
-  }
-  return { color: 0x2b221a, texKind: 'parchment', texAlpha: 0.08 };
-}
 
 export interface RenderPngOptions {
   map: MapDoc;
@@ -39,6 +22,9 @@ export interface RenderPngOptions {
   grid?: boolean;
   camera?: CameraState;
   document?: Document;
+  roofMode?: 'detailed' | 'simple' | 'hidden';
+  lightingMode?: LightingMode;
+  showUndercity?: boolean;
 }
 
 export async function renderMapToPngBase64(
@@ -101,10 +87,37 @@ export async function renderMapToPngBase64(
       worldLayer.addChild(lc);
     }
 
-    for (const entity of (view === 'player' ? playerRenderList(options.map, options.labels) : geographicEntities(options.map)) as Entity[]) {
+    const showUndercity = options.showUndercity ?? viewStore.getState().showUndercity;
+    const roofMode = options.roofMode ?? viewStore.getState().roofMode;
+    const lightingMode = options.lightingMode ?? viewStore.getState().lightingMode;
+    const wallHatch = ['interior', 'site'].includes(options.map.kind)
+      ? createWallHatchTest(Object.values(options.map.entities), options.map.generators)
+      : false;
+    const renderList = (view === 'player' ? playerRenderList(options.map, options.labels) : geographicEntities(options.map)) as Entity[];
+    const outlineDone = new Set<string>();
+    const wallDone = new Set<string>();
+
+    for (const entity of renderList) {
       if (view === 'player' && entity.gmOnly) continue;
+      if (entity.type === 'path' && entity.routeTier === 'sewer' && !showUndercity) continue;
       const lc = layerMap.get(entity.layerId);
       if (!lc) continue;
+      const layerItems = renderList.filter((r) => r.layerId === entity.layerId && !(view === 'player' && r.gmOnly));
+      const needsOutlineHere =
+        !outlineDone.has(entity.layerId) &&
+        ((entity.type === 'path' && entity.role !== 'cityWall') ||
+          (entity.type === 'area' && (entity.role === 'building' || (entity.role === 'land' && entity.name?.startsWith('Clearing ')))));
+      if (needsOutlineHere) {
+        outlineDone.add(entity.layerId);
+        lc.addChild(buildPathOutlineOverlay(layerItems, cam.zoom, options.map.kind));
+      }
+      const needsWallHere =
+        !wallDone.has(entity.layerId) &&
+        (entity.type === 'wall' || entity.type === 'door' || entity.type === 'prop' || entity.type === 'portal');
+      if (needsWallHere && layerItems.some((r) => r.type === 'wall')) {
+        wallDone.add(entity.layerId);
+        lc.addChild(buildWallNetworkOverlay(layerItems, cam.zoom, wallHatch));
+      }
       const id = entityAssetId(entity);
       const url = id ? resolveWorldAssetUrl(worldStore.getState().worldPath, viewStore.getState().assetsIndex, id) : null;
       if (url) { urls.add(url); updateTextureUsage(textureOwner, new Set(urls)); }
@@ -115,6 +128,10 @@ export async function renderMapToPngBase64(
         cartographicRivers: (options.map.riverWidthMode ?? (['world','region'].includes(options.map.kind)?'cartographic':'physical'))==='cartographic',
         texture: texture ?? undefined,
         mapKind: options.map.kind,
+        roofMode,
+        wallHatch,
+        separatePathOutline: true,
+        separateWallPass: true,
       });
       lc.addChild(display);
     }
@@ -132,6 +149,16 @@ export async function renderMapToPngBase64(
       }
       worldLayer.addChild(grid);
     }
+    if (options.map.kind === 'interior') {
+      const lighting = new Graphics();
+      drawRoomLightingOverlay(
+        lighting,
+        options.map,
+        { x: -cam.x / cam.zoom, y: -cam.y / cam.zoom, w: width / cam.zoom, h: height / cam.zoom },
+        lightingMode,
+      );
+      worldLayer.addChild(lighting);
+    }
     if (view === 'player' && options.map.fog.enabled) {
       const fog = new Graphics();
       drawFog(fog, options.map, {x:-cam.x/cam.zoom,y:-cam.y/cam.zoom,w:width/cam.zoom,h:height/cam.zoom},1);
@@ -147,43 +174,7 @@ export async function renderMapToPngBase64(
       worldLayer.mask = mask;
     }
 
-    // Subtle parchment grain + warm sepia edge vignette for cohesive cartographic finish
-    const parchmentTex = getProceduralTexture('parchment');
-    if (parchmentTex) {
-      const grain = new TilingSprite({ texture: parchmentTex, width, height });
-      grain.eventMode = 'none';
-      grain.alpha = 0.12;
-      app.stage.addChild(grain);
-    }
-    const vignetteTex = getProceduralTexture('vignette');
-    if (vignetteTex) {
-      const vig = new Sprite(vignetteTex);
-      vig.eventMode = 'none';
-      vig.width = width;
-      vig.height = height;
-      app.stage.addChild(vig);
-    }
-
-    if ((options.map.kind === 'world' || options.map.kind === 'region' || options.map.kind === 'settlement') && width >= 400 && height >= 400) {
-      const chrome = new Graphics();
-      chrome.eventMode = 'none';
-      const pad = 10;
-      chrome.rect(pad, pad, width - pad * 2, height - pad * 2).stroke({ color: 0x3b2a1a, width: 2, alpha: 0.55 });
-      chrome.rect(pad + 5, pad + 5, width - (pad + 5) * 2, height - (pad + 5) * 2).stroke({ color: 0x3b2a1a, width: 1, alpha: 0.35 });
-      // Compass rose in bottom-right corner
-      const rx = width - 58, ry = height - 58, rad = 26;
-      chrome.circle(rx, ry, rad).fill({ color: 0xf0e4c8, alpha: 0.72 }).stroke({ color: 0x3b2a1a, width: 1.5, alpha: 0.75 });
-      chrome.circle(rx, ry, rad * 0.76).stroke({ color: 0x3b2a1a, width: 0.8, alpha: 0.45 });
-      for (let i = 0; i < 4; i++) {
-        const a = (i * Math.PI) / 2 - Math.PI / 2;
-        const p1 = { x: rx + Math.cos(a) * rad * 0.92, y: ry + Math.sin(a) * rad * 0.92 };
-        const p2 = { x: rx + Math.cos(a + 0.38) * rad * 0.25, y: ry + Math.sin(a + 0.38) * rad * 0.25 };
-        const p3 = { x: rx + Math.cos(a - 0.38) * rad * 0.25, y: ry + Math.sin(a - 0.38) * rad * 0.25 };
-        chrome.moveTo(rx, ry).lineTo(p1.x, p1.y).lineTo(p2.x, p2.y).closePath().fill({ color: i === 0 ? 0x8f3328 : 0x3b2a1a, alpha: 0.85 });
-        chrome.moveTo(rx, ry).lineTo(p1.x, p1.y).lineTo(p3.x, p3.y).closePath().fill({ color: i === 0 ? 0xc8634a : 0x7c6852, alpha: 0.85 });
-      }
-      app.stage.addChild(chrome);
-    }
+    applyCartographicChrome(app.stage, width, height, options.map.kind);
 
     app.render();
 

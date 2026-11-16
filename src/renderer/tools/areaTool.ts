@@ -48,6 +48,7 @@ export function createAreaTool(): MapTool {
         origin: 'manual',
         rev: 0,
         role: vs.areaRole,
+        ...(vs.blueprintMode ? { usage: 'blueprint' as const } : {}),
         rings: [ring],
       },
     });

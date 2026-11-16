@@ -283,6 +283,22 @@ export function registerWorldIpc(getMainWindow: () => BrowserWindow | null): Wor
     return { ok: true };
   });
 
+  ipcMain.handle('atlas:ui-layout-load', () => {
+    const filePath = join(userDataDir(), 'ui-layout.json');
+    if (!existsSync(filePath)) return null;
+    try {
+      return JSON.parse(readFileSync(filePath, 'utf-8')) as unknown;
+    } catch {
+      return null;
+    }
+  });
+
+  ipcMain.handle('atlas:ui-layout-save', (_event, layout: unknown) => {
+    mkdirSync(userDataDir(), { recursive: true });
+    atomicWriteFile(join(userDataDir(), 'ui-layout.json'), JSON.stringify(layout, null, 2));
+    return { ok: true };
+  });
+
   // Read only the file chosen by the native dialog; the renderer supplies no path.
   ipcMain.handle('atlas:pick-svg', async () => {
     const win = getMainWindow();

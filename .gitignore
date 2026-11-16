@@ -7,3 +7,5 @@ playwright-report/
 *.tsbuildinfo
 .DS_Store
 assets/
+visual-review/rook-current/profile/
+visual-review/rook-current/world/

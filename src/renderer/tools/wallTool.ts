@@ -50,6 +50,9 @@ export function createWallTool(): MapTool {
         points: pts,
         blocksMove: vs.wallBlocksMove,
         blocksSight: vs.wallBlocksSight,
+        ...(vs.wallKind !== 'solid' ? { wallKind: vs.wallKind } : {}),
+        ...(vs.wallBlocksLight !== vs.wallBlocksSight ? { blocksLight: vs.wallBlocksLight } : {}),
+        ...(vs.wallBlocksSound !== vs.wallBlocksMove ? { blocksSound: vs.wallBlocksSound } : {}),
       },
     });
     ctx.setSelectedIds([id]);

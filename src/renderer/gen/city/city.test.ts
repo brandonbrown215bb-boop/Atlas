@@ -132,3 +132,20 @@ it('concentrates extra-mural outskirts into ribbon development along gate arteri
   }
   expect(result.some(e=>e.type==='area'&&e.role==='district'&&e.name==='Market gardens')).toBe(true);
 });
+
+it('supports hamlet scale without walls, explicit walled cities, and everyday building identities', () => {
+  const hamletInput = source();
+  hamletInput.params = CityParamsSchema.parse({ scale: 'hamlet' });
+  const hamlet = generateCity(hamletInput);
+  const hamletBuildings = hamlet.filter((e): e is Extract<Entity, { type: 'area' }> => e.type === 'area' && e.role === 'building');
+  expect(hamletBuildings.length).toBeGreaterThanOrEqual(4);
+  expect(hamletBuildings.length).toBeLessThanOrEqual(8);
+  expect(hamlet.some(e => e.type === 'path' && e.role === 'cityWall')).toBe(false);
+
+  const walledInput = source();
+  walledInput.params = CityParamsSchema.parse({ walls: 'walled' });
+  const walled = generateCity(walledInput);
+  expect(walled.some(e => e.type === 'path' && e.role === 'cityWall')).toBe(true);
+  const townBuildings = walled.filter((e): e is Extract<Entity, { type: 'area' }> => e.type === 'area' && e.role === 'building');
+  expect(townBuildings.some(b => !/^Building \d+$/.test(b.name ?? ''))).toBe(true);
+});

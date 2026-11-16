@@ -146,4 +146,29 @@ describe('clipInherit', () => {
       expect(labels[0].y).toBe(20);
     }
   });
+
+  it('scales inherited world symbols down proportionally into smaller region rects', () => {
+    const parent = makeParentMap();
+    parent.kind = 'world';
+    parent.entities.mtn = {
+      id: 'mtn',
+      type: 'prop',
+      layerId: 'l1',
+      origin: 'generated',
+      rev: 1,
+      symbolKind: 'mountain',
+      builtin: 'mountain',
+      x: 150,
+      y: 150,
+      w: 100,
+      h: 100,
+      scale: 1,
+      rotation: 0,
+      flipX: false,
+    };
+    const inherited = clipAndInheritEntities(parent, { x: 100, y: 100, w: 100, h: 100 }, 'child-l1');
+    const mtn = inherited.find((e) => e.type === 'prop' && e.symbolKind === 'mountain');
+    expect(mtn?.type === 'prop' && mtn.w).toBeLessThan(100);
+    expect(mtn?.type === 'prop' && mtn.w).toBeCloseTo(22, 5);
+  });
 });

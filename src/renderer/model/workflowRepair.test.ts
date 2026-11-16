@@ -199,4 +199,84 @@ describe('walkthrough regressions',()=>{
     expect(display.scale.x).toBe(40);
     expect(display.children.length).toBeGreaterThanOrEqual(2);
   });
+
+  it('syncs interior parent placement on building move, pulls only building footprint/doors, and supports destructive land/water brushes', () => {
+    const store = createWorldStore();
+    const town = MapDocSchema.parse({
+      id: 'town',
+      name: 'Town',
+      kind: 'settlement',
+      bounds: { x: 0, y: 0, w: 500, h: 500 },
+      grid: { size: 5, visible: true },
+      layers: [{ id: 'base', name: 'Base', visible: true, locked: false, gmOnly: false }],
+      entities: {
+        b1: {
+          id: 'b1', type: 'area', role: 'building', name: 'Grand Temple', layerId: 'base', origin: 'generated', rev: 1,
+          rings: [[{ x: 100, y: 100 }, { x: 130, y: 100 }, { x: 130, y: 120 }, { x: 100, y: 120 }]],
+        },
+        roof2: {
+          id: 'roof2', type: 'area', role: 'building', name: 'Neighbor', layerId: 'base', origin: 'generated', rev: 1,
+          rings: [[{ x: 105, y: 105 }, { x: 125, y: 105 }, { x: 125, y: 115 }, { x: 105, y: 115 }]],
+        },
+        land1: {
+          id: 'land1', type: 'area', role: 'land', name: 'Land', layerId: 'base', origin: 'generated', rev: 1,
+          rings: [[{ x: 0, y: 0 }, { x: 400, y: 0 }, { x: 400, y: 400 }, { x: 0, y: 400 }]],
+        },
+        genTree: {
+          id: 'genTree', type: 'prop', name: 'Forest', symbolKind: 'forest', layerId: 'base', origin: 'generated', rev: 1,
+          x: 200, y: 200, w: 20, h: 20, scale: 1, rotation: 0, flipX: false,
+        },
+        manualRock: {
+          id: 'manualRock', type: 'prop', name: 'Landmark', layerId: 'base', origin: 'manual', rev: 1,
+          x: 205, y: 205, w: 10, h: 10, scale: 1, rotation: 0, flipX: false,
+        },
+      },
+      generators: {},
+      revision: 1,
+      deleted: {},
+      fog: { enabled: false, revealed: [] },
+    });
+    store.getState().loadWorld(
+      { id: 'w', name: 'W', formatVersion: 1, maps: [{ id: 'town', name: 'Town', kind: 'settlement' }], themes: { default: {} } },
+      { town },
+    );
+    store.getState().execute('map.generateInterior', {
+      parentMapId: 'town',
+      buildingId: 'b1',
+      childMapId: 'inside',
+      name: 'Grand Temple Interior',
+      seed: 3,
+      params: {},
+    });
+    // Moving building updates child interior parent placement
+    store.getState().execute('entity.update', {
+      mapId: 'town',
+      entityId: 'b1',
+      patch: { rings: [[{ x: 200, y: 250 }, { x: 230, y: 250 }, { x: 230, y: 270 }, { x: 200, y: 270 }]] },
+    });
+    const insideAfterMove = store.getState().world!.maps.inside!;
+    expect(insideAfterMove.parent).toMatchObject({ x: 200, y: 250, footprintEntityId: 'b1' });
+    // Pull on interior must NOT import town exterior buildings/land over rooms
+    store.getState().execute('map.pullFromParent', { mapId: 'inside' });
+    const insideAfterPull = store.getState().world!.maps.inside!;
+    expect(Object.values(insideAfterPull.entities).some((e) => e.type === 'area' && e.role === 'building' && e.id !== 'interior-footprint')).toBe(false);
+    expect(Object.values(insideAfterPull.entities).some((e) => e.type === 'area' && e.role === 'floor')).toBe(true);
+    expect(Object.keys(insideAfterPull.entities)[0]).toBe('interior-footprint');
+    expect((insideAfterPull.entities['interior-footprint'] as Extract<Entity, { type: 'area' }>).texture).toBeUndefined();
+
+    // Destructive water brush removes generated props in water while keeping manual props, and undoes in one step
+    const beforeBrush = store.getState().world;
+    store.getState().execute('map.paintGeography', {
+      mapId: 'town',
+      mode: 'water',
+      points: [{ x: 200, y: 200 }],
+      radius: 25,
+      layerId: 'base',
+    });
+    const townAfterWater = store.getState().world!.maps.town!;
+    expect(townAfterWater.entities.genTree).toBeUndefined();
+    expect(townAfterWater.entities.manualRock).toBeDefined();
+    store.getState().undo();
+    expect(store.getState().world).toEqual(beforeBrush);
+  });
 });

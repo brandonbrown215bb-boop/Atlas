@@ -6,6 +6,54 @@ import { rectRing,toPolygons,fromPolygons } from '../../geom/fog';
 import { getEntityBounds } from '../../geom/hitTest';
 import { bufferLine } from './city';
 
+export interface SettlementServiceStatus {
+  key: 'tavern' | 'smithy' | 'market' | 'temple' | 'watch';
+  label: string;
+  present: boolean;
+  count: number;
+}
+
+export interface SettlementAuditResult {
+  services: SettlementServiceStatus[];
+  presentCount: number;
+  complete: boolean;
+  missing: string[];
+}
+
+const SERVICE_RULES: Array<{ key: SettlementServiceStatus['key']; label: string; pattern: RegExp }> = [
+  { key: 'tavern', label: 'Tavern / Inn', pattern: /tavern|inn|alehouse|taproom|lodge/i },
+  { key: 'smithy', label: 'Smithy / Gear', pattern: /smith|armour|armor|forge|weapon|outfitter|carpenter/i },
+  { key: 'market', label: 'Market / Supplies', pattern: /market|store|bakery|grocer|bazaar|guild|merchant|shop/i },
+  { key: 'temple', label: 'Temple / Healer', pattern: /temple|shrine|chapel|abbey|church|healer|apothecary|infirmary/i },
+  { key: 'watch', label: 'Watch / Keep', pattern: /watch|guard|keep|barracks|citadel|fort|gatehouse/i },
+];
+
+/** Audit a settlement map against the 5 essential OSE town services (tavern, smithy, market, temple, watch). */
+export function settlementServiceAudit(map: MapDoc): SettlementAuditResult {
+  const names: string[] = [];
+  for (const e of Object.values(map.entities)) {
+    if (e.name) names.push(e.name);
+    if (e.type === 'place') {
+      if (e.category) names.push(e.category);
+      if (e.notes) names.push(e.notes);
+    } else if (e.type === 'label') {
+      names.push(e.text);
+    }
+  }
+  const services: SettlementServiceStatus[] = SERVICE_RULES.map((rule) => {
+    const count = names.filter((n) => rule.pattern.test(n)).length;
+    return { key: rule.key, label: rule.label, present: count > 0, count };
+  });
+  const missing = services.filter((s) => !s.present).map((s) => s.label);
+  const presentCount = services.length - missing.length;
+  return {
+    services,
+    presentCount,
+    complete: missing.length === 0,
+    missing,
+  };
+}
+
 export function cityDiagnostics(map:MapDoc,areaId:string){
   const area=map.entities[areaId];if(area?.type!=='area')return null;
   const footprint=toPolygons([area.rings]),parts:MultiPolygon[]=[],water:MultiPolygon[]=[],blockerIds:string[]=[];

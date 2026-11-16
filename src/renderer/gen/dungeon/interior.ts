@@ -30,7 +30,20 @@ export function previewInterior(parent: MapDoc, options: {
     bounds:{x:0,y:0,w:bounds.maxX-bounds.minX,h:bounds.maxY-bounds.minY},grid:{size:1.524,visible:true},
     layers:[{id:'layer-base',name:'Interior',visible:true,locked:false,gmOnly:false}],
     entities,generators:{},revision:0,deleted:{},fog:{enabled:false,revealed:[]}});
-  runGenerator(map,{genId:'interior-generator',type:'dungeon',seed:options.seed,params:DungeonParamsSchema.parse(options.params),
+  const linkedPlace = Object.values(parent.entities).find(e => e.type === 'place' && e.entityIds.includes(building.id));
+  const identityText = `${building.name ?? ''} ${linkedPlace?.type === 'place' ? `${linkedPlace.name} ${linkedPlace.category}` : ''}`;
+  const inferredPurpose =
+    /temple|shrine|abbey|chapel|sanctuary|cathedral/i.test(identityText) ? 'shrine' :
+    /keep|watch|tower|barracks|guard|fort|castle/i.test(identityText) ? 'guardroom' :
+    /tavern|inn|pub|alehouse/i.test(identityText) ? 'tavern' :
+    /store|shop|market|smithy|bakery|apothecary|carpenter|tailor|warehouse|barn|dairy|mill/i.test(identityText) ? 'storage' :
+    /cottage|house|manor|villa|hut|residence|croft/i.test(identityText) ? 'bedroom' :
+    undefined;
+  const parsedParams = DungeonParamsSchema.parse(options.params);
+  const effectiveParams = parsedParams.purpose === 'random' && inferredPurpose
+    ? { ...parsedParams, purpose: inferredPurpose }
+    : parsedParams;
+  runGenerator(map,{genId:'interior-generator',type:'dungeon',seed:options.seed,params:effectiveParams,
     regionEntityId:footprint.id,layerId:'layer-base',theme:options.theme,themeName:options.themeName});
   return MapDocSchema.parse(map);
 }

@@ -136,4 +136,11 @@ describe('outdoor woodland generator', () => {
     const split = [...region, [{ x: 38, y: -1 }, { x: 42, y: -1 }, { x: 42, y: 66 }, { x: 38, y: 66 }]];
     expect(() => generateOutdoor(makeInput(1, {}, [], split))).toThrow('disconnected');
   });
+  it('supports roadside hedgerow and overgrown ruins presets', () => {
+    const roadside = generateOutdoor(makeInput(3, { preset: 'roadside', water: false }));
+    expect(roadside.some(e => e.type === 'path' && e.role === 'road' && e.name === 'Country road')).toBe(true);
+    expect(roadside.some(e => e.type === 'prop' && e.name === 'Hedgerow')).toBe(true);
+    const ruins = generateOutdoor(makeInput(3, { preset: 'ruins', water: false }));
+    expect(ruins.some(e => e.type === 'wall' && e.name === 'Ruined wall')).toBe(true);
+  });
 });

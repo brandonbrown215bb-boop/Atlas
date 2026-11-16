@@ -5,14 +5,34 @@ import type { GeneratorInput } from '../framework';
 import { mulberry32 } from '../rng';
 import type { DungeonParams } from './layout';
 
-export const ROOM_PURPOSES = ['random','storage','bedroom','tavern','shrine','guardroom'] as const;
+export const ROOM_PURPOSES = [
+  'random',
+  'storage',
+  'bedroom',
+  'tavern',
+  'shrine',
+  'guardroom',
+  'crypt',
+  'cistern',
+  'prison',
+  'alchemy',
+  'treasury',
+] as const;
 type Purpose = Exclude<typeof ROOM_PURPOSES[number], 'random'>;
+const BUILDING_PURPOSES: Purpose[] = ['tavern', 'guardroom', 'shrine', 'bedroom', 'storage'];
+const CAVE_PURPOSES: Purpose[] = ['cistern', 'storage', 'guardroom'];
+const DUNGEON_PURPOSES: Purpose[] = ['guardroom', 'crypt', 'cistern', 'prison', 'alchemy', 'treasury', 'shrine', 'storage'];
 const furniture: Record<Purpose, { role: string; wall: boolean; count: number }[]> = {
   storage: [{role:'barrel',wall:true,count:4},{role:'crate',wall:true,count:4}],
   bedroom: [{role:'bed',wall:true,count:2},{role:'rug',wall:false,count:1},{role:'table',wall:true,count:1},{role:'chair',wall:false,count:1}],
   tavern: [{role:'hearth',wall:true,count:1},{role:'bar',wall:true,count:1},{role:'table',wall:false,count:3},{role:'chair',wall:false,count:4},{role:'barrel',wall:true,count:2}],
   shrine: [{role:'altar',wall:true,count:1},{role:'rug',wall:false,count:1},{role:'pillar',wall:false,count:2},{role:'chair',wall:false,count:2}],
   guardroom: [{role:'table',wall:false,count:1},{role:'chair',wall:false,count:2},{role:'crate',wall:true,count:2},{role:'barrel',wall:true,count:1}],
+  crypt: [{role:'altar',wall:true,count:2},{role:'pillar',wall:false,count:2},{role:'crate',wall:true,count:1}],
+  cistern: [{role:'pillar',wall:false,count:4},{role:'barrel',wall:true,count:2}],
+  prison: [{role:'table',wall:false,count:1},{role:'chair',wall:false,count:2},{role:'barrel',wall:true,count:2},{role:'crate',wall:true,count:1}],
+  alchemy: [{role:'table',wall:false,count:2},{role:'hearth',wall:true,count:1},{role:'barrel',wall:true,count:3},{role:'crate',wall:true,count:2}],
+  treasury: [{role:'crate',wall:true,count:4},{role:'barrel',wall:true,count:2},{role:'table',wall:false,count:1},{role:'pillar',wall:false,count:2}],
 };
 
 const itemDimensions = (role: string, g: number): { w: number; h: number } => {
@@ -39,6 +59,7 @@ export function dressDungeon(input: GeneratorInput<DungeonParams>, layout: Entit
   })));
   const doors=all.filter((e):e is Extract<Entity,{type:'door'}>=>e.type==='door');
   const obstacles=all.filter(e=>e.type==='prop'||e.type==='image'||(e.type==='area'&&(e.role==='water'||e.role==='building')));
+  const waterPaths=all.filter((e):e is Extract<Entity,{type:'path'}>=>e.type==='path'&&e.role==='river');
   const placed: Entity[]=[];
   const wallDistances=new Map<Point,number>();
   const wallDistance=(p:Point)=>{
@@ -48,22 +69,111 @@ export function dressDungeon(input: GeneratorInput<DungeonParams>, layout: Entit
     wallDistances.set(p,distance);
     return distance;
   };
-  const purposeBag=ROOM_PURPOSES.slice(1) as Purpose[];
+  const purposePool = [
+    ...(params.mode === 'building'
+      ? BUILDING_PURPOSES
+      : params.mode === 'cave'
+        ? CAVE_PURPOSES
+        : DUNGEON_PURPOSES),
+  ];
+  const purposeBag: Purpose[] = [...purposePool];
   for(let i=purposeBag.length-1;i>0;i--){const j=Math.floor(random()*(i+1));[purposeBag[i],purposeBag[j]]=[purposeBag[j]!,purposeBag[i]!];}
   const floorArea = (f: Extract<Entity, { type: 'area' }>) => {
     const b = getEntityBounds(f);
     return b ? (b.maxX - b.minX) * (b.maxY - b.minY) : 0;
   };
   const largestIdx = floors.reduce((best, f, idx) => (floorArea(f) > floorArea(floors[best]!) ? idx : best), 0);
-  const tavernWingCycle: Purpose[] = ['storage', 'bedroom', 'guardroom', 'bedroom'];
-  let tavernWingIdx = 0;
+  // Build room-to-room door adjacency graph so private rooms (bedrooms/pantries) only occupy dead-end leaves, never thoroughfares.
+  const roomAdj: Set<number>[] = floors.map(() => new Set<number>());
+  for (const d of doors) {
+    const mid = { x: (d.a.x + d.b.x) / 2, y: (d.a.y + d.b.y) / 2 };
+    const touching: number[] = [];
+    for (let idx = 0; idx < floors.length; idx++) {
+      if (floors[idx]!.rings.some((r) => r.some((a, ei) => distanceToSegment(mid, a, r[(ei + 1) % r.length]!) < g * 0.16))) {
+        touching.push(idx);
+      }
+    }
+    if (touching.length >= 2) {
+      roomAdj[touching[0]!]!.add(touching[1]!);
+      roomAdj[touching[1]!]!.add(touching[0]!);
+    }
+  }
+  const buildingPlan = new Map<number, Purpose>();
+  if (params.mode === 'building' && floors.length > 1) {
+    const primaryRole: Purpose =
+      params.purpose !== 'random' ? (params.purpose as Purpose) : random() < 0.65 ? 'tavern' : 'guardroom';
+    const bfsDist = new Array<number>(floors.length).fill(Infinity);
+    bfsDist[largestIdx] = 0;
+    const bfsQ = [largestIdx];
+    for (let qi = 0; qi < bfsQ.length; qi++) {
+      const u = bfsQ[qi]!;
+      for (const v of roomAdj[u]!) {
+        if (bfsDist[v] === Infinity) {
+          bfsDist[v] = bfsDist[u]! + 1;
+          bfsQ.push(v);
+        }
+      }
+    }
+    buildingPlan.set(largestIdx, primaryRole);
+    const orderedOther = floors
+      .map((_, i) => i)
+      .filter((i) => i !== largestIdx)
+      .sort((a, b) => roomAdj[a]!.size - roomAdj[b]!.size || bfsDist[a]! - bfsDist[b]!);
+    let pantryAssigned = false;
+    let guardAssigned = false;
+    // Place Pantry first on a dead-end room off the Taproom/hub so service traffic never crosses guest bedrooms.
+    const pantryIdx = orderedOther.find((idx) =>
+      roomAdj[idx]!.size <= 1 && (roomAdj[idx]!.has(largestIdx) || primaryRole === 'tavern'),
+    );
+    if (pantryIdx !== undefined) {
+      buildingPlan.set(pantryIdx, 'storage');
+      pantryAssigned = true;
+    }
+    for (const idx of orderedOther) {
+      if (buildingPlan.has(idx)) continue;
+      const deg = roomAdj[idx]!.size;
+      if (deg >= 2) {
+        if (primaryRole === 'shrine') {
+          buildingPlan.set(idx, 'shrine');
+        } else if (primaryRole === 'guardroom' || !guardAssigned) {
+          buildingPlan.set(idx, 'guardroom');
+          guardAssigned = true;
+        } else {
+          // Outer wing rooms never lead into Pantry (Pantry is already pinned directly off hub/service); make them Guest Rooms.
+          buildingPlan.set(idx, 'bedroom');
+        }
+        continue;
+      }
+      if (!pantryAssigned) {
+        buildingPlan.set(idx, 'storage');
+        pantryAssigned = true;
+      } else {
+        buildingPlan.set(idx, primaryRole === 'guardroom' ? 'guardroom' : 'bedroom');
+      }
+    }
+  }
+  const wingCycles: Record<Purpose, Purpose[]> = {
+    tavern: ['storage', 'bedroom', 'guardroom', 'bedroom'],
+    shrine: ['shrine', 'storage', 'bedroom'],
+    guardroom: ['guardroom', 'storage', 'bedroom'],
+    storage: ['storage', 'bedroom'],
+    bedroom: ['bedroom', 'storage'],
+    crypt: ['crypt', 'shrine', 'guardroom', 'storage'],
+    cistern: ['cistern', 'storage', 'guardroom'],
+    prison: ['guardroom', 'prison', 'storage'],
+    alchemy: ['alchemy', 'storage', 'bedroom'],
+    treasury: ['guardroom', 'treasury', 'storage'],
+  };
+  let wingIdx = 0;
   for(const [roomIndex,floor] of floors.entries()) {
     const chosen=params.roomPurposes[floor.name ?? ''] ?? (params.purpose==='random'?floor.roomPurpose??'random':params.purpose);
-    const purpose: Purpose = chosen !== 'random'
-      ? (params.purpose === 'tavern' && !params.roomPurposes[floor.name ?? ''] && floors.length > 1 && params.mode === 'building'
-        ? (roomIndex === largestIdx ? 'tavern' : tavernWingCycle[tavernWingIdx++ % tavernWingCycle.length]!)
-        : chosen as Purpose)
-      : purposeBag[roomIndex%purposeBag.length]!;
+    const planRole = !params.roomPurposes[floor.name ?? ''] ? buildingPlan.get(roomIndex) : undefined;
+    const purpose: Purpose = planRole
+      ?? (chosen !== 'random'
+        ? (!params.roomPurposes[floor.name ?? ''] && floors.length > 1 && params.mode === 'building'
+          ? (roomIndex === largestIdx ? chosen as Purpose : wingCycles[chosen as Purpose][wingIdx++ % wingCycles[chosen as Purpose].length]!)
+          : chosen as Purpose)
+        : purposeBag[roomIndex % purposeBag.length]!);
     if(floor.origin==='generated')floor.roomPurpose=purpose;
     if(!params.density)continue;
     const box=getEntityBounds(floor)!;
@@ -93,10 +203,19 @@ export function dressDungeon(input: GeneratorInput<DungeonParams>, layout: Entit
       && obstacles.every(e => {
         const b = getEntityBounds(e);
         return !b || p.x + itemRadius <= b.minX || p.x - itemRadius >= b.maxX || p.y + itemRadius <= b.minY || p.y - itemRadius >= b.maxY;
-      });
+      })
+      && waterPaths.every(wp => wp.points.slice(1).every((b, i) => distanceToSegment(p, wp.points[i]!, b) >= wp.width * 0.65 + itemRadius));
 
-    // Random ties keep long walls from collecting every prop at the same end.
+    // Random ties keep long walls from collecting every prop at the same end; concave corners get a tuck bonus.
     const jitter=new Map(candidates.map(p=>[p,random()*g*.3]));
+    const isCorner = (p: Point) => {
+      const hWall = !pointInPolygon({ x: p.x + g * 0.65, y: p.y }, floor.rings) || !pointInPolygon({ x: p.x - g * 0.65, y: p.y }, floor.rings)
+        || wallSegments.some(s => distanceToSegment({ x: p.x + g * 0.5, y: p.y }, s.a, s.b) < g * 0.15 || distanceToSegment({ x: p.x - g * 0.5, y: p.y }, s.a, s.b) < g * 0.15);
+      const vWall = !pointInPolygon({ x: p.x, y: p.y + g * 0.65 }, floor.rings) || !pointInPolygon({ x: p.x, y: p.y - g * 0.65 }, floor.rings)
+        || wallSegments.some(s => distanceToSegment({ x: p.x, y: p.y + g * 0.5 }, s.a, s.b) < g * 0.15 || distanceToSegment({ x: p.x, y: p.y - g * 0.5 }, s.a, s.b) < g * 0.15);
+      return hWall && vWall;
+    };
+    const cornerBonus = new Map(candidates.map(p => [p, isCorner(p) ? g * 0.85 : 0]));
     const areaScale = Math.min(2.2, Math.max(1, candidates.length / 26));
     const roomTables: Point[] = [];
     const supplyAnchors: Point[] = [];
@@ -114,7 +233,8 @@ export function dressDungeon(input: GeneratorInput<DungeonParams>, layout: Entit
       const count = item.role === 'chair' && roomTables.length > 0 && !item.wall
         ? Math.max(baseCount, roomTables.length * 3)
         : (item.role === 'chair' && purpose === 'bedroom' && roomTables.length === 0 ? 0 : baseCount);
-      let sorted=[...candidates].sort((a,b)=>(wallDistance(a)-wallDistance(b))*(item.wall?1:-1)+jitter.get(a)!-jitter.get(b)!);
+      const cornerFactor = item.wall && ['bed', 'altar', 'crate', 'barrel', 'hearth'].includes(item.role) ? 1 : 0;
+      let sorted=[...candidates].sort((a,b)=>(wallDistance(a)-wallDistance(b))*(item.wall?1:-1)-(cornerBonus.get(a)!-cornerBonus.get(b)!)*cornerFactor+jitter.get(a)!-jitter.get(b)!);
       if (item.role === 'chair' && roomTables.length > 0 && !item.wall) {
         // Interleave chairs round-robin around placed tables so no table is left chairless.
         const perTable = roomTables.map(t =>
@@ -174,9 +294,11 @@ export function dressDungeon(input: GeneratorInput<DungeonParams>, layout: Entit
         if (isTable) roomTables.push(p);
         if (item.role === 'altar') placedAltar = p;
         if (isClusteredSupply) supplyAnchors.push(p);
+        const coverTag = item.role !== 'rug' ? ({ tacticalTag: 'cover' as const }) : {};
         placed.push({id:`dressing-${roomIndex}-${placed.length}`,type:'prop',origin:'generated',layerId:'generated',rev:0,
           name:`${purpose}: ${item.role}`, x:p.x,y:p.y,w:dims.w,h:dims.h,scale:1,flipX:false,
           rotation:rot,
+          ...coverTag,
           ...(asset.startsWith('builtin:')?{builtin:asset.slice(8)}:{assetId:asset})});
         added++;
       }

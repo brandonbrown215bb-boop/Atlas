@@ -1,5 +1,4 @@
 import { useEffect, useRef, useState } from 'react';
-import type { IDockviewPanelProps } from 'dockview-react';
 import type { AssetFacetCount, AssetPage, AssetResult } from '../model/packs';
 import { UNTAGGED_FILTER } from '../model/assetTags';
 import { useStore } from 'zustand';
@@ -54,7 +53,7 @@ function FacetSelect({ label, allLabel, value, items, untaggedCount, onChange }:
 
 const parseTagCsv = (raw: string) => raw.split(',').map(s => s.trim().toLowerCase()).filter(Boolean);
 
-export function AssetsPanel(_props: IDockviewPanelProps) {
+export function AssetsPanel() {
   const [page, setPage] = useState<AssetPage | null>(null);
   const [query, setQuery] = useState('');
   const [tag, setTag] = useState('');
