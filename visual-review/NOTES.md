@@ -160,3 +160,58 @@
   - `generator.run` and `generator.reroll` pass every name used anywhere in the world, except the run's own output, as `takenNames`. A region's names are therefore locked: sibling regions and the world never repeat them, even with the same seed. Before this, both seed-42 regions had the same 24 names.
   - Checked POI adoption: every world town and site inside a region rect is inherited exactly in place (0 m). Only their labels move, pulled in toward the shrunken icon.
   - What was missing was the world's Place records. A region now adopts them (notes, GM notes, stocking, leads, child-map link), pointing at its own copies. The generator no longer writes a second, contradicting Place for those towns, and routes their rumours to towns that show them.
+
+## Round 12 (`round-12-baseline/` → `round-12/`) — Settlement maps worth exploring
+- **Goal**: a settlement map a party wants to walk around in. It should have a real square, quarters with their own character, named inns with owners and secrets, and a way underground. Each scale should look different. A town developed from the world should be *that* town.
+- **Baseline** (`rook-review.mjs` now renders city, town, village and hamlet, plus `08-settlement-from-region`, a one-mile settlement developed around the coastal region's first town):
+  - Town and city were identical (2,287 buildings each).
+  - "Village" was the worst case: an unwalled mile of city blocks, 6,453 buildings, 11–13 s.
+  - Hamlet ignored roads and water and drew 8 overlapping labels in an empty mile.
+  - Building names cycled through 17 roles, so a city had 135 Inns, 135 Taverns and 135 Temples.
+  - Market Square was just the point where 8 avenues crossed, and the fallback code added a second monument.
+  - Every block shared one profile.
+  - Developed from the region, Fenmoor got 1,248 m-wide inherited roads, no streets inside its wall, a world-scale icon, and no link to its Place.
+- **Changes**:
+  - `city.ts`:
+    - **Core and outskirts**:
+      - Scale sets a core radius: hamlet 45 m, village 110 m, town 260 m, city ≥ 330 m.
+      - The core centres where existing roads meet (inherited roads converge on their town).
+      - Only towns and cities get walls.
+      - The core edge and an outskirts edge split blocks. Houses ribbon along roads only out to 60/150/300/450 m.
+      - Beyond that, countryside is parcelled into hedged fields, with farmsteads by the lanes.
+      - A footprint too small for its core is filled as before.
+    - **Square**: one square or green is cut out before streets, so avenues end at it and houses face it. It gets a Market Cross with stalls, or a well and an old oak. Its Place uses the market hooks.
+    - **Wards** (town and city):
+      - Market at the square; the rich away from the gates; crafts by the gates; docks by the water; the Shambles and Temple wards in what is left.
+      - Each ward has a `DistrictProfile`, so lot size, setback and colour follow it.
+      - Each ward has a seeded name label.
+    - **Notables**:
+      - Per-scale quotas: village 6, town 12, city 20.
+      - Each sits where it belongs (inns by gates, guildhall on the square, mill by water, tannery at the edge, thieves' den in the Shambles) and has a seeded name.
+      - Each gets a Place with owner, quirk, secret and job.
+      - Ordinary lots are named by ward (Shop, Manor House, Workshop, Tenement…).
+      - Sewers are towns and cities only.
+    - **Adventure layer**:
+      - The graveyard is a walled yard on a road just outside town. Its crypt has stairs down, a ruin hook and Headstones.
+      - A city's first sewer grate is an Undercity entrance.
+      - A village gets one outlying barrow, standing stones or ruined tower.
+      - The trouble gets a GM-only "Where the trouble starts" building.
+      - World rumours and local leads ("…, south-west of the square") are posted in the inns.
+    - Core and square shapes have their own random stream, so footprints without a core lay out as before.
+  - `names.ts`: `person`, `inn`, `temple`, `farm`, `graveyard` and `ward` makers. Picked templates now re-roll on a name clash instead of numbering.
+  - `hooks.ts`: establishment tables (service, quirks, secrets, jobs), trouble clues, `localRumour`, and `parseSettlement`, which reads back a town's rank, trait and trouble.
+  - Parent link:
+    - `clipInherit.ts`: a settlement child adopts the town's Place and drops world icons and their labels. Inherited roads are capped at 9 m and rivers at 40 m, because roads copied from a world have lost their tier.
+    - `framework.ts`: the city generator sees inherited settlement Places. Inherited land and biome fills draw beneath the generated fields.
+    - `scale: 'auto'` (now the default, "Auto (from world)" in the panel) takes the town's rank. Roads named `A–B Road` get `to B` labels where they leave the sheet.
+- **Verification**:
+  - New tests:
+    - building counts rise hamlet < village < town, and the village stays within core plus ribbon;
+    - the town has one square with houses facing it, a crypt, ward labels, unique notable names, hooks on every establishment and a complete service audit, and is deterministic;
+    - the parent link gives auto → village, keeps the adopted Place as the only town record, labels `to Pellbury` and `to Stanbury`, posts rumours in an inn and places the trouble;
+    - the settlement inheritance test in `clipInherit`.
+  - `npm run check`: 53/53 files, 242/242 tests.
+  - `npm run build` passes.
+  - Seeds 42 and 7 rendered for every scale and for the region-developed town; checked by eye.
+  - City generation is 3–4 s, village under 1 s (was 11–13 s).
+  - Remaining nit: inn labels next to the square can overlap the square's label.

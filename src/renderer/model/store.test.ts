@@ -429,7 +429,7 @@ describe('P1.1 schema, store, commands, history, and migrate', () => {
     store.getState().execute('entity.update', {
       mapId: 'map-1',
       entityId: 'road-1',
-      patch: { width: 12 },
+      patch: { width: 8 }, // settlement children cap world road widths at 9 m
     });
     store.getState().execute('entity.update', {
       mapId: 'map-1',
@@ -454,7 +454,7 @@ describe('P1.1 schema, store, commands, history, and migrate', () => {
     const childAfter = store.getState().world?.maps['child-1']!;
     expect(childAfter.entities[childRoad.id]).toBeUndefined();
     const newChildRoad = Object.values(childAfter.entities).find((e) => e.type === 'path');
-    expect(newChildRoad?.type === 'path' ? newChildRoad.width : null).toBe(12);
+    expect(newChildRoad?.type === 'path' ? newChildRoad.width : null).toBe(8);
     const keptLabel = childAfter.entities[childLabel.id];
     expect(keptLabel?.type === 'label' ? keptLabel.text : null).toBe('Custom Edited Town');
 

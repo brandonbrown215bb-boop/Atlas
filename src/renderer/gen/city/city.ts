@@ -8,9 +8,12 @@ import { fromPolygons, rectRing, toPolygons } from '../../geom/fog';
 import { clipOutside } from '../../geom/clipOutside';
 import { registerGenerator, type GeneratorInput } from '../framework';
 import { mulberry32 } from '../rng';
+import { makeNamer, type WardKind } from '../world/names';
+import { BAND_NAMES, makeHooks, parseSettlement, type Band, type Establishment, type SiteKind } from '../world/hooks';
 
 export const CityParamsSchema = DistrictProfileSchema.extend({
-  scale: z.enum(['hamlet', 'village', 'town', 'city']).default('town'),
+  /** 'auto' follows the world town this map was developed from, else 'town'. */
+  scale: z.enum(['auto', 'hamlet', 'village', 'town', 'city']).default('auto'),
   walls: z.enum(['auto', 'walled', 'open']).default('auto'),
   blockSize: z.number().min(30).max(180).default(75),
   streetWidth: z.number().min(3).max(16).default(6),
@@ -96,90 +99,124 @@ function orientedFrame(ring: Point[]) {
   return { ...best, spanMajor: best.spanU, spanMinor: best.spanV };
 }
 
-/** Drawn constraints first; oriented/radial streets form blocks, then street-facing lots and ribbon outskirts are built. */
+type Scale = Exclude<CityParams['scale'], 'auto'>;
+type Path = Extract<Entity, { type: 'path' }>;
+type Building = { entity: Area; c: Point; ward?: WardKind; fringe: boolean; notable?: Establishment };
+const CORE_RADIUS: Record<Scale, number> = { hamlet: 45, village: 110, town: 260, city: 330 };
+const PLAZA_RADIUS: Record<Scale, number> = { hamlet: 14, village: 22, town: 30, city: 40 };
+/** How far houses keep straggling along the roads beyond the core. */
+const RIBBON_REACH: Record<Scale, number> = { hamlet: 60, village: 150, town: 300, city: 450 };
+const BUILDING_CAP: Record<Scale, number> = { hamlet: 8, village: 120, town: 3000, city: 8000 };
+const SCALE_DENSITY: Record<Scale, number> = { hamlet: .55, village: .8, town: 1, city: 1 };
+const WARD_PROFILES: Record<WardKind, DistrictProfile> = {
+  market: { density: .85, wealth: .55, activity: .95, access: 'open' },
+  high: { density: .45, wealth: .9, activity: .35, access: 'gated' },
+  temple: { density: .55, wealth: .7, activity: .5, access: 'restricted' },
+  craft: { density: .8, wealth: .35, activity: .8, access: 'open' },
+  docks: { density: .75, wealth: .35, activity: .9, access: 'open' },
+  shambles: { density: .95, wealth: .12, activity: .6, access: 'open' },
+};
+const WARD_HOUSE: Record<WardKind, string> = { market: 'Shop', high: 'Manor House', temple: 'Townhouse', craft: 'Workshop', docks: 'Warehouse', shambles: 'Tenement' };
+const NOTABLES: Record<Scale, Establishment[]> = {
+  hamlet: ['inn', 'shrine'],
+  village: ['inn', 'smithy', 'shrine', 'store', 'watch', 'mill'],
+  town: ['inn', 'inn', 'tavern', 'smithy', 'stables', 'guildhall', 'apothecary', 'watch', 'store', 'healer', 'mill', 'tannery'],
+  city: ['inn', 'inn', 'inn', 'tavern', 'tavern', 'smithy', 'smithy', 'stables', 'guildhall', 'apothecary', 'watch', 'watch', 'store', 'healer', 'bathhouse', 'moneylender', 'thieves', 'wizard', 'mill', 'tannery'],
+};
+/** Where each establishment wants to stand: near a gate, the square, water, the edge of town, or in a ward. */
+const NOTABLE_SITE: Record<Establishment, 'gate' | 'plaza' | 'water' | 'edge' | WardKind> = {
+  inn: 'gate', tavern: 'plaza', smithy: 'gate', stables: 'gate', guildhall: 'plaza', apothecary: 'market', watch: 'gate', store: 'plaza',
+  healer: 'temple', shrine: 'plaza', bathhouse: 'high', moneylender: 'market', thieves: 'shambles', wizard: 'high', mill: 'water', tannery: 'edge',
+  keep: 'high', temple: 'temple', market: 'plaza', harbor: 'docks',
+};
+const NOTABLE_TITLE: Partial<Record<Establishment, string>> = {
+  smithy: 'Smithy', stables: 'Stables', guildhall: 'Guildhall', apothecary: 'Apothecary', watch: 'Watch House', store: 'General Store',
+  healer: 'House of Healing', shrine: 'Shrine', bathhouse: 'Bathhouse', moneylender: 'Counting House', thieves: 'Den', wizard: 'Tower', mill: 'Mill', tannery: 'Tannery',
+};
+
+function segHit(a: Point, b: Point, c: Point, d: Point): Point | null {
+  const den = (a.x - b.x) * (c.y - d.y) - (a.y - b.y) * (c.x - d.x);
+  if (Math.abs(den) < 1e-9) return null;
+  const t = ((a.x - c.x) * (c.y - d.y) - (a.y - c.y) * (c.x - d.x)) / den;
+  const u = -((a.x - b.x) * (a.y - c.y) - (a.y - b.y) * (a.x - c.x)) / den;
+  return t >= 0 && t <= 1 && u >= 0 && u <= 1 ? { x: a.x + (b.x - a.x) * t, y: a.y + (b.y - a.y) * t } : null;
+}
+const polylineDistance = (p: Point, pts: Point[]) => Math.min(Infinity, ...pts.slice(1).map((b, i) => distanceToSegment(p, pts[i]!, b)));
+
+/** Rectangle from corner `o`, `w` along `u` and `d` along `n`. */
+const rect = (o: Point, u: Point, n: Point, w: number, d: number): Point[][] =>
+  [[o, { x: o.x + u.x * w, y: o.y + u.y * w }, { x: o.x + u.x * w + n.x * d, y: o.y + u.y * w + n.y * d }, { x: o.x + n.x * d, y: o.y + n.y * d }]];
+
+/** Halve a field across its long axis until parcels are about `target` m², leaving a hedgerow gap. */
+function splitFields(polygon: Point[][], target: number, random: () => number, depth = 0): Point[][][] {
+  if (area(polygon) <= target || depth >= 7) return [polygon];
+  const frame = orientedFrame(polygon[0]!), u = frame.uMin + frame.spanMajor * (.4 + random() * .2);
+  const vMid = (frame.vMin + frame.vMax) / 2, reach = frame.spanMinor + 20;
+  const c = { x: frame.ux * u + frame.vx * vMid, y: frame.uy * u + frame.vy * vMid };
+  const cut = bufferLine([{ x: c.x - frame.vx * reach, y: c.y - frame.vy * reach }, { x: c.x + frame.vx * reach, y: c.y + frame.vy * reach }], .8);
+  const parts = fromPolygons(clipping.difference(toPolygons([polygon]), cut)).filter(p => area(p) > 50);
+  return parts.length > 1 ? parts.flatMap(p => splitFields(p, target, random, depth + 1)) : [polygon];
+}
+
+/** Town centre: where existing roads meet nearest the middle (inherited roads converge on their town), else the middle. */
+function findHub(region: Point[][], roads: Path[]): Point {
+  const b = bboxFromPoints(region[0]!)!, mid = { x: (b.minX + b.maxX) / 2, y: (b.minY + b.maxY) / 2 };
+  const margin = Math.min(b.maxX - b.minX, b.maxY - b.minY) * .15;
+  const candidates: Point[] = roads.flatMap(r => [r.points[0]!, r.points.at(-1)!]);
+  for (const [i, r] of roads.entries()) for (const s of roads.slice(i + 1))
+    for (let a = 1; a < r.points.length; a++) for (let c = 1; c < s.points.length; c++) {
+      const hit = segHit(r.points[a - 1]!, r.points[a]!, s.points[c - 1]!, s.points[c]!);
+      if (hit) candidates.push(hit);
+    }
+  const meets = candidates.filter(p => p.x - b.minX > margin && b.maxX - p.x > margin && p.y - b.minY > margin && b.maxY - p.y > margin
+    && pointInPolygon(p, region) && roads.filter(r => polylineDistance(p, r.points) <= 12 + r.width / 2).length >= 2);
+  return meets.sort((p, q) => Math.hypot(p.x - mid.x, p.y - mid.y) - Math.hypot(q.x - mid.x, q.y - mid.y))[0] ?? mid;
+}
+
+/** Drawn constraints first; a scale-sized core with a square, wards, streets and lots; ribbon outskirts and farmland beyond. */
 export function generateCity(input: GeneratorInput<CityParams>): Entity[] {
-  const {region,params,constraints} = input, random = mulberry32(input.seed);
+  const {region,constraints} = input, random = mulberry32(input.seed);
   if (area(region) > 16_000_000) throw new Error('Choose a city footprint no larger than 16 square kilometres.');
   if (area(region)<900) throw new Error('City footprint needs at least 900 square metres.');
-  if (params.scale === 'hamlet') {
-    const rb = bboxFromPoints(region[0]!)!;
-    const cx = (rb.minX + rb.maxX) / 2, cy = (rb.minY + rb.maxY) / 2;
-    const span = Math.min(rb.maxX - rb.minX, rb.maxY - rb.minY);
-    const laneLen = Math.min(span * 0.42, 110);
-    const ang = (random() - 0.5) * 0.8;
-    const ux = Math.cos(ang), uy = Math.sin(ang);
-    const nx = -uy, ny = ux;
-    const lane: Point[] = [
-      { x: cx - ux * laneLen, y: cy - uy * laneLen },
-      { x: cx + (random() - 0.5) * 10, y: cy + (random() - 0.5) * 10 },
-      { x: cx + ux * laneLen, y: cy + uy * laneLen },
-    ].filter(p => pointInPolygon(p, region));
-    const hamletOut: Entity[] = [];
-    if (lane.length >= 2) {
-      hamletOut.push({ ...base, id: 'hamlet-lane', type: 'path', role: 'road', name: 'Village Lane', points: lane, width: Math.min(params.streetWidth, 4.5), closed: false });
-    }
-    hamletOut.push({ ...base, id: 'hamlet-well', type: 'prop', name: 'Village Well', x: cx, y: cy, w: 4, h: 4, scale: 1, rotation: 0, flipX: false, builtin: 'altar' });
-    const names = [
-      "Bailiff's Cottage & Store", "Milkmaid's Barn & Dairy", 'Smithy & Wheelwright',
-      'Wayside Tavern & Post', "Miller's House", 'Croft & Bakery', "Herbalist's Hut", "Shepherd's Fold",
-    ];
-    const targetCount = Math.max(4, Math.min(8, Math.round(4 + params.density * 4)));
-    const occupied: Array<{ rings: Point[][]; box: ReturnType<typeof bboxFromPoints> & {} }> = [];
-    const roofs = input.theme.roof ?? [];
-    for (let i = 0; i < targetCount; i++) {
-      const side = i % 2 === 0 ? 1 : -1;
-      const t = ((Math.floor(i / 2) + 0.5) / Math.ceil(targetCount / 2) - 0.5) * 1.6;
-      const distAlong = t * laneLen;
-      const setback = 9 + random() * 6;
-      const bx = cx + ux * distAlong + nx * side * setback;
-      const by = cy + uy * distAlong + ny * side * setback;
-      const bw = 9 + random() * 5, bh = 7 + random() * 4;
-      const rings: Point[][] = [[
-        { x: bx - ux * bw / 2 - nx * bh / 2, y: by - uy * bw / 2 - ny * bh / 2 },
-        { x: bx + ux * bw / 2 - nx * bh / 2, y: by + uy * bw / 2 - ny * bh / 2 },
-        { x: bx + ux * bw / 2 + nx * bh / 2, y: by + uy * bw / 2 + ny * bh / 2 },
-        { x: bx - ux * bw / 2 + nx * bh / 2, y: by - uy * bw / 2 + ny * bh / 2 },
-      ]];
-      if (!rings[0]!.every(p => pointInPolygon(p, region))) continue;
-      const box = bboxFromPoints(rings[0]!)!;
-      const shape = toPolygons([rings]);
-      if (occupied.some(o => boxesIntersect(o.box, box) && clipping.intersection(shape, toPolygons([o.rings])).length > 0)) continue;
-      occupied.push({ rings, box });
-      const roof = roofs.length ? roofs[Math.floor(random() * roofs.length)] : undefined;
-      const bName = names[i % names.length]!;
-      hamletOut.push({
-        ...base, id: `building-${i}`, type: 'area', role: 'building', name: bName, rings,
-        fill: ['#924c38', '#785942', '#a8864e', '#875641'][i % 4]!,
-        ...(roof && !roof.startsWith('builtin:') ? { texture: { assetId: roof, metersPerPixel: 1, fitToArea: true } } : {}),
-      });
-      hamletOut.push({ ...base, id: `hamlet-label-${i}`, type: 'label', text: bName, x: bx, y: by - bh / 2 - 4, size: 12 });
-    }
-    return hamletOut;
-  }
-  const allConstraintsRoads = constraints.filter((e): e is Extract<Entity, { type: 'path' }> => e.type === 'path' && (e.role === 'road' || e.role === 'trail'));
+  // The world town this map was developed from (its adopted Place) sets the scale, trouble and rumours.
+  const townPlace = constraints.find((e): e is Extract<Entity, { type: 'place' }> => e.type === 'place' && /settlement/i.test(e.category));
+  const parent = parseSettlement(townPlace?.notes);
+  const scale: Scale = input.params.scale === 'auto' ? parent?.rank ?? 'town' : input.params.scale;
+  const params = { ...input.params, scale, density: input.params.density * SCALE_DENSITY[scale] };
+  const band = Math.max(0, BAND_NAMES.findIndex(n => townPlace?.notes?.includes(n))) as Band;
+  // Text has its own stream so rewording a table never moves a street.
+  const namer = makeNamer(input.seed, input.takenNames), hooks = makeHooks(mulberry32((input.seed ^ 0x51ed) >>> 0));
+  // The core and square have their own stream too, so a footprint without a core lays out streets exactly as before.
+  const shapeRandom = mulberry32((input.seed ^ 0xc0e) >>> 0);
+  const allConstraintsRoads = constraints.filter((e): e is Path => e.type === 'path' && (e.role === 'road' || e.role === 'trail'));
   const output: Entity[] = [], streets: Street[] = [];
-  const autoWalls: Array<Extract<Entity, { type: 'path' }>> = [];
+  const autoWalls: Path[] = [];
   const autoGates: Array<Extract<Entity, { type: 'door' }>> = [];
-  const wallRingsForMask: Point[][][] = [];
-  const wantWall = params.walls === 'walled' || (params.walls === 'auto' && params.scale !== 'village' && area(region) > 250_000);
-  if (wantWall && !constraints.some(e => (e.type === 'path' && e.role === 'cityWall') || e.type === 'wall' || (e.type === 'area' && e.role === 'district'))) {
-    const rb = bboxFromPoints(region[0]!)!;
-    const cx = (rb.minX + rb.maxX) / 2, cy = (rb.minY + rb.maxY) / 2;
-    const sides = 16, rot = (random() - 0.5) * 0.6;
-    const phase2 = random() * Math.PI * 2, phase3 = random() * Math.PI * 2;
+  const coreRings: Point[][][] = [];
+  const rb = bboxFromPoints(region[0]!)!;
+  const hub = findHub(region, allConstraintsRoads);
+  const constraintWaters = constraints.filter((e): e is Area => e.type === 'area' && e.role === 'water');
+  const wantWall = params.walls === 'walled' || (params.walls === 'auto' && (scale === 'town' || scale === 'city') && area(region) > 250_000);
+  let coreRadius = 0;
+  // Drawn walls or districts already say where the town is; otherwise the core is sized by scale.
+  if (!constraints.some(e => (e.type === 'path' && e.role === 'cityWall') || e.type === 'wall' || (e.type === 'area' && e.role === 'district'))) {
+    const sides = 16, rot = (shapeRandom() - 0.5) * 0.6;
+    const phase2 = shapeRandom() * Math.PI * 2, phase3 = shapeRandom() * Math.PI * 2;
     const radialFactors = Array.from({ length: sides }, (_, i) => {
       const a = rot + (i / sides) * Math.PI * 2;
       const harmonic = 1 + 0.14 * Math.cos(2 * a + phase2) + 0.09 * Math.sin(3 * a + phase3);
-      return { a, rad: harmonic * (0.90 + random() * 0.14) };
+      return { a, rad: harmonic * (0.90 + shapeRandom() * 0.14) };
     });
+    const target = scale === 'city' ? Math.max(CORE_RADIUS.city, Math.min(rb.maxX - rb.minX, rb.maxY - rb.minY) * .34) : CORE_RADIUS[scale];
     let wallPts: Point[] = [];
-    for (const shrink of [0.34, 0.28, 0.22, 0.16]) {
-      const rx = (rb.maxX - rb.minX) * shrink, ry = (rb.maxY - rb.minY) * shrink;
-      const candidate = radialFactors.map(({ a, rad }) => ({ x: cx + Math.cos(a) * rx * rad, y: cy + Math.sin(a) * ry * rad }));
-      if (candidate.every(p => pointInPolygon(p, region))) { wallPts = candidate; break; }
+    // A footprint too small for the core is filled outright, unless walls were asked for.
+    for (const shrink of wantWall ? [1, .85, .7, .55, .45, .35, .27, .2] : [1, .85, .7]) {
+      const r = target * shrink;
+      const candidate = radialFactors.map(({ a, rad }) => ({ x: hub.x + Math.cos(a) * r * rad, y: hub.y + Math.sin(a) * r * rad }));
+      if (candidate.every(p => pointInPolygon(p, region) && !(wantWall && constraintWaters.some(w => pointInPolygon(p, w.rings))))) { wallPts = candidate; coreRadius = r; break; }
     }
-    if (wallPts.length === sides) {
-      wallRingsForMask.push([wallPts]);
+    if (wallPts.length === sides) coreRings.push([wallPts]);
+    if (wallPts.length === sides && wantWall) {
       // Find gate locations where constraint roads cross wall edges, or fall back to 4 evenly spaced cardinal gates.
       type GateCut = { edgeIdx: number; t: number; width: number };
       const cutsOnWall: GateCut[] = [];
@@ -274,11 +311,28 @@ export function generateCity(input: GeneratorInput<CityParams>): Entity[] {
       obstacleParts.push(toPolygons([[rectRing({x:b.minX,y:b.minY,w:b.maxX-b.minX,h:b.maxY-b.minY})]]));
     }
   }
+  // The square (or green) is cut out before streets, so avenues end at its edge and houses face it.
+  const plazaRing = coreRings.length ? Array.from({ length: 9 }, (_, i) => {
+    const a = (i / 9) * Math.PI * 2 + shapeRandom() * .3, r = PLAZA_RADIUS[scale] * (.8 + shapeRandom() * .35);
+    return { x: hub.x + Math.cos(a) * r, y: hub.y + Math.sin(a) * r };
+  }) : [];
+  const plazaParts = plazaRing.length ? fromPolygons(clipping.difference(clipping.intersection(toPolygons([[plazaRing]]), toPolygons([region])), union(obstacleParts))) : [];
+  if (plazaParts.length) obstacleParts.push(toPolygons(plazaParts));
   const obstacles=union(obstacleParts), wallMask=union(wallParts);
   const usable=clipping.difference(toPolygons([region]),obstacles);
   const ground=fromPolygons(usable);
   if (!ground.length) throw new Error(`No buildable ground remains: ${waters.length} water areas, ${fixed.length} fixed buildings and ${constraints.filter(e=>e.type==='prop'&&!isWorldSymbol(e)).length} physical props overlap this district. Choose open land or edit the highlighted constraints.`);
-  const profileAt = (p: Point): DistrictProfile => districts.find(d=>pointInPolygon(p,d.rings))?.district ?? params;
+  const wards: Array<{ kind: WardKind; p: Point; name: string }> = [];
+  const wardAt = (p: Point) => wards.length && inTown(p)
+    ? wards.reduce((a, b) => Math.hypot(a.p.x - p.x, a.p.y - p.y) <= Math.hypot(b.p.x - p.x, b.p.y - p.y) ? a : b) : undefined;
+  const clamp01 = (v: number) => Math.min(1, Math.max(0, v));
+  const profileAt = (p: Point): DistrictProfile => {
+    const drawn = districts.find(d=>pointInPolygon(p,d.rings))?.district;
+    const ward = drawn ? undefined : wardAt(p);
+    if (!ward) return drawn ?? params;
+    const w = WARD_PROFILES[ward.kind];
+    return { ...w, density: clamp01(w.density + params.density - .65), wealth: clamp01(w.wealth + params.wealth - .5) };
+  };
   const roadDistance = (p: Point) => Math.min(Infinity,...streets.flatMap(s=>s.points.slice(1).map((b,i)=>distanceToSegment(p,s.points[i]!,b)-s.width/2)));
   const addStreet = (line: Point[], polygon: Point[][], width: number) => {
     for (const points of clipLine(line,[polygon])) {
@@ -287,26 +341,34 @@ export function generateCity(input: GeneratorInput<CityParams>): Entity[] {
     }
   };
   const walls = allConstraints.filter((e):e is Extract<Entity,{type:'path'}>=>e.type==='path'&&e.role==='cityWall'&&e.closed);
-  const wallInterior = union([...walls.map(w=>toPolygons([[w.points]])), ...wallRingsForMask.map(r=>toPolygons([r]))]);
-  const hasAnyCityWall = walls.length > 0 || wallRingsForMask.length > 0;
-  const inTown = (p: Point) => !hasAnyCityWall||walls.some(w=>pointInPolygon(p,[w.points]))||wallRingsForMask.some(r=>pointInPolygon(p,r));
-  const inTownPoly = (polygon: Point[][]) => !hasAnyCityWall||clipping.intersection(toPolygons([polygon]),wallInterior).length>0;
+  const wallInterior = union([...walls.map(w=>toPolygons([[w.points]])), ...coreRings.map(r=>toPolygons([r]))]);
+  const hasCore = walls.length > 0 || coreRings.length > 0;
+  const walled = walls.length > 0 || autoWalls.length > 0;
+  const inTown = (p: Point) => !hasCore||walls.some(w=>pointInPolygon(p,[w.points]))||coreRings.some(r=>pointInPolygon(p,r));
+  // An area test, not a touch test: blocks cut along the core edge share it, give or take float noise.
+  const overlapArea = (polygon: Point[][], mask: MultiPolygon) => fromPolygons(clipping.intersection(toPolygons([polygon]), mask)).reduce((s, p) => s + area(p), 0);
+  const inTownPoly = (polygon: Point[][]) => !hasCore || overlapArea(polygon, wallInterior) > 1;
+  const townRing = walls[0]?.points ?? coreRings[0]?.[0];
+  const townBox = townRing ? bboxFromPoints(townRing)! : undefined;
+  const coreR = coreRadius || (townBox ? Math.min(townBox.maxX - townBox.minX, townBox.maxY - townBox.minY) / 2 : Infinity);
+  const outskirts = coreR + RIBBON_REACH[scale];
+  const hubDistance = (p: Point) => Math.hypot(p.x - hub.x, p.y - hub.y);
   // Empty standalone towns get gate arteries and slightly angled radial avenues meeting at a central hub.
   if (!streets.some(s=>clipLine(s.points,ground).length)) {
-    const townGround = hasAnyCityWall ? fromPolygons(clipping.intersection(usable,wallInterior)) : ground;
-    const townRing = walls[0]?.points ?? wallRingsForMask[0]?.[0];
+    const townGround = walled ? fromPolygons(clipping.intersection(usable,wallInterior)) : ground;
+    const arteryWidth = params.streetWidth * (scale === 'hamlet' || scale === 'village' ? .9 : 1.4);
     for (const p of ground) {
       const b=bboxFromPoints((townRing?townRing:p[0])!)!, w=b.maxX-b.minX, h=b.maxY-b.minY;
       const fullBox=bboxFromPoints(p[0]!)!, reach=Math.hypot(fullBox.maxX-fullBox.minX,fullBox.maxY-fullBox.minY)+20;
-      const hub={x:(b.minX+b.maxX)/2+(random()-.5)*w*.12,y:(b.minY+b.maxY)/2+(random()-.5)*h*.12};
+      const centre=hasCore?hub:{x:(b.minX+b.maxX)/2+(random()-.5)*w*.12,y:(b.minY+b.maxY)/2+(random()-.5)*h*.12};
       for (const gate of gates) {
         const gm={x:(gate.a.x+gate.b.x)/2,y:(gate.a.y+gate.b.y)/2};
         const dx=gate.b.x-gate.a.x,dy=gate.b.y-gate.a.y,len=Math.hypot(dx,dy)||1;
         let nx=-dy/len,ny=dx/len;
-        if (hasAnyCityWall) {
+        if (walled) {
           if (inTown({x:gm.x+nx*6,y:gm.y+ny*6})) { nx=-nx; ny=-ny; }
           addStreet([{x:gm.x-nx*6,y:gm.y-ny*6},{x:gm.x+nx*reach,y:gm.y+ny*reach}],p,params.streetWidth*1.5);
-          addStreet([{x:gm.x+nx*4,y:gm.y+ny*4},hub],p,params.streetWidth*1.4);
+          addStreet([{x:gm.x+nx*4,y:gm.y+ny*4},centre],p,arteryWidth);
         } else {
           addStreet([{x:gm.x-nx*reach,y:gm.y-ny*reach},{x:gm.x+nx*reach,y:gm.y+ny*reach}],p,params.streetWidth*1.5);
         }
@@ -316,24 +378,55 @@ export function generateCity(input: GeneratorInput<CityParams>): Entity[] {
         const angle=baseAngle+arm*(Math.PI/2)+(random()-.5)*.22;
         const cosA=Math.cos(angle), sinA=Math.sin(angle);
         const curve=(random()-.5)*Math.min(w,h)*.09;
-        const mid={x:hub.x+cosA*(reach*.38)-sinA*curve,y:hub.y+sinA*(reach*.38)+cosA*curve};
-        const ray=[hub,mid,{x:hub.x+cosA*reach,y:hub.y+sinA*reach}];
-        if (hasAnyCityWall) {
-          for (const tp of townGround) addStreet(ray,tp,params.streetWidth*1.4);
+        const mid={x:centre.x+cosA*(reach*.38)-sinA*curve,y:centre.y+sinA*(reach*.38)+cosA*curve};
+        const ray=[centre,mid,{x:centre.x+cosA*reach,y:centre.y+sinA*reach}];
+        if (walled) {
+          for (const tp of townGround) addStreet(ray,tp,arteryWidth);
         } else {
-          addStreet(ray,p,params.streetWidth*1.4);
+          addStreet(ray,p,arteryWidth);
         }
       }
     }
   }
-  const outerGround = hasAnyCityWall ? fromPolygons(clipping.difference(usable,wallInterior)) : [];
-  const fringeArteries: Street[] = hasAnyCityWall ? streets.flatMap(s=>clipLine(s.points,outerGround).map(points=>({points,width:s.width}))) : [...streets];
+  if (plazaRing.length) streets.push({ points: [...plazaRing, plazaRing[0]!], width: 0 });
+  // Where streets enter the town: gates, or where they cross an unwalled core's edge.
+  const entries: Point[] = walled ? gates.map(g => ({ x: (g.a.x + g.b.x) / 2, y: (g.a.y + g.b.y) / 2 }))
+    : townRing ? streets.filter(s => s.width > 0).flatMap(s => s.points.slice(1).flatMap((b, i) =>
+      townRing.flatMap((c, j) => segHit(s.points[i]!, b, c, townRing[(j + 1) % townRing.length]!) ?? []))) : [];
+  const rivers = allConstraints.filter((e): e is Path => e.type === 'path' && e.role === 'river');
+  const waterDistance = (p: Point) => Math.min(Infinity, ...waters.flatMap(w => w.rings.map(r => polylineDistance(p, [...r, r[0]!]))), ...rivers.map(r => polylineDistance(p, r.points)));
+  const entryDistance = (p: Point) => entries.length ? Math.min(...entries.map(e => Math.hypot(e.x - p.x, e.y - p.y))) : hubDistance(p);
+  const edgeDistance = (p: Point) => Number.isFinite(coreR) ? Math.abs(hubDistance(p) - coreR) : -hubDistance(p);
+  // Wards: market at the square, the rich away from the gates, crafts by the gates, docks by the water, the poor in what is left.
+  if ((scale === 'town' || scale === 'city') && townRing) {
+    const n = scale === 'city' ? 6 : 4, rot = random() * Math.PI * 2;
+    const seeds = Array.from({ length: n }, (_, i) => {
+      const a = rot + (i / n) * Math.PI * 2 + (random() - .5) * .5, r = coreR * (.5 + random() * .2);
+      return { x: hub.x + Math.cos(a) * r, y: hub.y + Math.sin(a) * r };
+    });
+    const take = (kind: WardKind, score: (p: Point) => number) => {
+      if (!seeds.length) return;
+      const i = seeds.reduce((best, p, j) => score(p) < score(seeds[best]!) ? j : best, 0);
+      wards.push({ kind, p: seeds.splice(i, 1)[0]!, name: namer.ward(kind) });
+    };
+    if (seeds.some(p => waterDistance(p) < coreR * .8)) take('docks', waterDistance);
+    take('high', p => -entryDistance(p));
+    if (scale === 'city') take('temple', hubDistance);
+    take('craft', entryDistance);
+    if (scale === 'city') take('craft', entryDistance);
+    while (seeds.length) take('shambles', () => 0);
+    wards.push({ kind: 'market', p: hub, name: '' });
+  }
+  const outerGround = hasCore ? fromPolygons(clipping.difference(usable,wallInterior)) : [];
+  const fringeArteries: Street[] = hasCore ? streets.flatMap(s=>clipLine(s.points,outerGround).map(points=>({points,width:s.width}))) : [...streets];
   const arteryDistance = (p: Point) => Math.min(Infinity,...fringeArteries.flatMap(s=>s.points.slice(1).map((b,i)=>distanceToSegment(p,s.points[i]!,b)-s.width/2)));
   const polyArteryDistance = (ring: Point[]) => Math.min(...ring.map((p,i)=>{const q=ring[(i+1)%ring.length]!;return Math.min(arteryDistance(p),arteryDistance({x:(p.x+q.x)/2,y:(p.y+q.y)/2}));}));
-  const roadMask=union(streets.map(s=>bufferLine(s.points,s.width/2)));
+  const roadMask=union(streets.filter(s=>s.width>0).map(s=>bufferLine(s.points,s.width/2)));
   let initial=fromPolygons(clipping.difference(usable,roadMask));
-  for (const wall of walls) {
-    const mask=toPolygons([[wall.points]]);
+  // The core's edge and the outskirts' edge split blocks too, so town streets never run out across the fields.
+  const outskirtsRing = coreRings.length && townRing ? townRing.map(p => ({ x: hub.x + (p.x - hub.x) * outskirts / coreR, y: hub.y + (p.y - hub.y) * outskirts / coreR })) : undefined;
+  for (const ring of [...walls.map(w => w.points), ...coreRings.map(r => r[0]!), ...(outskirtsRing ? [outskirtsRing] : [])]) {
+    const mask=toPolygons([[ring]]);
     initial=initial.flatMap(p=>[...fromPolygons(clipping.intersection(toPolygons([p]),mask)),...fromPolygons(clipping.difference(toPolygons([p]),mask))]);
   }
   // District borders are lot boundaries, not extra walls or roads.
@@ -342,6 +435,12 @@ export function generateCity(input: GeneratorInput<CityParams>): Entity[] {
     initial=initial.flatMap(p=>[...fromPolygons(clipping.intersection(toPolygons([p]),mask)),...fromPolygons(clipping.difference(toPolygons([p]),mask))]);
   }
   const blocks: Point[][][] = [];
+  // Beyond the outskirts is countryside: left whole here and parcelled into fields below.
+  const countryside = new Set<Point[][]>();
+  if (outskirtsRing) initial = initial.filter(p => {
+    if (overlapArea(p, toPolygons([[outskirtsRing]])) > 1) return true;
+    blocks.push(p); countryside.add(p); return false;
+  });
   let cuts=0;
   const queue: Array<{ polygon: Point[][]; depth: number }> = initial.map(polygon => ({ polygon, depth: 0 }));
   for (let qi = 0; qi < queue.length; qi++) {
@@ -351,7 +450,7 @@ export function generateCity(input: GeneratorInput<CityParams>): Entity[] {
     const fringe=!inTownPoly(polygon), distToArtery=fringe?polyArteryDistance(polygon[0]!):0;
     const centerDistToArtery=fringe?arteryDistance(center):0;
     const hasRoad=polygon[0]!.some((p,i)=>{const q=polygon[0]![(i+1)%polygon[0]!.length]!;return roadDistance({x:(p.x+q.x)/2,y:(p.y+q.y)/2})<.5;});
-    if (fringe && (!params.fringe || distToArtery > params.blockSize * 0.9 || (hasAnyCityWall && depth >= 1 && centerDistToArtery > params.blockSize * 1.15)) && (depth >= 1 || hasRoad)) { blocks.push(polygon); continue; }
+    if (fringe && (!params.fringe || distToArtery > params.blockSize * 0.9 || hubDistance(center) > outskirts || (hasCore && depth >= 1 && centerDistToArtery > params.blockSize * 1.15)) && (depth >= 1 || hasRoad)) { blocks.push(polygon); continue; }
     const frame = orientedFrame(polygon[0]!);
     const target=params.blockSize*(1.25-profile.density*.45)*(fringe?1.35:1);
     const minBlockSq = target * target;
@@ -386,77 +485,81 @@ export function generateCity(input: GeneratorInput<CityParams>): Entity[] {
     });
   const occupied: Array<{rings:Point[][];box:NonNullable<ReturnType<typeof bboxFromPoints>>}> = [];
   let buildingCount=0;
-  let placedPlaza = false;
-  const cityBounds = bboxFromPoints(region[0]!)!;
-  const cityMid = { x: (cityBounds.minX + cityBounds.maxX) / 2, y: (cityBounds.minY + cityBounds.maxY) / 2 };
-  const isLargeCity = area(region) > 250_000;
-  const innerCandidates = isLargeCity
-    ? blocks
-        .map((poly, idx) => {
-          const b = bboxFromPoints(poly[0]!)!;
-          const c = { x: (b.minX + b.maxX) / 2, y: (b.minY + b.maxY) / 2 };
-          return { idx, poly, b, c, a: area(poly), d: Math.hypot(c.x - cityMid.x, c.y - cityMid.y) };
-        })
-        .filter(x => inTownPoly(x.poly) && x.a >= 500 && pointInPolygon(x.c, x.poly))
-    : [];
-  const plazaCand = innerCandidates.sort((a, b) => a.d - b.d)[0];
-  const plazaIdx = plazaCand?.idx ?? -1;
-  const keepCand = innerCandidates.filter(x => x.idx !== plazaIdx && x.a >= 800).sort((a, b) => b.a - a.a)[0];
-  const keepIdx = keepCand?.idx ?? -1;
-  const templeIdx = innerCandidates.filter(x =>
-    x.idx !== plazaIdx && x.idx !== keepIdx && x.a >= 500
-    && (!plazaCand || Math.hypot(x.c.x - plazaCand.c.x, x.c.y - plazaCand.c.y) > 100)
-    && (!keepCand || Math.hypot(x.c.x - keepCand.c.x, x.c.y - keepCand.c.y) > 100)
-  ).sort((a, b) => a.d - b.d)[0]?.idx ?? -1;
+  const lots: Building[] = [];
+  const touchesRoad = (polygon: Point[][]) => polygon[0]!.some((p,i)=>{const q=polygon[0]![(i+1)%polygon[0]!.length]!;return roadDistance({x:(p.x+q.x)/2,y:(p.y+q.y)/2})<.5;});
+  const blockInfo = blocks.map((poly, idx) => {
+    const b = bboxFromPoints(poly[0]!)!, c = { x: (b.minX + b.maxX) / 2, y: (b.minY + b.maxY) / 2 };
+    return { idx, poly, c, a: area(poly), d: hubDistance(c), core: inTownPoly(poly), centred: pointInPolygon(c, poly) };
+  });
+  const nearest = <T extends { c: Point }>(list: T[], to: Point | undefined) => to ? [...list].sort((a, b) => Math.hypot(a.c.x - to.x, a.c.y - to.y) - Math.hypot(b.c.x - to.x, b.c.y - to.y))[0] : undefined;
+  const wardSeed = (kind: WardKind) => wards.find(w => w.kind === kind)?.p;
+  const inner = blockInfo.filter(x => hasCore && x.core && x.centred && x.a >= 500);
+  const keepIdx = scale === 'city' ? (nearest(inner.filter(x => x.a >= 800), wardSeed('high')) ?? inner.filter(x => x.a >= 800).sort((a, b) => b.a - a.a)[0])?.idx ?? -1 : -1;
+  const keepAt = blockInfo[keepIdx]?.c;
+  const templeIdx = scale === 'town' || scale === 'city'
+    ? nearest(inner.filter(x => x.idx !== keepIdx && x.d > PLAZA_RADIUS[scale] + 20 && (!keepAt || Math.hypot(x.c.x - keepAt.x, x.c.y - keepAt.y) > 100)), wardSeed('temple') ?? hub)?.idx ?? -1 : -1;
+  // The graveyard lies just outside town beside a road: the town's first way underground.
+  const graveIdx = hasCore ? blockInfo.filter(x => !x.core && x.centred && x.a >= (scale === 'hamlet' || scale === 'village' ? 700 : 1200)
+    && !countryside.has(x.poly) && x.d > coreR && x.d < coreR + 220 && touchesRoad(x.poly)).sort((a, b) => Math.abs(a.d - coreR - 50) - Math.abs(b.d - coreR - 50))[0]?.idx ?? -1 : -1;
+  const keepName = namer.site('stronghold'), templeName = namer.temple();
   const fieldPalette = ['#7c8f59', '#88985d', '#989a64', '#718452'];
   const cityLabels: Entity[] = [];
   const cityPlaces: Extract<Entity, { type: 'place' }>[] = [];
+  const localSites: Array<{ kind: SiteKind; name: string; p: Point }> = [];
+  const blockOrder = blockInfo.map(x => x.idx).sort((a, b) => blockInfo[a]!.d - blockInfo[b]!.d);
 
-  for (const [index,polygon] of blocks.entries()) {
-    if (area(polygon)<80 || !polygon[0]!.some((p,i)=>{const q=polygon[0]![(i+1)%polygon[0]!.length]!;return roadDistance({x:(p.x+q.x)/2,y:(p.y+q.y)/2})<.5;})) continue;
+  for (const index of blockOrder) {
+    const polygon = blocks[index]!;
+    if (area(polygon)<80 || !touchesRoad(polygon)) continue;
     const b=bboxFromPoints(polygon[0]!)!, center={x:(b.minX+b.maxX)/2,y:(b.minY+b.maxY)/2};
     const profile=profileAt(center), outer=cleanRing(polygon[0]!);
     const fringe=!inTownPoly(polygon), distToArtery=fringe?polyArteryDistance(outer):0;
-    const isPlaza = index === plazaIdx;
+    // Far from town the roadside blocks are farmland, picked up with the other fields below.
+    if ((countryside.has(polygon) || fringe && hubDistance(center) > outskirts) && index !== graveIdx) continue;
     const isKeep = index === keepIdx;
     const isTemple = index === templeIdx;
-    const garden=profile.density===0 || (fringe && (!params.fringe || distToArtery > params.lotDepth * 2.5)) || (!fringe && params.fringe && !isKeep && !isTemple && random()<.11);
-    const blockFill = isPlaza
-      ? '#cbbda0'
-      : garden
-        ? (fringe ? fieldPalette[index % fieldPalette.length]! : '#7c8f59')
-        : '#b4a485';
-    output.push({...base,id:`block-${index}`,type:'area',role:'district',name:isPlaza?'Market Square':isKeep?'High Keep':isTemple?'Temple Ward':garden?(fringe?'Market gardens':'Garden courtyard'):`Block ${index+1}`,
-      rings:polygon,fill:blockFill,district:profile});
-
-    if (isPlaza) {
-      placedPlaza = true;
-      output.push({
-        ...base, id: `city-plaza-${index}`, type: 'prop', name: 'Town Square Monument',
-        x: center.x, y: center.y, w: 9, h: 9, scale: 1, rotation: 0, flipX: false,
-        builtin: 'altar',
-      });
-      for (const [si, ang] of [0.4, 1.9, 3.5, 5.1].entries()) {
-        const sp = { x: center.x + Math.cos(ang) * 11, y: center.y + Math.sin(ang) * 11 };
-        if (pointInPolygon(sp, polygon) && roadDistance(sp) >= 3.5) {
-          output.push({
-            ...base, id: `city-stall-${index}-${si}`, type: 'prop', name: 'Market Stall',
-            x: sp.x, y: sp.y, w: 3.5, h: 3.5, scale: 1, rotation: ang, flipX: false,
-            builtin: si % 2 === 0 ? 'table' : 'crate',
-          });
-        }
+    if (index === graveIdx) {
+      // A walled yard on the block's longest road edge; the rest of the block stays farmland.
+      const edge = outer.map((a, i) => ({ a, b: outer[(i + 1) % outer.length]! })).map(e => ({ ...e, len: Math.hypot(e.b.x - e.a.x, e.b.y - e.a.y), mid: { x: (e.a.x + e.b.x) / 2, y: (e.a.y + e.b.y) / 2 } }))
+        .filter(e => e.len >= 12 && roadDistance(e.mid) <= 1).sort((p, q) => q.len - p.len)[0];
+      if (!edge) continue;
+      const u = { x: (edge.b.x - edge.a.x) / edge.len, y: (edge.b.y - edge.a.y) / edge.len };
+      let n = { x: -u.y, y: u.x };
+      if (!pointInPolygon({ x: edge.mid.x + n.x, y: edge.mid.y + n.y }, polygon)) n = { x: -n.x, y: -n.y };
+      const depth = { hamlet: 36, village: 50, town: 70, city: 90 }[scale], half = Math.min(depth, edge.len) / 2;
+      const yard = fromPolygons(clipping.intersection(toPolygons([rect({ x: edge.mid.x - u.x * half + n.x * 2, y: edge.mid.y - u.y * half + n.y * 2 }, u, n, half * 2, depth)]), toPolygons([polygon])))
+        .sort((p, q) => area(q) - area(p))[0];
+      if (!yard) continue;
+      const name = namer.graveyard(), c = { x: edge.mid.x + n.x * (depth / 2 + 2), y: edge.mid.y + n.y * (depth / 2 + 2) };
+      output.push({ ...base, id: 'graveyard', type: 'area', role: 'district', name, rings: yard, fill: '#6f7d5c', district: profile });
+      occupied.push({ rings: yard, box: bboxFromPoints(yard[0]!)! });
+      const ids = ['graveyard'];
+      const crypt = rect({ x: c.x - u.x * 3.5 - n.x * 4.5, y: c.y - u.y * 3.5 - n.y * 4.5 }, u, n, 7, 9);
+      if (crypt[0]!.every(p => pointInPolygon(p, yard))) {
+        const door = { x: c.x - n.x * 6, y: c.y - n.y * 6 };
+        output.push({ ...base, id: 'graveyard-crypt', type: 'area', role: 'building', name: 'Crypt', rings: crypt, fill: '#6b675f', roofShape: 'hip' });
+        output.push({ ...base, id: 'graveyard-crypt-stairs', type: 'portal', name: 'Crypt Stairs', x: door.x, y: door.y, targetMapId: 'unlinked', connectorKind: 'stairsDown', elevationDelta: -1 });
+        ids.push('graveyard-crypt', 'graveyard-crypt-stairs');
       }
-      cityLabels.push({ ...base, id: 'city-label-plaza', type: 'label', text: 'Market Square', x: center.x, y: center.y, size: 17 });
-      cityPlaces.push({
-        ...base, id: 'place-market-square', type: 'place', name: 'Market Square', category: 'landmark',
-        notes: 'Open stone plaza bustling with merchant stalls, town criers, and caravan wagons.',
-        gmNotes: 'Hook: Cutpurses work the spice stalls at noon; an alderman seeks escorts for a delayed grain barge.',
-        entityIds: [`block-${index}`, `city-plaza-${index}`],
-        layerTier: 'focus',
-        activeHours: { morning: true, day: true, evening: true, night: false },
-      });
+      let stones = 0;
+      for (let v = 5; v < depth - 2 && stones < 40; v += 5) for (let s = -half + 3; s < half - 2 && stones < 40; s += 4) {
+        const p = { x: edge.mid.x + u.x * s + n.x * v + (random() - .5), y: edge.mid.y + u.y * s + n.y * v + (random() - .5) };
+        if (!pointInPolygon(p, yard) || Math.hypot(p.x - c.x, p.y - c.y) < 9 || random() < .3) continue;
+        output.push({ ...base, id: `headstone-${stones++}`, type: 'prop', name: 'Headstone', x: p.x, y: p.y, w: 1.1, h: .7, scale: 1, rotation: Math.atan2(u.y, u.x), flipX: false, builtin: 'rock' });
+      }
+      const hook = hooks.site('ruin', band);
+      cityPlaces.push({ ...base, id: 'place-graveyard', type: 'place', name, category: 'sacred', notes: 'Headstones, a lychgate and an old family crypt whose stairs go deeper than any family needs.',
+        gmNotes: hook.gmNotes, stockingRole: hook.stockingRole, entityIds: ids, layerTier: 'focus', activeHours: { morning: true, day: true, evening: true, night: true } });
+      cityLabels.push({ ...base, id: 'city-label-graveyard', type: 'label', text: name, x: c.x, y: c.y - depth / 2 - 6, size: 12 });
+      localSites.push({ kind: 'ruin', name, p: c });
       continue;
     }
+    const garden=profile.density===0 || (fringe && (!params.fringe || distToArtery > params.lotDepth * 2.5)) || (!fringe && params.fringe && !isKeep && !isTemple && random()<.11);
+    const blockFill = fringe ? fieldPalette[index % fieldPalette.length]! : garden ? '#7c8f59' : '#b4a485';
+    // Outside the core only small market gardens are their own block; the rest is parcelled with the fields below.
+    if (!fringe || (garden && area(polygon) < 8000)) output.push({...base,id:`block-${index}`,type:'area',role:'district',name:isKeep?keepName:isTemple?`${templeName} Close`:garden?(fringe?'Market gardens':'Garden courtyard'):`Block ${index+1}`,
+      rings:polygon,fill:blockFill,district:profile});
+    if (fringe && garden && area(polygon) >= 8000) continue;
 
     if (isKeep || isTemple) {
       const frame = orientedFrame(outer);
@@ -491,7 +594,7 @@ export function generateCity(input: GeneratorInput<CityParams>): Entity[] {
         const compoundIds = [`block-${index}`, mainId];
         output.push({
           ...base, id: mainId, type: 'area', role: 'building',
-          name: isKeep ? 'High Keep' : 'Grand Temple', rings: cand,
+          name: isKeep ? keepName : templeName, rings: cand,
           fill: isKeep ? '#6b655d' : '#56646e',
           roofShape: 'hip',
         });
@@ -544,19 +647,15 @@ export function generateCity(input: GeneratorInput<CityParams>): Entity[] {
             });
           }
         }
+        const landmark = isKeep ? keepName : templeName;
         cityLabels.push({
           ...base, id: isKeep ? 'city-label-keep' : 'city-label-temple', type: 'label',
-          text: isKeep ? 'High Keep' : 'Grand Temple', x: cx, y: cy, size: 16,
+          text: landmark, x: cx, y: cy, size: 16,
         });
         cityPlaces.push({
-          ...base, id: isKeep ? 'place-high-keep' : 'place-grand-temple', type: 'place',
-          name: isKeep ? 'High Keep' : 'Grand Temple', category: isKeep ? 'stronghold' : 'sacred',
-          notes: isKeep
-            ? 'Fortified citadel commanding the town walls, garrison courtyard, and inner dungeon vaults.'
-            : 'Vaulted nave and cloister bell-tower tending the town archives, ossuary, and healing shrine.',
-          gmNotes: isKeep
-            ? 'Watch patrols double at dusk; the under-bailey postern links to the old storm sewers.'
-            : 'High Prelate withholds burial records from the western crypt unless a tithe or relic is returned.',
+          ...base, id: isKeep ? 'place-keep' : 'place-temple', type: 'place',
+          name: landmark, category: isKeep ? 'stronghold' : 'sacred',
+          ...hooks.establishment(isKeep ? 'keep' : 'temple', `${isKeep ? 'Lord' : 'High Priest'} ${namer.person()}`),
           entityIds: compoundIds,
           layerTier: isKeep ? 'belligerent' : 'focus',
           activeHours: { morning: true, day: true, evening: true, night: isKeep },
@@ -566,15 +665,6 @@ export function generateCity(input: GeneratorInput<CityParams>): Entity[] {
     }
 
     if (garden) {
-      // Place a central plaza monument in the innermost garden courtyard when near the hub.
-      if (!fringe && !placedPlaza && Math.hypot(center.x - cityMid.x, center.y - cityMid.y) < params.blockSize * 2.5 && pointInPolygon(center, polygon) && roadDistance(center) >= 5) {
-        placedPlaza = true;
-        output.push({
-          ...base, id: `city-plaza-${index}`, type: 'prop', name: 'Town Square Monument',
-          x: center.x, y: center.y, w: 7, h: 7, scale: 1, rotation: 0, flipX: false,
-          builtin: 'altar',
-        });
-      }
       // Scatter orchard rows in market gardens and park groves in garden courtyards, clear of roads.
       const step = fringe ? 24 : 16;
       const treeCap = fringe ? 8 : 8;
@@ -584,7 +674,6 @@ export function generateCity(input: GeneratorInput<CityParams>): Entity[] {
         for (let tx = b.minX + step / 2; tx < b.maxX && addedTrees < treeCap; tx += step) {
           const tp = { x: tx + (random() - 0.5) * step * jitterFactor, y: ty + (random() - 0.5) * step * jitterFactor };
           if (!pointInPolygon(tp, polygon) || roadDistance(tp) < 4) continue;
-          if (placedPlaza && Math.hypot(tp.x - center.x, tp.y - center.y) < 7) continue;
           if (random() > (fringe ? 0.45 : 0.68)) continue;
           const sz = (fringe ? 8 : 6.5) + random() * 4;
           output.push({
@@ -613,7 +702,7 @@ export function generateCity(input: GeneratorInput<CityParams>): Entity[] {
         if (offset+frontage>length-1) break;
         const start=offset; offset+=frontage+1.2+(1-local.density)*2.8;
         // Outside city walls, filterOutskirts decays building probability with distance from main arterial roads (ribbon suburbs).
-        const ribbonDecay = fringe ? Math.max(0, 1 - arteryDistance(lotPoint) / (params.lotDepth * 3.2)) : 1;
+        const ribbonDecay = fringe ? Math.max(0, 1 - arteryDistance(lotPoint) / (params.lotDepth * 3.2)) * Math.max(0, 1 - (hubDistance(lotPoint) - coreR) / RIBBON_REACH[scale]) : 1;
         if (random()>(local.density+.2)*ribbonDecay || (fringe&&!params.fringe)) continue;
         const setback=local.access==='open'?1.2:local.access==='restricted'?2.5:4;
         const origin={x:a.x+ux*start+nx*setback,y:a.y+uy*start+ny*setback};
@@ -638,44 +727,56 @@ export function generateCity(input: GeneratorInput<CityParams>): Entity[] {
         const colors=local.wealth>.65?['#a4543c','#616c73','#b59153','#8d4937','#7d5a42']:['#924c38','#785942','#a8864e','#5b656c','#875641'];
         const roofs=input.theme[local.wealth>.65?'roofWealthy':'roof'] ?? input.theme.roof ?? [];
         const roof=roofs.length?roofs[Math.floor(random()*roofs.length)]:undefined;
-        const buildingRoles = [
-          'Inn', 'Tavern', 'Smithy', 'Bakery', 'General Store', 'Apothecary',
-          'Temple', 'Guardhouse', 'Carpenter', 'Tailor', 'Warehouse', 'Shrine',
-          'Townhouse', 'Townhouse', 'Cottage', 'Cottage', 'Cottage',
-        ];
-        const bRole = buildingRoles[buildingCount % buildingRoles.length]!;
+        const ward = fringe ? undefined : wardAt(lotPoint)?.kind;
         const bId = buildingCount++;
-        output.push({...base,id:`building-${bId}`,type:'area',role:'building',name:`${bRole} ${bId + 1}`,rings,
+        const entity: Area = {...base,id:`building-${bId}`,type:'area',role:'building',
+          name: ward ? WARD_HOUSE[ward] : fringe || scale === 'hamlet' || scale === 'village' ? 'Cottage' : local.wealth > .65 ? 'Townhouse' : 'House',rings,
           fill:colors[Math.floor(random()*colors.length)]!,...(height===undefined?{}:{elevation:height}),
           ...(bId % 3 === 0 ? { roofShape: 'hip' as const } : {}),
-          ...(roof&&!roof.startsWith('builtin:')?{texture:{assetId:roof,metersPerPixel:1,fitToArea:true}}:{})});
-        if (buildingCount>=8000) break;
+          ...(roof&&!roof.startsWith('builtin:')?{texture:{assetId:roof,metersPerPixel:1,fitToArea:true}}:{})};
+        output.push(entity);
+        lots.push({ entity, c: { x: (rings[0]![0]!.x + rings[0]![2]!.x) / 2, y: (rings[0]![0]!.y + rings[0]![2]!.y) / 2 }, ward, fringe });
+        if (buildingCount>=BUILDING_CAP[scale]) break;
       }
-      if (buildingCount>=8000) break;
+      if (buildingCount>=BUILDING_CAP[scale]) break;
     }
-    if (buildingCount>=8000) break;
+    if (buildingCount>=BUILDING_CAP[scale]) break;
   }
-  if (!placedPlaza) {
-    const innerBlocks = blocks
-      .filter(poly => inTownPoly(poly) && area(poly) > 120)
-      .map(poly => {
-        const b = bboxFromPoints(poly[0]!)!;
-        return { poly, b, center: { x: (b.minX + b.maxX) / 2, y: (b.minY + b.maxY) / 2 } };
-      })
-      .sort((a, b) => Math.hypot(a.center.x - cityMid.x, a.center.y - cityMid.y) - Math.hypot(b.center.x - cityMid.x, b.center.y - cityMid.y));
-    for (const blk of innerBlocks.slice(0, 8)) {
-      const c = blk.center;
-      const inBuilding = occupied.some(o => pointInPolygon(c, o.rings));
-      if (pointInPolygon(c, blk.poly) && !inBuilding && roadDistance(c) >= 4) {
-        output.push({
-          ...base, id: 'city-plaza-central', type: 'prop', name: 'Town Square Monument',
-          x: c.x, y: c.y, w: 7, h: 7, scale: 1, rotation: 0, flipX: false,
-          builtin: 'altar',
-        });
-        placedPlaza = true;
-        break;
+  // The square or green: one monument or well, stalls on market days, and a Place for the heart of town.
+  const plazaIds: string[] = [];
+  const isGreen = scale === 'hamlet' || scale === 'village';
+  const squareName = isGreen ? 'Village Green' : 'Market Square';
+  for (const [i, rings] of plazaParts.entries()) {
+    plazaIds.push(`plaza-${i}`);
+    output.push({ ...base, id: `plaza-${i}`, type: 'area', role: 'district', name: squareName, rings, fill: isGreen ? '#83935f' : '#cbbda0', district: profileAt(hub) });
+  }
+  if (plazaParts.length) {
+    const constraintRoadDistance = (p: Point) => Math.min(Infinity, ...allConstraintsRoads.map(r => polylineDistance(p, r.points) - r.width / 2));
+    const spots = [hub, ...Array.from({ length: 6 }, (_, i) => ({ x: hub.x + Math.cos(i * 1.05) * PLAZA_RADIUS[scale] * .45, y: hub.y + Math.sin(i * 1.05) * PLAZA_RADIUS[scale] * .45 }))]
+      .filter(p => plazaParts.some(r => pointInPolygon(p, r)) && constraintRoadDistance(p) > 3);
+    const well = spots[0];
+    if (well) {
+      plazaIds.push('plaza-centrepiece');
+      output.push({ ...base, id: 'plaza-centrepiece', type: 'prop', name: isGreen ? 'Village Well' : 'Market Cross', x: well.x, y: well.y, w: isGreen ? 4 : 7, h: isGreen ? 4 : 7, scale: 1, rotation: 0, flipX: false, builtin: 'altar' });
+      if (isGreen) {
+        const oak = spots.find(p => Math.hypot(p.x - well.x, p.y - well.y) > 8);
+        if (oak) output.push({ ...base, id: 'plaza-oak', type: 'prop', name: 'Old Oak', x: oak.x, y: oak.y, w: 11, h: 11, scale: 1, rotation: random() * 6, flipX: false, builtin: 'tree' });
+      } else {
+        for (const [si, ang] of [0.4, 1.9, 3.5, 5.1].entries()) {
+          const sp = { x: well.x + Math.cos(ang) * 11, y: well.y + Math.sin(ang) * 11 };
+          if (plazaParts.some(r => pointInPolygon(sp, r)) && constraintRoadDistance(sp) > 2.5) output.push({
+            ...base, id: `city-stall-${si}`, type: 'prop', name: 'Market Stall', x: sp.x, y: sp.y, w: 3.5, h: 3.5, scale: 1, rotation: ang, flipX: false, builtin: si % 2 === 0 ? 'table' : 'crate',
+          });
+        }
       }
     }
+    cityLabels.push({ ...base, id: 'city-label-plaza', type: 'label', text: squareName, x: hub.x, y: hub.y - PLAZA_RADIUS[scale] - 6, size: 15 });
+    cityPlaces.push({
+      ...base, id: 'place-square', type: 'place', name: squareName, category: 'landmark',
+      ...(isGreen ? { notes: 'Common grazing, the well and every scrap of gossip in the parish.', gmNotes: `Trouble talk starts here: ${parent?.trouble ?? 'ask anyone at the well'}.` }
+        : hooks.establishment('market', `the market reeve ${namer.person()}`)),
+      entityIds: plazaIds, layerTier: 'focus', activeHours: { morning: true, day: true, evening: true, night: false },
+    });
   }
   // Pedestrian cut-through alleys in large blocks & garden blocks + plateau stairs facing adjacent roads
   const alleyW = Math.max(1.8, params.streetWidth * 0.38);
@@ -741,18 +842,42 @@ export function generateCity(input: GeneratorInput<CityParams>): Entity[] {
   }
 
   // Unbuilt rural outskirt agricultural parcels (role:'land' avoids breaking district street-adjacency invariants)
-  for (const [index, polygon] of blocks.entries()) {
-    if (inTownPoly(polygon) || area(polygon) < 420) continue;
-    if (output.some((e) => e.id === `block-${index}`)) continue;
-    output.push({
-      ...base,
-      id: `field-${index}`,
-      type: 'area',
-      role: 'land',
-      name: 'Agricultural Field',
-      rings: polygon,
-      fill: fieldPalette[index % fieldPalette.length]!,
-    });
+  const emitted = new Set(output.map(e => e.id));
+  const fields = blockInfo.filter(f => !f.core && f.a >= 420 && !emitted.has(`block-${f.idx}`));
+  const fits = (rings: Point[][], within: Point[][]) => {
+    const shape = toPolygons([rings]), box = bboxFromPoints(rings[0]!)!;
+    return !clipping.difference(shape, toPolygons([within])).length && !clipping.intersection(shape, wallMask).length
+      && !occupied.some(o => boxesIntersect(o.box, box) && clipping.intersection(shape, toPolygons([o.rings])).length > 0)
+      && !roadBuffers.some(r => boxesIntersect(r.box, box) && clipping.intersection(shape, r.mask).length > 0);
+  };
+  // A few farmsteads on roadside fields just beyond town.
+  const farms: Point[] = [];
+  for (const field of hasCore ? [...fields].sort((a, b) => a.d - b.d) : []) {
+    if (farms.length >= { hamlet: 1, village: 4, town: 5, city: 5 }[scale]) break;
+    if (field.a < 2500) continue;
+    const ring = cleanRing(field.poly[0]!);
+    const edge = ring.map((a, i) => ({ a, b: ring[(i + 1) % ring.length]! })).map(e => ({ ...e, len: Math.hypot(e.b.x - e.a.x, e.b.y - e.a.y), mid: { x: (e.a.x + e.b.x) / 2, y: (e.a.y + e.b.y) / 2 } }))
+      .filter(e => e.len >= 30 && roadDistance(e.mid) <= 1 && hubDistance(e.mid) > coreR + 40 && !farms.some(f => Math.hypot(f.x - e.mid.x, f.y - e.mid.y) < 120))
+      .sort((p, q) => q.len - p.len)[0];
+    if (!edge) continue;
+    const u = { x: (edge.b.x - edge.a.x) / edge.len, y: (edge.b.y - edge.a.y) / edge.len };
+    let n = { x: -u.y, y: u.x };
+    if (!pointInPolygon({ x: edge.mid.x + n.x, y: edge.mid.y + n.y }, field.poly)) n = { x: -n.x, y: -n.y };
+    const house = rect({ x: edge.mid.x - u.x * 12 + n.x * 5, y: edge.mid.y - u.y * 12 + n.y * 5 }, u, n, 11, 8);
+    const barn = rect({ x: edge.mid.x + u.x * 3 + n.x * 7, y: edge.mid.y + u.y * 3 + n.y * 7 }, u, n, 15, 9);
+    if (!fits(house, field.poly)) continue;
+    occupied.push({ rings: house, box: bboxFromPoints(house[0]!)! });
+    output.push({ ...base, id: `farm-${farms.length}`, type: 'area', role: 'building', name: namer.farm(), rings: house, fill: '#8d5a40', roofShape: 'gable' });
+    if (fits(barn, field.poly)) {
+      occupied.push({ rings: barn, box: bboxFromPoints(barn[0]!)! });
+      output.push({ ...base, id: `barn-${farms.length}`, type: 'area', role: 'building', name: 'Barn', rings: barn, fill: '#7a5a3c', roofShape: 'gable' });
+    }
+    farms.push(edge.mid);
+  }
+  // Fields are parcelled by hedgerows so the countryside reads as farmland, not as giant blocks.
+  for (const { poly, idx } of fields) {
+    for (const [k, rings] of splitFields(poly, 18000, random).entries())
+      output.push({ ...base, id: `field-${idx}-${k}`, type: 'area', role: 'land', name: 'Agricultural Field', rings, fill: fieldPalette[(idx + k) % fieldPalette.length]! });
   }
 
   // Waterfront piers & moored boats along water edges bordering city land
@@ -967,11 +1092,11 @@ export function generateCity(input: GeneratorInput<CityParams>): Entity[] {
     }
   }
 
-  // Undercity sewer runs mirrored strictly inside major arterial street centerlines
-  const majorRoads = output
+  // Undercity sewer runs mirrored strictly inside major arterial street centerlines (towns and cities only)
+  const majorRoads = scale === 'town' || scale === 'city' ? output
     .filter((e): e is Extract<Entity, { type: 'path' }> => e.type === 'path' && e.role === 'road' && e.points.length >= 2)
     .sort((a, b) => b.width - a.width)
-    .slice(0, 6);
+    .slice(0, 6) : [];
   let manholeCount = 0;
   for (const [si, road] of majorRoads.entries()) {
     output.push({
@@ -1002,6 +1127,14 @@ export function generateCity(input: GeneratorInput<CityParams>): Entity[] {
           flipX: false,
           builtin: 'manhole',
         });
+        // A city's first grate is a way into the undercity.
+        if (scale === 'city' && manholeCount === 1) {
+          const hook = hooks.site('lair', band);
+          output.push({ ...base, id: 'sewer-entrance', type: 'portal', name: 'Sewer Entrance', x: mp.x, y: mp.y, targetMapId: 'unlinked', connectorKind: 'stairsDown', elevationDelta: -1 });
+          cityPlaces.push({ ...base, id: 'place-sewers', type: 'place', name: 'The Undercity', category: 'lair', notes: 'Brick drains under the main streets, big enough to walk bent double.',
+            gmNotes: hook.gmNotes, stockingRole: hook.stockingRole, entityIds: ['manhole-0', 'sewer-entrance'], layerTier: 'belligerent', activeHours: { morning: true, day: true, evening: true, night: true } });
+          localSites.push({ kind: 'lair', name: 'the Undercity', p: mp });
+        }
       }
     }
   }
@@ -1045,32 +1178,98 @@ export function generateCity(input: GeneratorInput<CityParams>): Entity[] {
   if (dockCount > 0) {
     cityPlaces.push({
       ...base, id: 'place-harbor-quays', type: 'place', name: 'Harbor Quays', category: 'landmark',
-      notes: 'Stone embankments, timber piers, and moored trading cogs unloading salt, wool, and timber.',
-      gmNotes: 'Harbor master keeps two smuggler manifests hidden in the customs shed office.',
+      ...hooks.establishment('harbor', `harbourmaster ${namer.person()}`),
       entityIds: output.filter((e) => e.id.startsWith('quay-') || e.id.startsWith('dock-')).map((e) => e.id),
       layerTier: 'incidental',
       activeHours: { morning: true, day: true, evening: true, night: false },
     });
   }
-  // Register notable procedural establishments (Inn / Tavern / Smithy) for click-to-inspect OSE pins
-  let shopPinCount = 0;
-  for (const ent of output) {
-    if (shopPinCount >= 2 || ent.type !== 'area' || ent.role !== 'building') continue;
-    const bName = ent.name ?? '';
-    if (!/^(Inn|Tavern|Smithy)\b/.test(bName)) continue;
-    shopPinCount++;
-    cityPlaces.push({
-      ...base, id: `place-${ent.id}`, type: 'place', name: bName, category: 'establishment',
-      notes: bName.startsWith('Smithy')
-        ? 'Glowing coal forge producing horseshoes, spearheads, and heavy wagon rims.'
-        : 'Crowded common room with spiced ale, rumor-trading drovers, and warm bunk lofts.',
-      gmNotes: bName.startsWith('Smithy')
-        ? 'Apprentice spotted masked riders shoeing mounts in reverse near the north gate.'
-        : 'Proprietor buys odd dungeon salvage and holds locked cellar stairs behind the cask rack.',
-      entityIds: [ent.id],
-      layerTier: shopPinCount === 1 ? 'focus' : 'incidental',
-      activeHours: { morning: bName.startsWith('Smithy'), day: true, evening: true, night: !bName.startsWith('Smithy') },
-    });
+  // Notable establishments: each scale's quota, each placed where it belongs, each with an owner, a secret and a job.
+  const dist = (a: Point, b: Point) => Math.hypot(a.x - b.x, a.y - b.y);
+  const notables: Array<{ kind: Establishment; lot: Building; place: Extract<Entity, { type: 'place' }> }> = [];
+  for (const kind of NOTABLES[scale]) {
+    const site = NOTABLE_SITE[kind];
+    const score = (p: Point): number => site === 'gate' ? entryDistance(p) : site === 'plaza' ? hubDistance(p)
+      : site === 'water' && Number.isFinite(waterDistance(p)) ? waterDistance(p)
+      : site === 'water' || site === 'edge' ? edgeDistance(p) : dist(p, wardSeed(site) ?? hub);
+    const same = notables.filter(n => n.kind === kind).map(n => n.lot.c);
+    const pick = lots.filter(l => !l.notable && (!l.fringe || site === 'water' || site === 'edge'))
+      .map(l => ({ l, s: score(l.c) + random() * 15 + (same.some(c => dist(c, l.c) < 90) ? 400 : 0) }))
+      .sort((a, b) => a.s - b.s)[0]?.l;
+    if (!pick) break;
+    pick.notable = kind;
+    const owner = namer.person(), [given, family] = owner.split(' ') as [string, string];
+    const name = kind === 'inn' || kind === 'tavern' ? namer.inn() : kind === 'shrine' ? `Chapel of St. ${given}`
+      : kind === 'watch' || kind === 'guildhall' || kind === 'thieves' ? NOTABLE_TITLE[kind]! : `${family}'s ${NOTABLE_TITLE[kind]}`;
+    // The den passes for an ordinary house on the player map; only its GM-only Place gives it away.
+    if (kind !== 'thieves') { pick.entity.name = name; pick.entity.roofShape = 'hip'; }
+    const night = ['inn', 'tavern', 'watch', 'thieves', 'wizard'].includes(kind);
+    const place: Extract<Entity, { type: 'place' }> = {
+      ...base, id: `place-${pick.entity.id}`, type: 'place', name: kind === 'thieves' ? "Thieves' Den" : name,
+      category: kind === 'thieves' ? 'hideout' : 'establishment', ...(kind === 'thieves' ? { gmOnly: true } : {}),
+      ...hooks.establishment(kind, kind === 'watch' ? `Captain ${owner}` : owner), entityIds: [pick.entity.id],
+      layerTier: kind === 'inn' || kind === 'tavern' ? 'focus' : kind === 'thieves' ? 'belligerent' : 'incidental',
+      activeHours: { morning: !night || kind === 'inn', day: kind !== 'thieves', evening: true, night },
+    };
+    notables.push({ kind, lot: pick, place });
+    cityPlaces.push(place);
+    if (kind === 'thieves') localSites.push({ kind: 'travel', name: `a ${pick.entity.name} in ${wardAt(pick.c)?.name || 'the back lanes'}`, p: pick.c });
+    if (kind === 'inn' || kind === 'tavern') cityLabels.push({ ...base, id: `city-label-${pick.entity.id}`, type: 'label', text: name, x: pick.c.x, y: pick.c.y - 9, size: 11 });
+  }
+  // Villages get one odd site out in the fields: a barrow, standing stones or a ruined tower.
+  if (isGreen && hasCore) {
+    const field = [...fields].filter(f => f.centred && f.d > coreR + 120 && roadDistance(f.c) > 25 && !farms.some(p => dist(p, f.c) < 60))
+      .sort((a, b) => Math.abs(a.d - coreR - 200) - Math.abs(b.d - coreR - 200))[0];
+    if (field) {
+      const [kind, builtin] = ([['ruin', 'ruin'], ['sacred', 'altar'], ['stronghold', 'ruin']] as const)[Math.floor(random() * 3)]!;
+      const name = namer.site(kind), ids = ['oddity'], hook = hooks.site(kind, band);
+      output.push({ ...base, id: 'oddity', type: 'prop', name, x: field.c.x, y: field.c.y, w: 12, h: 12, scale: 1, rotation: 0, flipX: false, builtin });
+      if (kind === 'sacred') for (let i = 0; i < 7; i++) {
+        ids.push(`oddity-stone-${i}`);
+        output.push({ ...base, id: `oddity-stone-${i}`, type: 'prop', name: 'Standing Stone', x: field.c.x + Math.cos(i * .9) * 11, y: field.c.y + Math.sin(i * .9) * 11, w: 2.5, h: 2.5, scale: 1, rotation: 0, flipX: false, builtin: 'pillar' });
+      }
+      if (kind === 'ruin') {
+        ids.push('oddity-stairs');
+        output.push({ ...base, id: 'oddity-stairs', type: 'portal', name: 'Barrow Entrance', x: field.c.x, y: field.c.y + 8, targetMapId: 'unlinked', connectorKind: 'stairsDown', elevationDelta: -1 });
+      }
+      cityPlaces.push({ ...base, id: 'place-oddity', type: 'place', name, category: kind, notes: 'Locals plough around it and will not say why.', gmNotes: hook.gmNotes, stockingRole: hook.stockingRole, entityIds: ids, layerTier: 'focus' });
+      cityLabels.push({ ...base, id: 'city-label-oddity', type: 'label', text: name, x: field.c.x, y: field.c.y - 16, size: 12 });
+      localSites.push({ kind, name, p: field.c });
+    }
+  }
+  // The town itself: adopted from the world when developed from it, else rolled here with a trait and a trouble.
+  const townName = townPlace?.name ?? namer.town();
+  const rank = (scale[0]!.toUpperCase() + scale.slice(1)) as 'City' | 'Town' | 'Village' | 'Hamlet';
+  const townNotes = townPlace ? undefined : hooks.settlement(rank, band);
+  const trouble = parent?.trouble ?? parseSettlement(townNotes)?.trouble;
+  const rumours = [...(townPlace?.rumours ?? []), ...localSites.map(s => hooks.localRumour(s.kind, s.name, hub, s.p))];
+  const taverns = notables.filter(n => n.kind === 'inn' || n.kind === 'tavern');
+  rumours.forEach((r, i) => { const t = taverns[i % Math.max(1, taverns.length)]; if (t) (t.place.rumours ??= []).push(`Heard in ${t.place.name}: ${r}`); });
+  if (townNotes) cityPlaces.push({ ...base, id: 'place-town', type: 'place', name: townName, category: 'Settlement', notes: townNotes, gmNotes: '',
+    ...(taverns.length ? {} : { rumours }), entityIds: plazaIds });
+  const clueAt = lots.filter(l => !l.notable && !l.fringe);
+  const clue = clueAt[Math.floor(random() * clueAt.length)];
+  if (trouble && clue) cityPlaces.push({ ...base, id: 'place-trouble', type: 'place', name: 'Where the trouble starts', category: 'hook', gmOnly: true,
+    notes: '', gmNotes: `Trouble: ${trouble}. Here: ${hooks.troubleClue()}.`, entityIds: [clue.entity.id], layerTier: 'focus' });
+  cityLabels.push({ ...base, id: 'city-label-title', type: 'label', text: townName, x: hub.x, y: Math.max(rb.minY + 40, hub.y - (Number.isFinite(coreR) ? coreR : 0) - 30), size: 26 });
+  for (const ward of wards.filter(w => w.kind !== 'market')) {
+    const homes = lots.filter(l => l.ward === ward.kind && wardAt(l.c) === ward);
+    if (homes.length) cityLabels.push({ ...base, id: `city-label-ward-${ward.kind}-${wards.indexOf(ward)}`, type: 'label', text: ward.name,
+      x: homes.reduce((s, l) => s + l.c.x, 0) / homes.length, y: homes.reduce((s, l) => s + l.c.y, 0) / homes.length, size: 13 });
+  }
+  // Roads leaving the sheet say where they lead.
+  const exits = new Set<string>();
+  for (const road of allConstraintsRoads) {
+    const ends = road.name?.match(/^(.+)–(.+) Road$/)?.slice(1) ?? road.name?.match(/^(.+) Road$/)?.slice(1) ?? [];
+    const dest = ends.find(n => n !== townName);
+    if (!dest || exits.has(dest)) continue;
+    for (const p of [road.points[0]!, road.points.at(-1)!]) {
+      if (p.x - rb.minX > 30 && rb.maxX - p.x > 30 && p.y - rb.minY > 30 && rb.maxY - p.y > 30) continue;
+      const d = hubDistance(p) || 1, at = { x: p.x + (hub.x - p.x) / d * 60, y: p.y + (hub.y - p.y) / d * 60 };
+      cityLabels.push({ ...base, id: `city-label-exit-${exits.size}`, type: 'label', text: `to ${dest}`, x: at.x, y: at.y, size: 12 });
+      exits.add(dest);
+      break;
+    }
   }
 
   // Separate nearby city labels so landmarks never overlap each other horizontally.

@@ -2,9 +2,10 @@ import { expect, it } from 'vitest';
 import clipping from 'polygon-clipping';
 import { rectRing, toPolygons } from '../../geom/fog';
 import { distanceToSegment, pointInPolygon } from '../../geom/hitTest';
-import { EntitySchema, MapDocSchema, type Entity } from '../../model/schema';
+import { EntitySchema, MapDocSchema, type Entity, type MapDoc } from '../../model/schema';
 import { createWorldStore } from '../../model/store';
 import { bufferLine, CityParamsSchema, generateCity, ringArea } from './city';
+import { settlementServiceAudit } from './diagnostics';
 
 const base={origin:'manual' as const,rev:0,layerId:'l'};
 const district=(id:string,x:number,w:number):Entity=>({...base,id,type:'area',role:'district',rings:[rectRing({x,y:0,w,h:240})]});
@@ -151,7 +152,7 @@ it('supports hamlet scale without walls, explicit walled cities, and everyday bu
   const hamlet = generateCity(hamletInput);
   const hamletBuildings = hamlet.filter((e): e is Extract<Entity, { type: 'area' }> => e.type === 'area' && e.role === 'building');
   expect(hamletBuildings.length).toBeGreaterThanOrEqual(4);
-  expect(hamletBuildings.length).toBeLessThanOrEqual(8);
+  expect(hamletBuildings.length).toBeLessThanOrEqual(12);
   expect(hamlet.some(e => e.type === 'path' && e.role === 'cityWall')).toBe(false);
 
   const walledInput = source();
@@ -160,4 +161,59 @@ it('supports hamlet scale without walls, explicit walled cities, and everyday bu
   expect(walled.some(e => e.type === 'path' && e.role === 'cityWall')).toBe(true);
   const townBuildings = walled.filter((e): e is Extract<Entity, { type: 'area' }> => e.type === 'area' && e.role === 'building');
   expect(townBuildings.some(b => !/^Building \d+$/.test(b.name ?? ''))).toBe(true);
+});
+
+const mile = (scale: string, constraints: Entity[] = []) => ({ seed: 9, params: CityParamsSchema.parse({ scale }), region: [rectRing({ x: 0, y: 0, w: 900, h: 900 })], grid: 10, theme: {}, constraints });
+const areas = (entities: Entity[], role: string) => entities.filter((e): e is Extract<Entity, { type: 'area' }> => e.type === 'area' && e.role === role);
+const centre = (b: Extract<Entity, { type: 'area' }>) => ({ x: b.rings[0]!.reduce((s, p) => s + p.x, 0) / b.rings[0]!.length, y: b.rings[0]!.reduce((s, p) => s + p.y, 0) / b.rings[0]!.length });
+
+it('sizes the built-up core by scale and leaves farmland around villages', () => {
+  const [hamlet, village, town] = ['hamlet', 'village', 'town'].map(scale => generateCity(mile(scale)));
+  const counts = [hamlet, village, town].map(r => areas(r!, 'building').length);
+  expect(counts[0]).toBeLessThan(counts[1]!);
+  expect(counts[1]).toBeLessThan(counts[2]!);
+  // Village core is 110 m; houses straggle at most 150 m further along the lanes, farmsteads a little beyond.
+  for (const b of areas(village!, 'building')) expect(Math.hypot(centre(b).x - 450, centre(b).y - 450)).toBeLessThan(110 * 1.3 + 150 + 120);
+  expect(areas(village!, 'land').length).toBeGreaterThan(10);
+  expect(village!.some(e => e.type === 'path' && e.role === 'cityWall')).toBe(false);
+});
+
+it('gives a town one square, wards, a graveyard crypt and distinct notables that each carry a hook', () => {
+  const town = generateCity(mile('town'));
+  const square = areas(town, 'district').filter(e => e.name === 'Market Square');
+  expect(square.length).toBeGreaterThan(0);
+  expect(town.filter(e => e.type === 'prop' && e.name === 'Market Cross')).toHaveLength(1);
+  const buildings = areas(town, 'building');
+  for (const b of buildings) for (const s of square) expect(clipping.intersection(toPolygons([b.rings]), toPolygons([s.rings]))).toEqual([]);
+  const facing = buildings.filter(b => b.rings[0]!.some(p => square.some(s => s.rings[0]!.some((q, i) => distanceToSegment(p, q, s.rings[0]![(i + 1) % s.rings[0]!.length]!) < 4))));
+  expect(facing.length).toBeGreaterThanOrEqual(3);
+  expect(town.some(e => e.type === 'portal' && e.name === 'Crypt Stairs')).toBe(true);
+  expect(town.filter(e => e.type === 'label' && e.size === 13).length).toBeGreaterThanOrEqual(2);
+  const generic = new Set(['House', 'Cottage', 'Townhouse', 'Shop', 'Manor House', 'Workshop', 'Warehouse', 'Tenement', 'Barn', 'Crypt']);
+  const named = buildings.map(b => b.name!).filter(n => !generic.has(n) && !n.endsWith(' Farm'));
+  expect(new Set(named).size).toBe(named.length);
+  const establishments = town.filter((e): e is Extract<Entity, { type: 'place' }> => e.type === 'place' && e.category === 'establishment');
+  expect(establishments.length).toBeGreaterThanOrEqual(8);
+  for (const p of establishments) { expect(p.notes).toMatch(/Run by/); expect(p.gmNotes).toMatch(/Secret: .*Job: /); }
+  const audit = settlementServiceAudit({ entities: Object.fromEntries(town.map(e => [e.id, e])) } as unknown as MapDoc);
+  expect(audit.missing).toEqual([]);
+  expect(generateCity(mile('town'))).toEqual(town);
+});
+
+it('builds on the world town it was developed from: its scale, rumours, trouble and roads', () => {
+  const base2 = { origin: 'inherited' as const, rev: 1, layerId: 'l' };
+  const town = generateCity(mile('auto', [
+    { ...base2, id: 'p', type: 'place', name: 'Fenmoor', category: 'Settlement', entityIds: [], gmNotes: '',
+      notes: 'Village known for fine wool. Trouble: the reeve has gone missing. (Borderland (Patrolled Passes))', rumours: ['Wolves den at Blackgut Pit.'] },
+    { ...base2, id: 'r1', type: 'path', role: 'trail', name: 'Fenmoor–Pellbury Road', points: [{ x: 430, y: 470 }, { x: 900, y: 470 }], width: 6, closed: false },
+    { ...base2, id: 'r2', type: 'path', role: 'trail', name: 'Stanbury–Fenmoor Road', points: [{ x: 430, y: 470 }, { x: 430, y: 0 }], width: 6, closed: false },
+  ]));
+  expect(town.some(e => e.type === 'path' && e.role === 'cityWall')).toBe(false);
+  expect(town.some(e => e.type === 'area' && e.name === 'Village Green')).toBe(true);
+  expect(town.some(e => e.type === 'place' && e.category === 'Settlement')).toBe(false); // the adopted Place stays the one record
+  const labels = town.filter((e): e is Extract<Entity, { type: 'label' }> => e.type === 'label').map(e => e.text);
+  expect(labels).toEqual(expect.arrayContaining(['Fenmoor', 'to Pellbury', 'to Stanbury']));
+  const places = town.filter((e): e is Extract<Entity, { type: 'place' }> => e.type === 'place');
+  expect(places.some(p => p.rumours?.some(r => r.includes('Blackgut Pit')))).toBe(true);
+  expect(places.find(p => p.id === 'place-trouble')?.gmNotes).toMatch(/reeve has gone missing/);
 });

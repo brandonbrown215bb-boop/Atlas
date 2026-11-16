@@ -8,6 +8,12 @@ const OLD_B = ['oth', 'rin', 'mar', 'esh', 'undar', 'ar', 'ith', 'eon', 'dros', 
 const DREAD_A = ['Ash', 'Gloom', 'Wyrm', 'Bone', 'Grim', 'Black', 'Rot', 'Howl', 'Murk', 'Red', 'Blood', 'Shade'];
 const DREAD_B = ['maw', 'tooth', 'fang', 'claw', 'gut', 'hide', 'jaw', 'horn'];
 
+const GIVEN = ['Agna', 'Bertil', 'Cobb', 'Dagny', 'Edric', 'Fenna', 'Godwin', 'Hesta', 'Ivo', 'Jory', 'Kettil', 'Linnet', 'Maud', 'Nils', 'Osric', 'Petra', 'Quill', 'Rowena', 'Sigrid', 'Tobin', 'Ulla', 'Wat', 'Ysolde', 'Hamm'];
+const SURNAME_ENDS = ['by', 'wright', 'well', 'ley', 'er', 'ton', 'more', 'shaw'];
+const INN_ADJ = ['Gilded', 'Drowned', 'Crooked', 'Laughing', 'Sleeping', 'Rusty', 'Silver', 'Black', 'Wandering', 'Hanged', 'Three-Legged', 'Blind', 'Merry', 'Broken', 'Golden', 'Salted'];
+const INN_NOUN = ['Stag', 'Lantern', 'Goose', 'Kettle', 'Anchor', 'Boar', 'Crown', 'Fiddler', 'Mermaid', 'Wyvern', 'Barrel', 'Hound', 'Raven', 'Plough', 'Bell', 'Pike'];
+export type WardKind = 'market' | 'high' | 'temple' | 'craft' | 'docks' | 'shambles';
+
 export type SiteNameKind = 'stronghold' | 'ruin' | 'lair' | 'sacred' | 'travel' | 'beacon' | 'bridge';
 
 /** Seeded, non-repeating fantasy names so every world reads as its own place. */
@@ -35,8 +41,23 @@ export function makeNamer(seed: number, taken: Iterable<string> = []) {
     beacon: [() => `${common()} Light`],
     bridge: [() => `${common()} Bridge`],
   };
+  const surname = () => pick(ROOTS) + pick(SURNAME_ENDS);
+  const wards: Record<WardKind, Array<() => string>> = {
+    market: [() => `${pick(ROOTS)} Market`, () => 'Cornmarket', () => `${pick(ROOTS)}cross`],
+    high: [() => `${pick(ROOTS)} Hill`, () => "Lords' Row", () => `${pick(ROOTS)} Heights`],
+    temple: [() => `${old()} Close`, () => "Saints' Ward", () => 'Chapter Ward'],
+    craft: [() => "Tanners' Row", () => "Smiths' Quarter", () => `${pick(ROOTS)}gate`, () => "Weavers' Ward"],
+    docks: [() => `${pick(ROOTS)} Wharf`, () => 'Saltside', () => 'Fishgate'],
+    shambles: [() => 'The Shambles', () => `${pick(DREAD_A)} Lanes`, () => 'Rag Ward', () => `${pick(ROOTS)}ditch`],
+  };
   return {
     town: () => unique(() => pick(ROOTS) + pick(TOWN_ENDS)),
+    person: () => unique(() => `${pick(GIVEN)} ${surname()}`),
+    inn: () => unique(() => `The ${pick(INN_ADJ)} ${pick(INN_NOUN)}`),
+    temple: () => unique(() => pick([() => `Temple of ${old()}`, () => `${common()} Abbey`, () => `Chapel of St. ${old()}`])()),
+    farm: () => unique(() => `${surname()} Farm`),
+    graveyard: () => unique(() => pick([() => 'Old Churchyard', () => `${pick(ROOTS)} Barrowfield`, () => 'The Weeping Yard', () => `${old()} Cemetery`, () => 'Gallows Hill'])()),
+    ward: (kind: WardKind) => unique(() => pick(wards[kind])()),
     site: (kind: SiteNameKind) => unique(pick(sites[kind])),
     range: () => unique(() => `${old()} ${pick(['Peaks', 'Spine', 'Teeth', 'Crags', 'Mountains'])}`),
     wood: () => unique(() => pick([() => `${common()} Wood`, () => `${common()} Weald`, () => `The ${old()} Wilds`])()),

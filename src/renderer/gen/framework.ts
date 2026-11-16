@@ -91,6 +91,8 @@ export function runGenerator(map: MapDoc, options: {
         return e.type === 'area' && e.role === 'water' && boxesIntersect(nearBounds, eb);
       }),
     );
+    // The world town this map was developed from: its rank, trouble and rumours shape the settlement.
+    input.constraints.push(...Object.values(map.entities).filter(e => e.type === 'place' && e.origin === 'inherited' && /settlement/i.test(e.category)));
   }
   const groupId = map.generators[options.genId]?.groupId ?? options.genId;
   map.groups ??= {};
@@ -138,9 +140,11 @@ export function runGenerator(map: MapDoc, options: {
     const isBackground = (e: Entity) => e.type === 'area' && (options.type === 'world' || e.role !== 'building');
     const backgrounds = entities.filter(e => outputIds.has(e.id) && isBackground(e));
     const foregrounds = entities.filter(e => outputIds.has(e.id) && !isBackground(e));
+    // Inherited land and biome fills are the ground a town's fields and blocks are painted on.
+    const isGround = (e: Entity) => options.type === 'city' && e.origin === 'inherited' && e.type === 'area' && !e.gmOnly && (e.role === 'land' || e.role.startsWith('biome'));
     const kept = entities.filter(e => e.id !== region.id && !outputIds.has(e.id));
     // A deleted boundary stays deleted; the saved rings are only used as the generation region.
-    map.entities = Object.fromEntries([...(source ? [region] : []), ...backgrounds, ...kept, ...foregrounds].map(e => [e.id, e]));
+    map.entities = Object.fromEntries([...(source ? [region] : []), ...kept.filter(isGround), ...backgrounds, ...kept.filter(e => !isGround(e)), ...foregrounds].map(e => [e.id, e]));
   }
   return ids;
 }

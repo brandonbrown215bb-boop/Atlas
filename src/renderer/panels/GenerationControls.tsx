@@ -111,10 +111,10 @@ export function GenerationControls({ map, panelId, detailed = false }: {
         {p.mode !== 'populate' && <label className="generation-field">Land amount <input aria-label="Land amount" type="range" min="0.15" max="0.85" step="0.05" value={1 - p.seaLevel} onChange={e => patch({ seaLevel: Number((1 - Number(e.target.value)).toFixed(2)) })} /></label>}
         {number('ruggedness', 'Ruggedness', 0, 1, .05)}{check('rivers', 'Rivers')}
       </> : c.type === 'city' ? <>
-        <label className="generation-field" title="Hamlet: 4-8 buildings on a lane; Town/City: full street blocks">Scale <select aria-label="Settlement scale" value={p.scale ?? 'town'} onChange={e => patch({ scale: e.target.value })}>
-          <option value="hamlet">Hamlet (4-8 buildings)</option><option value="village">Village</option><option value="town">Town</option><option value="city">City</option>
+        <label className="generation-field" title="Sets the size of the built-up core; farmland fills the rest. Auto follows the world town this map was developed from.">Scale <select aria-label="Settlement scale" value={p.scale ?? 'auto'} onChange={e => patch({ scale: e.target.value })}>
+          <option value="auto">Auto (from world)</option><option value="hamlet">Hamlet</option><option value="village">Village</option><option value="town">Town</option><option value="city">City</option>
         </select></label>
-        {p.scale !== 'hamlet' && <label className="generation-field" title="Auto adds walls above 250k m²; Walled forces walls to fit">Walls <select aria-label="City walls" value={p.walls ?? 'auto'} onChange={e => patch({ walls: e.target.value })}>
+        {p.scale !== 'hamlet' && <label className="generation-field" title="Auto walls towns and cities on maps above 250k m²; Walled forces walls to fit">Walls <select aria-label="City walls" value={p.walls ?? 'auto'} onChange={e => patch({ walls: e.target.value })}>
           <option value="auto">Walls: Auto</option><option value="walled">Walled</option><option value="open">Open (no walls)</option>
         </select></label>}
         <label className="generation-field">Preset <select aria-label="District preset" value={matchingPresetName({ density: p.density, wealth: p.wealth, activity: p.activity, access: p.access })} onChange={e => { if (e.target.value) patch(districtPresets[e.target.value]!); }}><option value="">Custom</option>{Object.keys(districtPresets).map(name => <option key={name}>{name}</option>)}</select></label>

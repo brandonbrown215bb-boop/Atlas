@@ -188,4 +188,23 @@ describe('clipInherit', () => {
     expect(road?.type === 'path' && road.width).toBeCloseTo(0.64, 5); // 4 × 0.1 × 1.6
     expect(label?.type === 'label' && label.y).toBeCloseTo(80 + 10 * 0.13, 5); // label pulled in toward its icon
   });
+
+  it('makes a settlement child the town itself: adopts its Place, drops world icons and their labels, narrows roads', () => {
+    const parent = makeParentMap();
+    parent.kind = 'world';
+    const prop = { layerId: 'l1', origin: 'generated' as const, rev: 1, scale: 1, rotation: 0, flipX: false };
+    parent.entities.town = { ...prop, id: 'town', type: 'prop', symbolKind: 'settlement', name: 'Oldtown', x: 150, y: 150, w: 50, h: 50 };
+    parent.entities.townLabel = { id: 'townLabel', type: 'label', layerId: 'l1', origin: 'generated', rev: 1, text: 'Oldtown', x: 150, y: 165, size: 16 };
+    parent.entities.road1 = { ...parent.entities.road1!, width: 572 } as MapDoc['entities'][string];
+    parent.entities.townPlace = { id: 'townPlace', type: 'place', layerId: 'l1', origin: 'generated', rev: 1, name: 'Oldtown', category: 'Settlement',
+      notes: 'Village known for dark ale. Trouble: bandits tax the road. (Heartland (Low Risk))', gmNotes: '', rumours: ['A rumour.'], entityIds: ['town', 'townLabel'] };
+    const inherited = clipAndInheritEntities(parent, { x: 100, y: 100, w: 100, h: 100 }, 'child-l1', undefined, 'settlement');
+    expect(inherited.some(e => e.type === 'prop')).toBe(false);
+    // The town's own label goes with its icon; other labels (a GM's note) stay.
+    expect(inherited.filter(e => e.type === 'label').map(e => e.type === 'label' && e.text)).toEqual(['Inside']);
+    const place = inherited.find(e => e.type === 'place');
+    expect(place).toMatchObject({ name: 'Oldtown', origin: 'inherited', entityIds: [], rumours: ['A rumour.'] });
+    const road = inherited.find(e => e.inheritedFrom?.entityId === 'road1');
+    expect(road?.type === 'path' && road.width).toBe(9);
+  });
 });

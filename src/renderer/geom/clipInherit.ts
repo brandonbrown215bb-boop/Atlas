@@ -129,6 +129,10 @@ export function clipAndInheritEntities(
   const rectSpan = Math.max(1, Math.max(rect.w, rect.h));
   // A region redraws its own relief and roads at its own scale, so inherited ones stay only a little larger.
   const zoomedRegion = childKind === 'region' && rectSpan < parentSpan;
+  // A settlement is the town itself: world icons and labels mean nothing a mile across, and world-scale roads shrink to lanes.
+  const settlement = childKind === 'settlement';
+  const dropped = new Set<string>();
+  const iconNames = new Set(settlement ? Object.values(parentMap.entities).filter(e => e.type === 'prop' && isWorldSymbol(e) && e.name && pointInRect(e, rect)).map(e => e.name!) : []);
   const routeWidthScale = zoomedRegion ? Math.min(1, (rectSpan / parentSpan) * 1.6) : 1;
   const junctions=new Map<string,string>();
   const junction=(p:Point)=>{const key=`${p.x.toFixed(6)},${p.y.toFixed(6)}`;if(!junctions.has(key))junctions.set(key,createId());return junctions.get(key)!;};
@@ -194,7 +198,10 @@ export function clipAndInheritEntities(
             points: chain.map((p) => translatePoint(p, rect)),
             startNodeId: entity.role==='river'?junction(chain[0]!):undefined,
             endNodeId: entity.role==='river'?junction(chain[chain.length-1]!):undefined,
-            width: entity.routeTier ? entity.width * routeWidthScale : entity.width,
+            // Roads copied down from a world have lost their tier, so every road or trail is capped.
+            width: settlement && ['road', 'trail'].includes(entity.role) ? Math.min(entity.width, entity.routeTier === 'track' ? 6 : 9)
+              : settlement && entity.role === 'river' ? Math.min(entity.width, 40)
+              : entity.routeTier ? entity.width * routeWidthScale : entity.width,
             closed: entity.closed && allInside,
           });
         }
@@ -246,6 +253,7 @@ export function clipAndInheritEntities(
       case 'prop':
       case 'light':
       case 'label': {
+        if (settlement && (isWorldSymbol(entity) || entity.type === 'label' && iconNames.has(entity.text))) { if (pointInRect(entity, rect)) dropped.add(inheritedFrom.entityId); break; }
         if (pointInRect(entity, rect)) {
           let translated = translatePoint(entity, rect);
           // A town or site label sat a world-scale gap from its icon; pull it in to match the shrunken icon.
@@ -288,11 +296,11 @@ export function clipAndInheritEntities(
   }
 
   // A region adopts the notes, rumours and links of every town and site it inherits, pointing at its own copies.
-  if (childKind === 'region') {
+  if (childKind === 'region' || settlement) {
     for (const place of Object.values(parentMap.entities)) {
       if (place.type !== 'place') continue;
       const copies = result.filter(e => e.type !== 'label' && e.inheritedFrom && place.entityIds.includes(e.inheritedFrom.entityId));
-      if (!copies.length) continue;
+      if (!copies.length && !place.entityIds.some(id => dropped.has(id))) continue;
       const labels = result.filter(e => e.type === 'label' && e.inheritedFrom && place.entityIds.includes(e.inheritedFrom.entityId));
       result.push({ ...place, genId: undefined, groupId: undefined, id: createId(), layerId: targetLayerId, origin: 'inherited', rev: 1,
         inheritedFrom: { entityId: place.id, parentRev: place.rev }, entityIds: [...copies, ...labels].map(e => e.id) });
