@@ -31,6 +31,7 @@ import {
   PathEntitySchema,
   LayerSchema,
   MapDocSchema,
+  MapIdSchema,
   MapKindSchema,
   PointSchema,
   ClimateSchema,
@@ -276,7 +277,7 @@ registerCommand({
   name:'map.generateInterior',
   description:'Generate an interior from a settlement building footprint and its doors, linking it to the existing or newly created place. One undo step.',
   input:z.object({parentMapId:z.string().min(1),buildingId:z.string().min(1),placeId:z.string().min(1).optional(),
-    childMapId:z.string().min(1).optional(),name:z.string().trim().min(1).optional(),seed:z.number().int(),
+    childMapId:MapIdSchema.optional(),name:z.string().trim().min(1).optional(),seed:z.number().int(),
     params:z.record(z.string(),z.unknown()).default({}),themeName:z.string().min(1).default('default'),
     expectedParentRevision:z.number().int().nonnegative().optional()}),
   run(draft,input) {
@@ -665,7 +666,7 @@ registerCommand({
 });
 
 const MapCreateInputSchema = z.object({
-  id: z.string().min(1),
+  id: MapIdSchema,
   name: z.string().min(1),
   kind: MapKindSchema,
   parentId: z.string().min(1).optional(),
@@ -732,7 +733,7 @@ registerCommand({
 const MapExpandNeighborInputSchema = z.object({
   sourceMapId: z.string().min(1),
   direction: z.enum(['N', 'S', 'E', 'W']),
-  newId: z.string().min(1),
+  newId: MapIdSchema,
   newName: z.string().min(1).optional(),
 });
 
@@ -762,7 +763,7 @@ registerCommand({
 const MapCreateFloorInputSchema = z.object({
   sourceMapId: z.string().min(1),
   levelDelta: z.union([z.literal(1), z.literal(-1)]),
-  newId: z.string().min(1),
+  newId: MapIdSchema,
 });
 
 registerCommand({
@@ -877,7 +878,7 @@ const PlaceCreateInputSchema = z.object({
   gmNotes: z.string().default(''),
   entityIds: z.array(z.string().min(1)).default([]),
   gmOnly: z.boolean().optional(),
-  childMapId: z.string().min(1).optional(),
+  childMapId: MapIdSchema.optional(),
 });
 
 registerCommand({
@@ -942,7 +943,7 @@ registerCommand({
 
 const MapDevelopAreaInputSchema = z.object({
   parentMapId: z.string().min(1),
-  childMapId: z.string().min(1).optional(),
+  childMapId: MapIdSchema.optional(),
   name: z.string().trim().min(1),
   kind: MapKindSchema,
   rect: z.object({
@@ -1043,7 +1044,7 @@ registerCommand({
 const MapOpenInteriorInputSchema = z.object({
   parentMapId: z.string().min(1),
   placeId: z.string().min(1),
-  childMapId: z.string().min(1).optional(),
+  childMapId: MapIdSchema.optional(),
   name: z.string().trim().min(1).optional(),
   w: z.number().positive().finite().optional(),
   h: z.number().positive().finite().optional(),
@@ -1269,7 +1270,10 @@ registerCommand({
     if(JSON.stringify(WorldDocumentSchema.parse(draft))!==JSON.stringify(input.before)) throw new Error('World changed during transfer. The target copy is safe; reopen it or retry from the current source.');
     const next=validateWorld(input.after);
     if(next.meta.id!==draft.meta.id) throw new Error('Transfer cannot replace the open world identity');
-    draft.meta=next.meta;draft.maps=next.maps;
+    // Assign per map so undo/redo marks each touched map file as unsaved.
+    draft.meta=next.meta;
+    for(const id of Object.keys(draft.maps))if(!next.maps[id])delete draft.maps[id];
+    for(const [id,map]of Object.entries(next.maps))if(JSON.stringify(input.before.maps[id])!==JSON.stringify(map))draft.maps[id]=map;
   },
 });
 
@@ -1511,7 +1515,7 @@ registerCommand({
 registerCommand({
   name:'map.applyTrace',description:'Accept reviewed backdrop geography. Trace pixels are converted to world coordinates before this command.',
   input:z.object({mapId:z.string(),sourceImageId:z.string(),layerId:z.string(),entities:z.array(EntitySchema),sourceRevision:z.number().optional()}),
-  run(draft,input){const map=getMapOrThrow(draft,input.mapId);if(input.sourceRevision!==undefined&&map.revision!==input.sourceRevision)throw new Error('The map changed. Review the trace again.');if(map.entities[input.sourceImageId]?.type!=='image')throw new Error('Backdrop is missing.');map.revision++;const groupId=crypto.randomUUID();map.groups??={};map.groups[groupId]={name:'Traced geography'};for(const e of input.entities){if(map.entities[e.id])throw new Error('Trace entity id already exists.');map.entities[e.id]={...e,groupId,layerId:input.layerId,origin:'manual',rev:map.revision};}map.outsideLandIsWater=true;map.riverNodes??={};for(const e of input.entities)if(e.type==='path'){if(e.startNodeId)map.riverNodes[e.startNodeId]=e.points[0]!;if(e.endNodeId)map.riverNodes[e.endNodeId]=e.points[e.points.length-1]!;}return {groupId};},
+  run(draft,input){const map=getMapOrThrow(draft,input.mapId);if(input.sourceRevision!==undefined&&map.revision!==input.sourceRevision)throw new Error('The map changed. Review the trace again.');if(map.entities[input.sourceImageId]?.type!=='image')throw new Error('Backdrop is missing.');if(!map.layers.some(l=>l.id===input.layerId))throw new Error('Choose an existing layer for the trace.');map.revision++;const groupId=crypto.randomUUID();map.groups??={};map.groups[groupId]={name:'Traced geography'};for(const e of input.entities){if(map.entities[e.id])throw new Error('Trace entity id already exists.');map.entities[e.id]={...e,groupId,layerId:input.layerId,origin:'manual',rev:map.revision};}map.outsideLandIsWater=true;map.riverNodes??={};for(const e of input.entities)if(e.type==='path'){if(e.startNodeId)map.riverNodes[e.startNodeId]=e.points[0]!;if(e.endNodeId)map.riverNodes[e.endNodeId]=e.points[e.points.length-1]!;}return {groupId};},
 });
 registerCommand({
   name:'map.repair',description:'Apply reviewed, non-destructive repairs: recover explicit world extent and generator boundaries; preserve all geometry.',

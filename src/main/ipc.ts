@@ -5,7 +5,7 @@ import { readFile, stat, mkdir, writeFile, rename } from 'node:fs/promises';
 import { z } from 'zod';
 import { basename, join, resolve } from 'node:path';
 import { app, dialog, ipcMain, nativeImage, type BrowserWindow } from 'electron';
-import type { MapDoc, WorldMeta } from '../renderer/model/schema';
+import type { AssetsIndex, MapDoc, WorldMeta } from '../renderer/model/schema';
 import { PackLibrary } from './packs';
 import type { AssetQuery } from '../renderer/model/packs';
 import type { AssetTagOverride } from '../renderer/model/assetTags';
@@ -32,6 +32,15 @@ export interface WorldIpcState {
   createWorld: (worldDir: string, name: string) => unknown;
   openWorld: (worldDir: string) => unknown;
   getPackRoots: () => string[];
+}
+
+// A damaged index still lets the world open without art; writers use readAssetsIndex and refuse.
+function assetsForDisplay(worldDir: string): AssetsIndex {
+  try {
+    return readAssetsIndex(worldDir);
+  } catch {
+    return {};
+  }
 }
 
 export function registerWorldIpc(getMainWindow: () => BrowserWindow | null): WorldIpcState {
@@ -190,7 +199,7 @@ export function registerWorldIpc(getMainWindow: () => BrowserWindow | null): Wor
       const loaded = openWorldFolder(resolved);
       currentWorldDir = resolved;
       const recent = recordRecent(loaded, resolved);
-      const assetsIndex = readAssetsIndex(resolved);
+      const assetsIndex = assetsForDisplay(resolved);
       return { ok: true as const, worldDir: resolved, ...loaded, recent, assetsIndex };
     } catch (err) {
       if (err instanceof WorldParseError) {
@@ -353,7 +362,7 @@ export function registerWorldIpc(getMainWindow: () => BrowserWindow | null): Wor
   );
 
   ipcMain.handle('atlas:asset-list', (_event, worldDir: string) => {
-    return readAssetsIndex(resolve(worldDir));
+    return assetsForDisplay(resolve(worldDir));
   });
 
   return {

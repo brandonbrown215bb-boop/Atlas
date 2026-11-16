@@ -18,7 +18,10 @@ ipcRenderer.on('atlas:history', (_event, action: 'undo' | 'redo') => {
 let beforeCloseFlush: (() => Promise<void>) | null = null;
 ipcRenderer.on('atlas:before-close', () => {
   const job = beforeCloseFlush ? beforeCloseFlush() : Promise.resolve();
-  void job.finally(() => ipcRenderer.send('atlas:ready-to-close'));
+  void job.then(
+    () => ipcRenderer.send('atlas:ready-to-close', { ok: true }),
+    (error: unknown) => ipcRenderer.send('atlas:ready-to-close', { ok: false, error: error instanceof Error ? error.message : String(error) }),
+  );
 });
 
 export interface RecentWorldInfo {

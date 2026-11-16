@@ -194,10 +194,17 @@ export class PackLibrary {
     return result;
   }
   async load(): Promise<void> {
-    try { this.overrides = TagOverridesSchema.parse(JSON.parse(await readFile(join(this.userData, 'asset-tag-overrides.json'), 'utf8'))); }
-    catch { this.overrides = {}; }
-    try { this.packs = PacksSchema.parse(JSON.parse(await readFile(join(this.userData, 'packs.json'), 'utf8'))); }
-    catch { this.packs = []; }
+    // A damaged file is moved aside (not overwritten by the next save) so it can be recovered.
+    const readOrSetAside = async <T>(file: string, parse: (raw: unknown) => T, empty: T): Promise<T> => {
+      const path = join(this.userData, file);
+      try { return parse(JSON.parse(await readFile(path, 'utf8'))); }
+      catch (error) {
+        if ((error as NodeJS.ErrnoException).code !== 'ENOENT') await rename(path, `${path}.damaged-${Date.now()}`).catch(() => {});
+        return empty;
+      }
+    };
+    this.overrides = await readOrSetAside('asset-tag-overrides.json', raw => TagOverridesSchema.parse(raw), {});
+    this.packs = await readOrSetAside('packs.json', raw => PacksSchema.parse(raw), []);
     if (this.packs.some(p => p.tagVersion !== ASSET_TAG_VERSION)) {
       const upgraded = this.packs.map(p => p.tagVersion === ASSET_TAG_VERSION ? p : {
         ...p,

@@ -259,6 +259,7 @@ export function App() {
     const dir = await window.atlasApi.pickFolder('Choose folder for new world');
     if (!dir) return;
     setErrorBanner(null);
+    await flushDirtyWorld();
     const res = await window.atlasApi.createWorld(dir, 'New World');
     viewStore.getState().setAssetsIndex({});
     worldStore.getState().loadWorld(res.meta, res.maps, res.worldDir);
@@ -267,6 +268,7 @@ export function App() {
   const handleOpenWorld = async () => {
     const dir = await window.atlasApi.pickFolder('Open World Folder');
     if (!dir) return;
+    await flushDirtyWorld();
     const res = await window.atlasApi.openWorld(dir);
     if (!res.ok) {
       setErrorBanner({
@@ -284,6 +286,7 @@ export function App() {
 
   const handleRestoreLatestBackup = async () => {
     if (!errorBanner?.worldDir || !errorBanner.backups?.[0]) return;
+    await flushDirtyWorld();
     const res = await window.atlasApi.restoreBackup(
       errorBanner.worldDir,
       errorBanner.backups[0],

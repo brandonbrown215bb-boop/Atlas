@@ -123,4 +123,41 @@ describe('P1.2 worldFs', () => {
     expect(index[assetId]?.width).toBe(1024);
     expect(readAssetsIndex(worldDir)[assetId]?.originalName).toBe('test-map.jpg');
   });
+
+  it('refuses map ids that would write or read outside the world folder', () => {
+    const base = makeTempDir();
+    const worldDir = join(base, 'World');
+    const created = createWorldFolder(worldDir, 'World');
+    const map = created.maps['map-1']!;
+    const escape = { ...map, id: '../../escape' };
+    expect(() => saveDirtyWorldFiles(worldDir, { maps: { '../../escape': escape } })).toThrow('was not saved');
+    expect(() => saveDirtyWorldFiles(worldDir, { maps: { '../../escape': map } })).toThrow('mismatched id');
+    expect(existsSync(join(base, 'escape.json'))).toBe(false);
+
+    const meta = JSON.parse(readFileSync(join(worldDir, 'world.json'), 'utf-8'));
+    meta.maps[0].id = '..\\..\\outside';
+    writeFileSync(join(worldDir, 'world.json'), JSON.stringify(meta));
+    expect(() => openWorldFolder(worldDir)).toThrow(WorldParseError);
+  });
+
+  it('writes no map when any map in the save is invalid', () => {
+    const worldDir = join(makeTempDir(), 'World');
+    const created = createWorldFolder(worldDir, 'World');
+    const good = { ...created.maps['map-1']!, name: 'Renamed' };
+    const bad = { ...created.maps['map-1']!, id: 'map-2', name: '' };
+    expect(() => saveDirtyWorldFiles(worldDir, { maps: { 'map-1': good, 'map-2': bad } })).toThrow('map-2');
+    expect(openWorldFolder(worldDir).maps['map-1']!.name).toBe('Overworld');
+  });
+
+  it('refuses to add art over a damaged assets index instead of erasing it', () => {
+    const base = makeTempDir();
+    const worldDir = join(base, 'World');
+    createWorldFolder(worldDir, 'World');
+    const indexPath = join(worldDir, 'assets', 'index.json');
+    writeFileSync(indexPath, '{"abc": {"originalName": 5}}');
+    const srcFile = join(base, 'art.png');
+    writeFileSync(srcFile, Buffer.from('png-bytes'));
+    expect(() => importImageAsset(worldDir, srcFile, { width: 1, height: 1 })).toThrow('damaged');
+    expect(readFileSync(indexPath, 'utf-8')).toBe('{"abc": {"originalName": 5}}');
+  });
 });

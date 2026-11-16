@@ -226,22 +226,22 @@ export function saveDirtyWorldFiles(
   payload: { meta?: WorldMeta; maps?: Record<string, MapDoc> },
 ): void {
   const resolvedDir = resolve(worldDir);
-  if (payload.meta) {
-    const validatedMeta = WorldMetaSchema.parse(payload.meta);
-    atomicWriteFile(
-      join(resolvedDir, 'world.json'),
-      JSON.stringify(validatedMeta, null, 2),
-    );
-  }
-  if (payload.maps) {
+  // Validate everything before writing anything, so one bad map cannot leave a half-saved world.
+  const validatedMeta = payload.meta ? WorldMetaSchema.parse(payload.meta) : undefined;
+  const validatedMaps = Object.entries(payload.maps ?? {}).map(([mapId, mapDoc]) => {
+    const result = MapDocSchema.safeParse(mapDoc);
+    if (!result.success) throw new Error(`Map ${mapId} is invalid and was not saved: ${result.error.message}`);
+    if (result.data.id !== mapId) throw new Error(`Map ${mapId} has a mismatched id and was not saved.`);
+    return result.data;
+  });
+  if (validatedMaps.length) {
     mkdirSync(join(resolvedDir, 'maps'), { recursive: true });
-    for (const [mapId, mapDoc] of Object.entries(payload.maps)) {
-      const validatedMap = MapDocSchema.parse(mapDoc);
-      atomicWriteFile(
-        join(resolvedDir, 'maps', `${mapId}.json`),
-        JSON.stringify(validatedMap, null, 2),
-      );
+    for (const map of validatedMaps) {
+      atomicWriteFile(join(resolvedDir, 'maps', `${map.id}.json`), JSON.stringify(map, null, 2));
     }
+  }
+  if (validatedMeta) {
+    atomicWriteFile(join(resolvedDir, 'world.json'), JSON.stringify(validatedMeta, null, 2));
   }
 }
 
@@ -315,11 +315,11 @@ export function readAssetsIndex(worldDir: string): AssetsIndex {
   if (!existsSync(indexPath)) {
     return {};
   }
+  // Throw rather than return {}: callers write the index back, which would erase every entry.
   try {
-    const raw = JSON.parse(readFileSync(indexPath, 'utf-8'));
-    return AssetsIndexSchema.parse(raw);
-  } catch {
-    return {};
+    return AssetsIndexSchema.parse(JSON.parse(readFileSync(indexPath, 'utf-8')));
+  } catch (err) {
+    throw new Error(`assets/index.json is damaged; fix or restore it before adding art. ${(err as Error).message}`);
   }
 }
 

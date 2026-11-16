@@ -1,6 +1,7 @@
 import { expect,it } from 'vitest';
 import { MapDocSchema,type MapDoc } from './schema';
-import { forkWorld,transferMap,validateWorld } from './transfer';
+import { forkWorld,transferMap,validateWorld,WorldDocumentSchema } from './transfer';
+import { createWorldStore } from './store';
 import type { WorldDocument } from './commands';
 
 function map(id:string,parent?:string):MapDoc {return MapDocSchema.parse({id,name:id,kind:'region',parent:parent?{mapId:parent,x:2,y:3,rotation:0}:undefined,bounds:{x:0,y:0,w:10,h:10},grid:{size:1,visible:true},layers:[{id:'l',name:'Art',visible:true,locked:false,gmOnly:false}],entities:{land:{id:'land',layerId:'l',type:'area',role:'land',rings:[[{x:0,y:0},{x:10,y:0},{x:10,y:10},{x:0,y:10}]],origin:'manual',rev:1}},generators:{},revision:1,deleted:{},fog:{enabled:false,revealed:[]}});}
@@ -54,4 +55,14 @@ it('replacement cuts crossing roads while preserving existing child footprints',
   expect(placed.entities.footprint).toEqual(parent.entities.footprint);
   expect(Object.values(placed.entities).filter(e=>e.type==='path').map(e=>e.type==='path'?e.points:[])).toEqual([[{x:-5,y:5},{x:0,y:5}],[{x:10,y:5},{x:15,y:5}]]);
   expect(()=>validateWorld(result.target)).not.toThrow();
+});
+it('undoing an applied transfer marks the restored maps unsaved',()=>{
+  const {source,target}=fixture(),store=createWorldStore();
+  store.getState().loadWorld(source.meta,source.maps,'C:/fixture');
+  const before=WorldDocumentSchema.parse(store.getState().world),result=transferMap(before,target,{mapId:'root',mode:'move'});
+  store.getState().execute('world.applyTransfer',{before,after:result.source});
+  store.getState().markClean({world:true,mapIds:Object.keys(store.getState().dirtyMapIds)});
+  store.getState().undo();
+  expect(store.getState().world!.maps.root).toBeDefined();
+  expect(store.getState().dirtyMapIds).toMatchObject({root:true,child:true});
 });

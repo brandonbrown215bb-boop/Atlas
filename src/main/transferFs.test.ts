@@ -3,7 +3,7 @@ import { mkdtempSync,readFileSync,writeFileSync,existsSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { createHash } from 'node:crypto';
-import { createWorldFolder,openWorldFolder,saveDirtyWorldFiles,listBackups } from './worldFs';
+import { createBackup,createWorldFolder,openWorldFolder,saveDirtyWorldFiles,listBackups } from './worldFs';
 import { forkWorldFolder,transferWorldFolders } from './transferFs';
 
 function fixture(){const dir=mkdtempSync(join(tmpdir(),'atlas-transfer-')),source=join(dir,'source'),target=join(dir,'target');const w=createWorldFolder(source,'Source');createWorldFolder(target,'Target');return {dir,source,target,w};}
@@ -28,4 +28,12 @@ it('failed target write leaves source byte-for-byte intact and restores target m
 });
 it('refuses overwriting a fork destination or nesting it in the source',()=>{
   const {source,target}=fixture();expect(()=>forkWorldFolder(source,target,'Fork')).toThrow('empty');expect(()=>forkWorldFolder(source,join(source,'nested'),'Fork')).toThrow('separate');
+});
+it('copying many new art files keeps the target world\'s older backups',()=>{
+  const {source,target,w}=fixture(),index:Record<string,unknown>={};
+  for(let i=0;i<25;i++){const bytes=Buffer.from(`art ${i}`),id=createHash('sha1').update(bytes).digest('hex');writeFileSync(join(source,'assets',`${id}.png`),bytes);index[id]={originalName:`${i}.png`,packName:'Pack',pxPerSquare:200,width:1,height:1,ext:'png'};w.maps['map-1']!.entities[`img-${i}`]={id:`img-${i}`,type:'image',assetId:id,x:0,y:0,w:1,h:1,rotation:0,layerId:'layer-base',origin:'manual',rev:1};}
+  writeFileSync(join(source,'assets','index.json'),JSON.stringify(index));saveDirtyWorldFiles(source,w);
+  const oldest=createBackup(target);
+  transferWorldFolders(source,target,{mapId:'map-1',mode:'copy'},w);
+  expect(listBackups(target)).toContain(oldest);
 });

@@ -25,3 +25,10 @@ it('a transfer flush waits for an already-running save instead of returning earl
   await Promise.resolve();expect(done).toBe(false);
   finish();await first;await next;expect(done).toBe(true);
 });
+it('a failed save keeps the unsaved flags so the next save retries',async()=>{
+  load();
+  vi.stubGlobal('window',{atlasApi:{saveDirtyWorld:vi.fn().mockRejectedValueOnce(new Error('disk full')).mockResolvedValue({ok:true})}});
+  await expect(flushDirtyWorld()).rejects.toThrow('disk full');
+  expect(worldStore.getState().dirtyMapIds.m).toBe(true);
+  await flushDirtyWorld();expect(worldStore.getState().dirtyMapIds).toEqual({});
+});

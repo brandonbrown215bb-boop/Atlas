@@ -1,5 +1,5 @@
 import { join } from 'node:path';
-import { app, BrowserWindow, ipcMain, Menu, screen } from 'electron';
+import { app, BrowserWindow, dialog, ipcMain, Menu, screen } from 'electron';
 import { startAgentServer, type AgentServerHandle } from './agent';
 import { registerWorldIpc } from './ipc';
 import { registerAtlasSchemes, setupProtocolHandlers } from './protocol';
@@ -55,21 +55,40 @@ function createMainWindow(): BrowserWindow {
   mainWindow = win;
   closingMain = false;
   win.on('close', (e) => {
-    if (closingMain) return;
+    // A second close while the save is running must wait for it too.
     e.preventDefault();
+    if (closingMain) return;
     closingMain = true;
     if (win.webContents.isDestroyed() || win.webContents.mainFrame?.isDestroyed()) {
       win.destroy();
       return;
     }
     const finish = () => {
+      ipcMain.removeListener('atlas:ready-to-close', onReady);
       if (!win.isDestroyed()) win.destroy();
     };
-    const timer = setTimeout(finish, 1500);
-    ipcMain.once('atlas:ready-to-close', () => {
+    // Only a hung renderer reaches this; a normal save reports back first.
+    const timer = setTimeout(finish, 15_000);
+    const onReady = (_event: Electron.IpcMainEvent, result?: { ok: boolean; error?: string }) => {
       clearTimeout(timer);
+      if (result?.ok === false && !win.isDestroyed()) {
+        const choice = dialog.showMessageBoxSync(win, {
+          type: 'warning',
+          buttons: ['Keep editing', 'Quit without saving'],
+          defaultId: 0,
+          cancelId: 0,
+          message: 'Your latest changes could not be saved.',
+          detail: result.error ?? 'Unknown save error',
+        });
+        if (choice === 0) {
+          ipcMain.removeListener('atlas:ready-to-close', onReady);
+          closingMain = false;
+          return;
+        }
+      }
       finish();
-    });
+    };
+    ipcMain.once('atlas:ready-to-close', onReady);
     try {
       win.webContents.send('atlas:before-close');
     } catch {

@@ -2,6 +2,7 @@ import type { MapDoc, WorldMeta } from './schema';
 import { worldStore } from './store';
 
 const AUTOSAVE_DELAY_MS = 2000;
+const RETRY_DELAY_MS = 10_000;
 const BACKUP_INTERVAL_MS = 10 * 60 * 1000;
 
 let saveTimer: number | null = null;
@@ -53,6 +54,19 @@ export async function flushDirtyWorld(): Promise<void> {
 }
 
 export function startWorldPersistence(): () => void {
+  const scheduleSave = (delay: number) => {
+    if (saveTimer !== null) {
+      window.clearTimeout(saveTimer);
+    }
+    saveTimer = window.setTimeout(() => {
+      saveTimer = null;
+      // Unsaved flags stay set on failure; retry, and rethrow so the error banner shows it.
+      void flushDirtyWorld().catch((error: unknown) => {
+        scheduleSave(RETRY_DELAY_MS);
+        throw error;
+      });
+    }, delay);
+  };
   const unsubscribe = worldStore.subscribe((state) => {
     const hasDirty =
       state.dirtyWorld || Object.keys(state.dirtyMapIds).length > 0;
@@ -61,13 +75,7 @@ export function startWorldPersistence(): () => void {
     }
 
     changedSinceBackup = true;
-    if (saveTimer !== null) {
-      window.clearTimeout(saveTimer);
-    }
-    saveTimer = window.setTimeout(() => {
-      saveTimer = null;
-      void flushDirtyWorld();
-    }, AUTOSAVE_DELAY_MS);
+    scheduleSave(AUTOSAVE_DELAY_MS);
   });
 
   backupTimer = window.setInterval(() => {

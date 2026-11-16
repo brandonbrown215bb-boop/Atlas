@@ -1,7 +1,7 @@
 import { copyFileSync, existsSync, lstatSync, mkdirSync, readdirSync, readFileSync, realpathSync, writeFileSync } from 'node:fs';
 import { createHash } from 'node:crypto';
 import { dirname, join, relative, resolve, isAbsolute } from 'node:path';
-import { AssetsIndexSchema, type AssetsIndex } from '../renderer/model/schema';
+import { AssetsIndexSchema, MapIdSchema, type AssetsIndex } from '../renderer/model/schema';
 import { forkWorld, transferMap, validateWorld, type TransferInput } from '../renderer/model/transfer';
 import type { WorldDocument } from '../renderer/model/commands';
 import { atomicWriteFile, createBackup, openWorldFolder, readAssetsIndex, restoreFromBackup, saveDirtyWorldFiles } from './worldFs';
@@ -11,7 +11,7 @@ export function readTransferWorld(path:string) {
   const root=realpathSync(path);
   const meta=JSON.parse(readFileSync(join(root,'world.json'),'utf8'));
   for(const summary of meta.maps ?? []) {
-    if(typeof summary.id!=='string'||/[\\/:]/.test(summary.id)||summary.id==='.'||summary.id==='..') throw new Error('Unsafe map filename');
+    if(!MapIdSchema.safeParse(summary.id).success) throw new Error('Unsafe map filename');
     const mapFile=realpathSync(join(root,'maps',`${summary.id}.json`));
     if(!inside(root,mapFile))throw new Error('Map file escaped the world');
   }
@@ -80,7 +80,7 @@ export function copyAssetSet(sourceDir:string,targetDir:string,ids:string[],sour
     const out=join(targetPath,'assets',`${id}.${asset.ext}`);
     if(existsSync(out) && !inside(targetPath,realpathSync(out))) throw new Error('Target asset escaped the world');
     if(existsSync(out) && createHash('sha1').update(readFileSync(out)).digest('hex')!==id) throw new Error(`Target asset is corrupt: ${id}`);
-    if(!existsSync(out)) {createBackup(targetPath);copyFileSync(file,out);}
+    if(!existsSync(out)) copyFileSync(file,out);
     targetAssets[id]=asset;
   }
 }

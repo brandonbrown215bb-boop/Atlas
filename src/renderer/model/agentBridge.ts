@@ -8,6 +8,7 @@ import { z } from 'zod';
 import { listCommands } from './commands';
 import { EntitySchema, MapDocSchema, type Entity, type MapDoc, type WorldMeta } from './schema';
 import { worldStore } from './store';
+import { flushDirtyWorld } from './persistence';
 import { viewStore } from './viewStore';
 import { renderMapToPngBase64 } from '../render/renderPng';
 import { executeAssetCommands } from '../assets/commands';
@@ -55,6 +56,9 @@ export async function handleAgentCall(
 ): Promise<unknown> {
   switch (method) {
     case 'trace_backdrop': return prepareBackdropTrace(params as unknown as Parameters<typeof prepareBackdropTrace>[0]);
+    case 'world_flush':
+      await flushDirtyWorld();
+      return { ok: true };
     case 'world_loaded': {
       const { meta, maps, worldDir, assetsIndex } = params as {
         meta: WorldMeta;

@@ -195,6 +195,7 @@ export async function startAgentServer(
       },
       async ({ worldDir, name }) => {
         try {
+          await callRenderer('world_flush');
           const loaded = deps.createWorld(worldDir, name) as Record<string, unknown>;
           await callRenderer('world_loaded', loaded);
           return jsonText({ ok: true, worldDir: loaded['worldDir'] });
@@ -214,6 +215,7 @@ export async function startAgentServer(
       },
       async ({ worldDir }) => {
         try {
+          await callRenderer('world_flush');
           const res = deps.openWorld(worldDir) as {
             ok: boolean;
             error?: string;

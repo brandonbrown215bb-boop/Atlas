@@ -296,9 +296,12 @@ export const GeneratorRecordSchema = z.object({
 });
 export type GeneratorRecord = z.infer<typeof GeneratorRecordSchema>;
 
+// Map ids become file names (maps/<id>.json), so they must not contain path parts.
+export const MapIdSchema = z.string().regex(/^(?!\.\.?$)[^\\/:*?"<>|\x00-\x1f]+$/, 'Map id cannot contain path characters');
+
 export const MapDocSchema = z.object({
   formatVersion: z.number().int().positive().default(2),
-  id: z.string().min(1),
+  id: MapIdSchema,
   name: z.string().min(1),
   kind: MapKindSchema,
   parent: z
@@ -360,7 +363,7 @@ export const ThemeSchema = z.record(z.string(), z.array(z.string()));
 export type Theme = z.infer<typeof ThemeSchema>;
 
 export const WorldMapSummarySchema = z.object({
-  id: z.string().min(1),
+  id: MapIdSchema,
   name: z.string().min(1),
   kind: MapKindSchema,
   parentId: z.string().min(1).optional(),
