@@ -122,8 +122,14 @@ export function clipAndInheritEntities(
   rect: RectBounds,
   targetLayerId: string,
   createId: () => string = () => crypto.randomUUID(),
+  childKind?: MapDoc['kind'],
 ): Entity[] {
   const result: Entity[] = [];
+  const parentSpan = Math.max(1, Math.max(parentMap.bounds.w, parentMap.bounds.h));
+  const rectSpan = Math.max(1, Math.max(rect.w, rect.h));
+  // A region redraws its own relief and roads at its own scale, so inherited ones stay only a little larger.
+  const zoomedRegion = childKind === 'region' && rectSpan < parentSpan;
+  const routeWidthScale = zoomedRegion ? Math.min(1, (rectSpan / parentSpan) * 1.6) : 1;
   const junctions=new Map<string,string>();
   const junction=(p:Point)=>{const key=`${p.x.toFixed(6)},${p.y.toFixed(6)}`;if(!junctions.has(key))junctions.set(key,createId());return junctions.get(key)!;};
   const rectPoly: MultiPolygon = [
@@ -188,7 +194,7 @@ export function clipAndInheritEntities(
             points: chain.map((p) => translatePoint(p, rect)),
             startNodeId: entity.role==='river'?junction(chain[0]!):undefined,
             endNodeId: entity.role==='river'?junction(chain[chain.length-1]!):undefined,
-            width: entity.width,
+            width: entity.routeTier ? entity.width * routeWidthScale : entity.width,
             closed: entity.closed && allInside,
           });
         }
@@ -241,11 +247,19 @@ export function clipAndInheritEntities(
       case 'light':
       case 'label': {
         if (pointInRect(entity, rect)) {
-          const translated = translatePoint(entity, rect);
-          const parentSpan = Math.max(1, Math.max(parentMap.bounds.w, parentMap.bounds.h));
-          const rectSpan = Math.max(1, Math.max(rect.w, rect.h));
+          let translated = translatePoint(entity, rect);
+          // A town or site label sat a world-scale gap from its icon; pull it in to match the shrunken icon.
+          const owner = zoomedRegion && entity.type === 'label'
+            ? Object.values(parentMap.entities).find(p => p.type === 'prop' && p.name === entity.text && isWorldSymbol(p) && pointInRect(p, rect))
+            : undefined;
+          if (owner?.type === 'prop') {
+            const pull = (rectSpan / parentSpan) * 1.3;
+            translated = translatePoint({ x: owner.x + (entity.x - owner.x) * pull, y: owner.y + (entity.y - owner.y) * pull }, rect);
+          }
+          const relief = entity.type === 'prop' && ['mountain', 'hill', 'forest'].includes(entity.symbolKind ?? '');
+          const factor = zoomedRegion ? (relief ? 1.2 : 1.4) : 2.2;
           const symbolScale = entity.type === 'prop' && isWorldSymbol(entity) && rectSpan < parentSpan
-            ? Math.min(1, Math.max(0.08, (rectSpan / parentSpan) * 2.2))
+            ? Math.min(1, Math.max(0.08, (rectSpan / parentSpan) * factor))
             : 1;
           result.push({
             ...entity,
@@ -270,6 +284,18 @@ export function clipAndInheritEntities(
       case 'portal':
       case 'place':
         break;
+    }
+  }
+
+  // A region adopts the notes, rumours and links of every town and site it inherits, pointing at its own copies.
+  if (childKind === 'region') {
+    for (const place of Object.values(parentMap.entities)) {
+      if (place.type !== 'place') continue;
+      const copies = result.filter(e => e.type !== 'label' && e.inheritedFrom && place.entityIds.includes(e.inheritedFrom.entityId));
+      if (!copies.length) continue;
+      const labels = result.filter(e => e.type === 'label' && e.inheritedFrom && place.entityIds.includes(e.inheritedFrom.entityId));
+      result.push({ ...place, genId: undefined, groupId: undefined, id: createId(), layerId: targetLayerId, origin: 'inherited', rev: 1,
+        inheritedFrom: { entityId: place.id, parentRev: place.rev }, entityIds: [...copies, ...labels].map(e => e.id) });
     }
   }
 

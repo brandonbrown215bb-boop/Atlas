@@ -142,7 +142,8 @@ registerCommand({
       const x = Math.min(...p.map(q=>q.x)), y = Math.min(...p.map(q=>q.y));
       map.bounds = { x, y, w: Math.max(...p.map(q=>q.x))-x, h: Math.max(...p.map(q=>q.y))-y };
     }
-    const ids = runGenerator(map, { ...input, regionEntityId, genId, theme: draft.meta.themes[input.themeName] ?? {}, climate: climateContext(draft, map) });
+    const ids = runGenerator(map, { ...input, regionEntityId, genId, theme: draft.meta.themes[input.themeName] ?? {}, climate: climateContext(draft, map),
+      takenNames: input.type === 'world' ? namesInUse(draft, map.id, genId) : undefined });
     return { genId, ids };
   },
 });
@@ -162,10 +163,17 @@ registerCommand({
     }
     const themeName = input.themeName ?? record.themeName ?? 'default';
     const ids = runGenerator(map, { ...record, ...input, regionEntityId, params: input.params ?? record.params,
-      layerId: record.layerId ?? map.layers[0]!.id, themeName, theme: draft.meta.themes[themeName] ?? {}, climate: climateContext(draft, map) });
+      layerId: record.layerId ?? map.layers[0]!.id, themeName, theme: draft.meta.themes[themeName] ?? {}, climate: climateContext(draft, map),
+      takenNames: record.type === 'world' ? namesInUse(draft, map.id, input.genId) : undefined });
     return { genId: input.genId, ids };
   },
 });
+
+/** Every name used anywhere in the world except this run's own output, so a region's names stay its own. */
+function namesInUse(world: WorldDocument, mapId: string, genId: string): string[] {
+  return Object.values(world.maps).flatMap(m => Object.values(m.entities).flatMap(e =>
+    m.id === mapId && e.genId === genId ? [] : e.type === 'label' ? [e.text] : e.name ? [e.name] : []));
+}
 registerCommand({
   name: 'settlement.resolveSuggestion',
   description: 'Accept a suggested settlement as a permanent map symbol and named place, or dismiss it. One undo step. Accepted settlements survive generator rerolls.',
@@ -991,7 +999,7 @@ function buildChildMapDoc(
       : kind === 'settlement'
         ? 10
         : 100;
-  const inherited = clipAndInheritEntities(parentMap, rect, 'layer-base');
+  const inherited = clipAndInheritEntities(parentMap, rect, 'layer-base', undefined, kind);
   const entities: Record<string, Entity> = {};
   for (const ent of inherited) {
     ent.groupId='inherited';
@@ -1222,7 +1230,7 @@ registerCommand({
     const keptEdited = listKeptEditedEntities(childMap);
     const editedParentIds = new Set(keptEdited.map((k) => k.parentEntityId));
 
-    const fresh = clipAndInheritEntities(parentMap, rect, targetLayerId);
+    const fresh = clipAndInheritEntities(parentMap, rect, targetLayerId, undefined, childMap.kind);
     let addedCount = 0;
     for (const ent of fresh) {
       if (ent.inheritedFrom && editedParentIds.has(ent.inheritedFrom.entityId)) {

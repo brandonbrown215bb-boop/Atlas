@@ -1,4 +1,4 @@
-import { distanceToSegment, getEntityBounds } from '../../geom/hitTest';
+import { bboxFromPoints, distanceToSegment, getEntityBounds } from '../../geom/hitTest';
 import type { Entity, MapDoc, Point } from '../../model/schema';
 import { themeAssets } from '../../model/themes';
 import type { GeneratorInput } from '../framework';
@@ -6,7 +6,7 @@ import { mulberry32 } from '../rng';
 import type { buildClimate } from './climate';
 import { contains, type Terrain } from './terrain';
 import { makeNamer } from './names';
-import { BAND_NAMES, makeHooks, SITE_SUMMARY, type Band, type SiteKind } from './hooks';
+import { BAND_NAMES, distance, makeHooks, SITE_SUMMARY, type Band, type SiteKind } from './hooks';
 
 type LabelBox = { minX: number; maxX: number; minY: number; maxY: number };
 
@@ -99,14 +99,32 @@ type ClimateValues = ReturnType<typeof buildClimate>['values'];
 export function decorateWorld(terrain: Terrain, climate: ClimateValues, input: GeneratorInput<DecorationParams>, rivers: Entity[]): Entity[] {
   const random = mulberry32((input.seed ^ 0x651fea ^ (((input.params.renderSeed ?? 0) * 2654435761) >>> 0)) >>> 0), result: Entity[] = [];
   // Names and GM hooks follow the world seed only, so a restyle keeps them.
-  const namer = makeNamer(input.seed), hooks = makeHooks(mulberry32((input.seed ^ 0x9e3779b9) >>> 0));
-  const bounds = input.constraints.flatMap(e => {
-    if (e.type === 'image') return [];
-    if (e.type === 'area' && (e.role === 'land' || e.role.startsWith('biome:'))) return [];
+  // Names already on the map (inherited from a world, or hand-placed) are never reused.
+  // Names on this map or anywhere else in the world are taken; road names ("A–B Road") also carry town names.
+  const takenNames = [...input.constraints.flatMap(e => (e.type === 'label' ? [e.text] : e.name ? [e.name] : [])), ...(input.takenNames ?? [])]
+    .flatMap(n => [n, ...n.replace(/ (Road|Track)$/, '').split('–')]);
+  const isRegion = input.mapKind === 'region';
+  // A region salts its names so the same seed as its world doesn't replay the world's names.
+  const namer = makeNamer(isRegion ? (input.seed ^ 0x5e1d) >>> 0 : input.seed, takenNames), hooks = makeHooks(mulberry32((input.seed ^ 0x9e3779b9) >>> 0));
+  // A region that is mostly sea gets fewer towns and sites, so its land isn't crammed.
+  const landShare = terrain.cells.filter(c => c.land).length / Math.max(1, terrain.cells.length);
+  const crowd = isRegion ? Math.min(1, Math.max(0.25, landShare / 0.5)) : 1;
+  const settlementTarget = Math.round(input.params.settlements * crowd);
+  // Water needs no box: safe() and routing already test land, and an ocean's box would blank whole coasts.
+  const boxes = (es: Entity[]) => es.flatMap(e => {
+    if (e.type === 'image' || e.type === 'label') return [];
+    if (e.type === 'area' && (e.role === 'land' || e.role === 'water' || e.role.startsWith('biome:'))) return [];
     if (e.type === 'path' || e.type === 'wall' || e.type === 'place') return [];
     const b = getEntityBounds(e);
     return b ? [b] : [];
   });
+  const bounds = boxes(input.constraints);
+  const routeBlocks = boxes(input.constraints.filter(e => e.type !== 'prop')); // roads may run up to existing icons
+  // Existing towns, roads and adventure sites (inherited from the world, or hand-placed) are content to build around.
+  const constraintProps = input.constraints.filter((e): e is Extract<Entity, { type: 'prop' }> => e.type === 'prop');
+  const anchors = constraintProps.filter(e => e.symbolKind === 'settlement').sort((a, b) => (b.w ?? 0) - (a.w ?? 0));
+  const majorSites = constraintProps.filter(e => ['ruin', 'lair', 'stronghold', 'sacred'].includes(e.symbolKind ?? ''));
+  const existingRoads = input.constraints.filter((e): e is Extract<Entity, { type: 'path' }> => e.type === 'path' && e.role === 'trail');
   const lines = [...input.constraints, ...rivers].flatMap(e =>
     e.type === 'path' || e.type === 'wall'
       ? e.points.slice(1).map((b, i) => ({ a: e.points[i]!, b, width: e.type === 'path' ? e.width : 0 }))
@@ -170,9 +188,9 @@ export function decorateWorld(terrain: Terrain, climate: ClimateValues, input: G
     return { c, i, coast, nearRiver, geoScore };
   });
 
-  // Pick 3 spaced regional hubs from top-scoring locations.
-  const hubs: Point[] = [];
-  const hubCandidates = [...scoredHabitable].sort((a, b) => b.geoScore * (0.7 + random() * 0.6) - a.geoScore * (0.7 + random() * 0.6));
+  // Existing towns are the hubs villages gather around; otherwise pick 3 spaced hubs from top-scoring locations.
+  const hubs: Point[] = anchors.slice(0, 3).map(a => ({ x: a.x, y: a.y }));
+  const hubCandidates = hubs.length ? [] : [...scoredHabitable].sort((a, b) => b.geoScore * (0.7 + random() * 0.6) - a.geoScore * (0.7 + random() * 0.6));
   for (const cand of hubCandidates) {
     if (hubs.length >= 3) break;
     if (hubs.every(h => Math.hypot(h.x - cand.c.point.x, h.y - cand.c.point.y) > terrain.size * 0.16)) {
@@ -192,8 +210,8 @@ export function decorateWorld(terrain: Terrain, climate: ClimateValues, input: G
     .sort((a, b) => a.score - b.score);
 
   for (const candidate of ranked) {
-    if (result.length >= input.params.settlements) break;
-    const isMajor = result.length < 2;
+    if (result.length >= settlementTarget) break;
+    const isMajor = result.length < 2 && !anchors.length;
     const size = isMajor ? candidate.size * 1.45 : candidate.size;
     if (safe(candidate.point, size * 0.6, size * 0.6)) {
       result.push(symbol('settlement', candidate.point, size, namer.town(), true));
@@ -201,9 +219,9 @@ export function decorateWorld(terrain: Terrain, climate: ClimateValues, input: G
   }
 
   // Overland King's Roads connecting neighboring settlements across habitable terrain
-  const settlementProps = result.filter(
+  const settlementProps = [...anchors, ...result.filter(
     (e): e is Extract<Entity, { type: 'prop' }> => e.type === 'prop' && e.symbolKind === 'settlement',
-  );
+  )];
   const nearestLandIdx = (pt: Point): number => {
     let best = -1;
     let bestD = Infinity;
@@ -245,7 +263,7 @@ export function decorateWorld(terrain: Terrain, climate: ClimateValues, input: G
       for (const n of curCell.neighbors) {
         const nc = terrain.cells[n]!;
         if (!nc.land || !segOnLand(curCell.point, nc.point)) continue;
-        const inConstraint = bounds.some((b) => nc.point.x >= b.minX && nc.point.x <= b.maxX && nc.point.y >= b.minY && nc.point.y <= b.maxY);
+        const inConstraint = routeBlocks.some((b) => nc.point.x >= b.minX && nc.point.x <= b.maxX && nc.point.y >= b.minY && nc.point.y <= b.maxY);
         if (inConstraint) continue;
         const segLen = Math.hypot(nc.point.x - curCell.point.x, nc.point.y - curCell.point.y);
         const climb = Math.max(0, nc.elevation - input.params.seaLevel - 0.18);
@@ -310,16 +328,23 @@ export function decorateWorld(terrain: Terrain, climate: ClimateValues, input: G
   };
 
   // Spanning tree per landmass so every settlement is reachable, plus a couple of short loops.
-  const gap = (i: number, j: number) => Math.hypot(settlementProps[i]!.x - settlementProps[j]!.x, settlementProps[i]!.y - settlementProps[j]!.y);
-  const masses = settlementProps.map(massOf);
-  const edges: Array<[number, number]> = [], inTree = new Set<number>();
-  for (let s = 0; s < settlementProps.length; s++) {
-    if (inTree.has(s)) continue;
-    inTree.add(s);
+  // Existing roads (sampled) and the towns on them start out connected, so new towns join that network.
+  const netPts: Point[] = [];
+  for (const p of existingRoads.flatMap(e => e.points)) {
+    if (netPts.every(q => Math.hypot(p.x - q.x, p.y - q.y) > terrain.size * 0.02)) netPts.push(p);
+  }
+  const townCount = settlementProps.length, majors = anchors.length || 2;
+  const node = (k: number): Point => (k < townCount ? settlementProps[k]! : netPts[k - townCount]!);
+  const gap = (i: number, j: number) => Math.hypot(node(i).x - node(j).x, node(i).y - node(j).y);
+  const masses = [...settlementProps, ...netPts].map(massOf);
+  const seeded = (k: number) => netPts.length > 0 && (k < anchors.length || k >= townCount);
+  const edges: Array<[number, number]> = [];
+  const inTree = new Set(masses.map((_, k) => k).filter(seeded));
+  const grow = () => {
     for (;;) {
       let best: [number, number] | null = null;
       for (const i of inTree) {
-        for (let j = 0; j < settlementProps.length; j++) {
+        for (let j = 0; j < townCount; j++) {
           if (!inTree.has(j) && masses[j] === masses[i] && (!best || gap(i, j) < gap(...best))) best = [i, j];
         }
       }
@@ -327,15 +352,21 @@ export function decorateWorld(terrain: Terrain, climate: ClimateValues, input: G
       inTree.add(best[1]);
       edges.push(best);
     }
+  };
+  grow();
+  for (let s = 0; s < townCount; s++) {
+    if (!inTree.has(s)) { inTree.add(s); grow(); }
   }
   const linked = new Set(edges.map(([i, j]) => `${Math.min(i, j)}|${Math.max(i, j)}`));
   const loops = settlementProps.flatMap((_, i) => settlementProps.map((__, j) => [i, j] as [number, number]))
-    .filter(([i, j]) => i < j && masses[i] === masses[j] && !linked.has(`${i}|${j}`) && gap(i, j) < terrain.size * 0.25)
+    .filter(([i, j]) => i < j && masses[i] === masses[j] && !linked.has(`${i}|${j}`) && !(seeded(i) && seeded(j)) && gap(i, j) < terrain.size * 0.25)
     .sort((a, b) => gap(...a) - gap(...b))
     .slice(0, 2);
   for (const [i, j] of [...edges, ...loops]) {
-    const a = settlementProps[i]!, b = settlementProps[j]!;
-    addRoad(a, b, `${a.name}–${b.name} Road`, i < 2 || j < 2 ? 'road' : 'track');
+    const b = settlementProps[j]!;
+    if (i >= townCount) { addRoad(netPts[i - townCount]!, b, `${b.name} Road`, 'track'); continue; }
+    const a = settlementProps[i]!;
+    addRoad(a, b, `${a.name}–${b.name} Road`, i < majors || j < majors ? 'road' : 'track');
   }
 
   if (!input.params.density) return result;
@@ -343,11 +374,11 @@ export function decorateWorld(terrain: Terrain, climate: ClimateValues, input: G
   // Seed landmark obstacle list with all settlement icons before placing any POIs or labels
   const landmarkIconBoxes: LabelBox[] = [
     compassKeepoutBox(0, 0, terrain.size, terrain.size),
-    ...settlementProps.map((s) => propIconBox(s, terrain.size)),
+    ...[...settlementProps, ...majorSites].map((s) => propIconBox(s, terrain.size)),
   ];
 
   // Remoteness from settlements and roads drives both site placement and danger.
-  const roadPts = result.flatMap(e => (e.type === 'path' && e.id.startsWith('king-road-') ? e.points : []));
+  const roadPts = [...existingRoads, ...result].flatMap(e => (e.type === 'path' && e.role === 'trail' ? e.points : []));
   const nearest = (p: Point, pts: Point[]) => pts.reduce((m, q) => Math.min(m, Math.hypot(p.x - q.x, p.y - q.y)), Infinity);
   const bandOf = (p: Point): Band => {
     if (!settlementProps.length) return 1;
@@ -358,10 +389,11 @@ export function decorateWorld(terrain: Terrain, climate: ClimateValues, input: G
   const dangerBandFor = (p: Point) => BAND_NAMES[bandOf(p)];
 
   // Populate the 5 POI families (strongholds, ruins, lairs, sacred sites, travel stops)
-  const isRegion = input.mapKind === 'region';
   const siteTotal = Math.max(5, input.params.settlements);
-  const countFor = (share: number, regionCount: number) => (isRegion ? regionCount : Math.max(1, Math.round(siteTotal * share)));
+  const countFor = (share: number, regionCount: number) => (isRegion ? Math.max(1, Math.round(regionCount * crowd)) : Math.max(1, Math.round(siteTotal * share)));
   const remote = (p: Point) => Math.min(2.5, Math.min(nearest(p, settlementProps), nearest(p, roadPts)) / (terrain.size * 0.12));
+  // Outlying ruins, lairs and watchtowers gather on the approaches to an existing major site.
+  const approach = (p: Point) => 1 + 1.5 * Math.exp(-((nearest(p, majorSites) / (terrain.size * 0.1)) ** 2));
   const poiSpecs: Array<{
     role: SiteKind;
     category: string;
@@ -396,7 +428,7 @@ export function decorateWorld(terrain: Terrain, climate: ClimateValues, input: G
   const placedPois: Array<{ prop: Extract<Entity, { type: 'prop' }>; category: string; gmOnly: boolean; role: SiteKind }> = [];
   for (const spec of poiSpecs) {
     const candidates = [...landOnly]
-      .map(({ c, i }) => ({ c, weight: Math.max(0.05, spec.score(c, i)) * (0.6 + random() * 0.8) }))
+      .map(({ c, i }) => ({ c, weight: Math.max(0.05, spec.score(c, i)) * (spec.role === 'sacred' || spec.role === 'travel' ? 1 : approach(c.point)) * (0.6 + random() * 0.8) }))
       .sort((a, b) => b.weight - a.weight);
     let placed = 0;
     for (const cand of candidates) {
@@ -405,7 +437,7 @@ export function decorateWorld(terrain: Terrain, climate: ClimateValues, input: G
       const { x, y } = cand.c.point, edge = terrain.size * 0.04;
       if (x < edge || y < edge || x > terrain.size - edge || y > terrain.size - edge) continue;
       if (!safe(cand.c.point, size * 0.9, size * 1.4)) continue;
-      if (result.some(e => e.type === 'prop' && POI_SYMBOL_KINDS.has(e.symbolKind ?? '') && Math.hypot(cand.c.point.x - e.x, cand.c.point.y - e.y) < minPoiGap)) continue;
+      if ([...result, ...constraintProps].some(e => e.type === 'prop' && POI_SYMBOL_KINDS.has(e.symbolKind ?? '') && Math.hypot(cand.c.point.x - e.x, cand.c.point.y - e.y) < minPoiGap)) continue;
       const prop: Extract<Entity, { type: 'prop' }> = {
         id: `${spec.role}-${placed}`,
         type: 'prop',
@@ -449,6 +481,8 @@ export function decorateWorld(terrain: Terrain, climate: ClimateValues, input: G
     .map((c, i) => ({ c, i }))
     .filter(({ c }) => c.land)
     .sort((a, b) => b.c.elevation - a.c.elevation);
+  // A region cut from a highland would otherwise be a blanket of peaks; only its top 30% can form ranges.
+  const peakLine = Math.max(0.28, isRegion && landCells.length ? landCells[Math.floor(landCells.length * 0.3)]!.c.elevation - input.params.seaLevel : 0);
 
   for (const { c, i } of landCells) {
     const height = c.elevation - input.params.seaLevel;
@@ -462,7 +496,7 @@ export function decorateWorld(terrain: Terrain, climate: ClimateValues, input: G
     const nearRiver = lines.some(s => distanceToSegment(c.point, s.a, s.b) < riverDist * 0.75);
     const isForest = isForestBiome || isMarshBiome || (nearRiver && climate[i]!.moisture > 0.34 && height < 0.16) || (isPlainsBiome && random() < 0.18);
     // Only true highlands become peaks, so ranges read as spines with valleys and passes between them.
-    const isMountain = height > 0.28 || (height > 0.22 && slope > 0.022);
+    const isMountain = height > peakLine || (height > peakLine - 0.06 && slope > 0.022);
     const nearMountain = result.some(e => e.type === 'prop' && e.symbolKind === 'mountain' && Math.hypot(c.point.x - e.x, c.point.y - e.y) < terrain.size * 0.08);
     const isHill = !isMountain && !isForest && ((height > 0.08 && nearMountain) || (height > 0.12 && slope > 0.015) || (isDesertBiome && height > 0.02));
 
@@ -501,7 +535,10 @@ export function decorateWorld(terrain: Terrain, climate: ClimateValues, input: G
   }
 
   // Place cartographic labels strictly clear of EVERY symbol icon, previous label, frame margin, and compass rose.
-  const placedBoxes: LabelBox[] = [];
+  const oldLabels = input.constraints.filter((e): e is Extract<Entity, { type: 'label' }> => e.type === 'label');
+  const placedBoxes: LabelBox[] = oldLabels.map(l => approxLabelBox(l.x, l.y, l.text, l.size, terrain.size));
+  // Ranges and woods the world already named keep that name; don't add a second one beside it.
+  const namedNearby = (p: Point) => oldLabels.some(l => l.size >= 17 && Math.hypot(l.x - p.x, l.y - p.y) < terrain.size * 0.15);
   const framePad = terrain.size * 0.028;
   const placeLabel = (
     id: string,
@@ -695,8 +732,10 @@ export function decorateWorld(terrain: Terrain, climate: ClimateValues, input: G
     });
   }
 
+  // Existing major sites get no new marker, but clues and rumours lead to them.
+  const leadSites = [...placedPois, ...majorSites.map(prop => ({ prop, category: '', gmOnly: true, role: prop.symbolKind as SiteKind }))];
   // Clue chains lead outward: each site points at the nearest site that is more remote than itself.
-  const byRemoteness = [...placedPois].sort((a, b) => nearest(a.prop, settlementProps) - nearest(b.prop, settlementProps));
+  const byRemoteness = [...leadSites].sort((a, b) => nearest(a.prop, settlementProps) - nearest(b.prop, settlementProps));
   const clueNext = new Map<string, (typeof placedPois)[number]>();
   byRemoteness.forEach((site, k) => {
     const next = byRemoteness.slice(k + 1).sort((a, b) => Math.hypot(a.prop.x - site.prop.x, a.prop.y - site.prop.y) - Math.hypot(b.prop.x - site.prop.x, b.prop.y - site.prop.y))[0];
@@ -704,22 +743,28 @@ export function decorateWorld(terrain: Terrain, climate: ClimateValues, input: G
   });
   // Every ruin and lair gets at least two leads (clues plus town rumours); then each town gets two rumours.
   const rumoursAbout = settlementProps.map(() => [] as Array<(typeof placedPois)[number]>);
+  // A town that already has a Place (adopted from the world, or written by hand) keeps it; it gets no second one.
+  const placed = new Set(input.constraints.flatMap(e => (e.type === 'place' ? e.entityIds : [])));
   const byDistance = (p: Point) => settlementProps.map((s, i) => ({ i, d: Math.hypot(s.x - p.x, s.y - p.y) })).sort((a, b) => a.d - b.d);
-  for (const site of placedPois) {
-    if (site.role !== 'ruin' && site.role !== 'lair') continue;
-    const leads = [...clueNext.values()].filter(n => n === site).length;
-    for (const { i } of byDistance(site.prop).slice(0, Math.max(0, 2 - leads))) rumoursAbout[i]!.push(site);
+  for (const site of leadSites) {
+    if (site.role !== 'ruin' && site.role !== 'lair' && !majorSites.includes(site.prop)) continue;
+    const leads = [...clueNext.entries()].filter(([from, n]) => n === site && placedPois.some(p => p.prop.id === from)).length;
+    const hearers = byDistance(site.prop).filter(({ i }) => !placed.has(settlementProps[i]!.id));
+    for (const { i } of hearers.slice(0, Math.max(0, 2 - leads))) rumoursAbout[i]!.push(site);
   }
   settlementProps.forEach((s, i) => {
-    for (const site of [...placedPois].sort((a, b) => Math.hypot(a.prop.x - s.x, a.prop.y - s.y) - Math.hypot(b.prop.x - s.x, b.prop.y - s.y))) {
+    for (const site of [...leadSites].sort((a, b) => Math.hypot(a.prop.x - s.x, a.prop.y - s.y) - Math.hypot(b.prop.x - s.x, b.prop.y - s.y))) {
       if (rumoursAbout[i]!.length >= 2) break;
       if (!rumoursAbout[i]!.includes(site)) rumoursAbout[i]!.push(site);
     }
   });
 
   settlementProps.forEach((s, idx) => {
+    if (placed.has(s.id)) return;
     const entityIds = [s.id];
-    const lbl = placeLabel(`label-settlement-${idx}`, s.name ?? 'Settlement', s.x, s.y, idx < 2 ? 20 : idx < 5 ? 16 : 13, Boolean(s.gmOnly), s);
+    // Existing towns keep their label; new ones beside them rank below as villages and hamlets.
+    const anchor = idx < anchors.length, rank = anchors.length ? idx - anchors.length + 5 : idx;
+    const lbl = anchor ? null : placeLabel(`label-settlement-${idx}`, s.name ?? 'Settlement', s.x, s.y, rank < 2 ? 20 : rank < 5 ? 16 : 13, Boolean(s.gmOnly), s);
     if (lbl) entityIds.push(lbl.id);
     result.push({
       id: `place-settlement-${idx}`,
@@ -730,7 +775,7 @@ export function decorateWorld(terrain: Terrain, climate: ClimateValues, input: G
       gmOnly: Boolean(s.gmOnly),
       name: s.name ?? 'Settlement',
       category: 'Settlement',
-      notes: hooks.settlement(idx, bandOf(s)),
+      notes: hooks.settlement(anchor ? 'Town' : rank < 2 ? 'City' : rank < 5 ? 'Town' : rank < 8 ? 'Village' : 'Hamlet', bandOf(s)),
       gmNotes: '',
       rumours: rumoursAbout[idx]!.map(site => hooks.rumour(site.role, site.prop.name!, s, site.prop)),
       entityIds,
@@ -757,7 +802,7 @@ export function decorateWorld(terrain: Terrain, climate: ClimateValues, input: G
       notes: `${dangerBandFor(prop)} · ${SITE_SUMMARY[entry.role]}`,
       gmNotes: `${hook.gmNotes}${nearestTown ? ` Nearest supply point: ${settlementProps[nearestTown.i]!.name}.` : ''}`,
       stockingRole: hook.stockingRole,
-      ...(next ? { clueNext: `A clue here points toward ${next.prop.name}, ${Math.max(2, Math.round(Math.hypot(next.prop.x - prop.x, next.prop.y - prop.y) / 1609.344))} miles away.` } : {}),
+      ...(next ? { clueNext: `A clue here points toward ${next.prop.name}, ${distance(prop, next.prop)} away.` } : {}),
       entityIds,
     });
   });
@@ -771,7 +816,7 @@ export function decorateWorld(terrain: Terrain, climate: ClimateValues, input: G
   const namedRanges: Point[] = [];
   for (const { m, members } of ranges) {
     if (namedRanges.length >= 2 || members.length < (namedRanges.length ? 5 : 3)) break;
-    if (namedRanges.some((p) => Math.hypot(p.x - m.x, p.y - m.y) < terrain.size * 0.3)) continue;
+    if (namedNearby(m) || namedRanges.some((p) => Math.hypot(p.x - m.x, p.y - m.y) < terrain.size * 0.3)) continue;
     namedRanges.push(m);
     const cx = members.reduce((t, o) => t + o.x, 0) / members.length, cy = members.reduce((t, o) => t + o.y, 0) / members.length;
     placeLabel(`label-mountains-${namedRanges.length - 1}`, namer.range(), cx, cy, 21);
@@ -790,9 +835,9 @@ export function decorateWorld(terrain: Terrain, climate: ClimateValues, input: G
       }))
       .sort((a, b) => b.density - a.density);
     const primary = rankedForests[0]!.f;
-    placeLabel('label-forest-0', namer.wood(), primary.x, primary.y, 18);
+    if (!namedNearby(primary)) placeLabel('label-forest-0', namer.wood(), primary.x, primary.y, 18);
     const secondary = rankedForests.find(
-      (c) => c.density >= 5 && Math.hypot(c.f.x - primary.x, c.f.y - primary.y) >= terrain.size * 0.26,
+      (c) => c.density >= 5 && Math.hypot(c.f.x - primary.x, c.f.y - primary.y) >= terrain.size * 0.26 && !namedNearby(c.f),
     );
     if (secondary) {
       // Thicken any sparser named secondary woodland so it reads clearly as a true forest cluster.
@@ -809,6 +854,38 @@ export function decorateWorld(terrain: Terrain, climate: ClimateValues, input: G
       placeLabel('label-forest-1', namer.wood(), secondary.f.x, secondary.f.y, 17);
     }
   }
+  // Name the two longest rivers near their middle, so travellers have water to follow and cross.
+  const riverLength = (pts: Point[]) => pts.slice(1).reduce((t, p, k) => t + Math.hypot(p.x - pts[k]!.x, p.y - pts[k]!.y), 0);
+  // The name also goes on the generated path, so a region cut from this map knows the river is already named.
+  const unnamedRiver = (e: Entity): e is Extract<Entity, { type: 'path' }> =>
+    e.type === 'path' && e.role === 'river' && (!e.name || ['River', 'Navigable river', 'River · boundary outlet'].includes(e.name));
+  [...rivers, ...input.constraints]
+    .filter(unnamedRiver)
+    .sort((a, b) => riverLength(b.points) - riverLength(a.points))
+    .filter(e => riverLength(e.points) > terrain.size * 0.15)
+    .slice(0, 2)
+    .forEach((river, k) => {
+      const mid = river.points[Math.floor(river.points.length / 2)]!, name = namer.river();
+      if (placeLabel(`label-river-${k}`, name, mid.x, mid.y, 12) && rivers.includes(river)) river.name = name;
+    });
+
+  // Roads running off the map edge say where they lead, so the world feels bigger than the sheet.
+  const box = bboxFromPoints(terrain.region[0]!)!, near = terrain.size * 0.01, here = new Set(anchors.map(a => a.name));
+  const exits = new Set<string>();
+  for (const road of existingRoads) {
+    const ends = road.name?.match(/^(.+)–(.+) Road$/)?.slice(1) ?? [];
+    const dest = ends.find(n => !here.has(n));
+    if (!dest || exits.has(dest)) continue;
+    for (const p of [road.points[0]!, road.points.at(-1)!]) {
+      if (p.x - box.minX > near && box.maxX - p.x > near && p.y - box.minY > near && box.maxY - p.y > near) continue;
+      // Step inward along the road so the label clears the frame.
+      const toCentre = Math.hypot((box.minX + box.maxX) / 2 - p.x, (box.minY + box.maxY) / 2 - p.y) || 1;
+      const inset = terrain.size * 0.07;
+      const at = { x: p.x + ((box.minX + box.maxX) / 2 - p.x) / toCentre * inset, y: p.y + ((box.minY + box.maxY) / 2 - p.y) / toCentre * inset };
+      if (placeLabel(`label-exit-${exits.size}`, `to ${dest}`, at.x, at.y, 11)) { exits.add(dest); break; }
+    }
+  }
+
   // Sea label goes on the open-water cell farthest (in hops) from any coast, clear of the compass.
   const sea = (i: number) => !terrain.cells[i]!.land && !terrain.cells[i]!.lake;
   const hops = new Int32Array(terrain.cells.length).fill(-1);

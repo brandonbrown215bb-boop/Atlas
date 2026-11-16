@@ -120,3 +120,43 @@
   - `npm run check` passes, apart from one existing dungeon layout test that times out under parallel load and passes on its own.
   - `npm run build` passes.
   - Seeds 42 and 7 were rendered via `rook-review.mjs` and checked by eye.
+
+## Round 11 (`round-11-baseline/` → `round-11-regions/`) — Region maps built on their world
+- **Goal**: a region (Create location → region, then populate) should read as a closer, denser look at *that* world. World towns are hubs, new roads join the world's roads, and the world's dungeons have approaches and leads.
+- **Baseline** (`rook-review.mjs` now also develops a coastal and an inland region from each world):
+  - Coastal regions came out empty (seed 7: 0 symbols). The inherited ocean's bounding box was treated as a keep-out box over the whole coast.
+  - With the same seed, the region's namer replayed the world's names (two Fenmoors, two Blackgut Pits).
+  - Inherited roads drew as 5 km-wide bands, and inherited town and peak icons at 2–4× native size.
+  - Inland regions got a solid blanket of mountains and 113–213 river paths.
+  - Town labels sat a world-scale gap away from their icons.
+- **Changes**:
+  - `decoration.ts`:
+    - Water and labels no longer make keep-out boxes, and roads may route up to existing icons.
+    - Existing towns become anchors: hubs for new villages and hamlets, plus a Place record with local rumours.
+    - Existing roads seed the road tree, so new towns join the network.
+    - Ruins, lairs and towers cluster on the approaches to inherited world sites, and those sites get ≥2 leads.
+    - Names already on the map, including towns named only in road names, are reserved, and region names are salted.
+    - Region town and site counts scale with land share.
+    - In a region, only the top 30% of the land by height can form peaks.
+    - Ranges and woods the world already named aren't renamed.
+    - The two longest rivers are named, also on world maps, and the name is stored on the path.
+    - Roads leaving the sheet get `to <Town>` labels.
+  - `hooks.ts`: leads give walking time ("34 miles (a day on foot)"), and settlements rank City, Town, Village or Hamlet.
+  - `clipInherit.ts`, region children only:
+    - relief icons are scaled ×1.2 and POI icons ×1.4 of the zoom (was ×2.2);
+    - world road widths are scaled to the zoom;
+    - town and site labels are pulled in next to their icons.
+  - `world.ts`: a populated region adds only streams 3× stronger than the world threshold, because the world's rivers are already inherited.
+- **Verification**:
+  - New tests:
+    - region decoration with an L-shaped inherited sea whose box covers the sheet (fails on the old code);
+    - anchor connectivity;
+    - inherited-ruin leads;
+    - exit labels;
+    - region-scale inheritance in `clipInherit`.
+  - `npm run check`: 236/237 pass. The failure is `outdoor.test.ts` timing out under parallel load; it passes on its own.
+  - Seeds 42 and 7 rendered across all map types. No region repeats a name from its world.
+- **Follow-up: name locks and POI adoption**:
+  - `generator.run` and `generator.reroll` pass every name used anywhere in the world, except the run's own output, as `takenNames`. A region's names are therefore locked: sibling regions and the world never repeat them, even with the same seed. Before this, both seed-42 regions had the same 24 names.
+  - Checked POI adoption: every world town and site inside a region rect is inherited exactly in place (0 m). Only their labels move, pulled in toward the shrunken icon.
+  - What was missing was the world's Place records. A region now adopts them (notes, GM notes, stocking, leads, child-map link), pointing at its own copies. The generator no longer writes a second, contradicting Place for those towns, and routes their rumours to towns that show them.

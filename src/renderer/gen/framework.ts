@@ -14,6 +14,8 @@ export interface GeneratorInput<P> {
   inheritedTerrain?: MapDoc['terrain'];
   terrainResult?: NonNullable<MapDoc["terrain"]>[string];
   climate?: { settings?: Climate; bounds: MapDoc['bounds']; transforms: Array<{ x: number; y: number; rotation: number }> };
+  /** Names used elsewhere in the world; generated names must not repeat them. */
+  takenNames?: string[];
 }
 export type Generator<P> = (input: GeneratorInput<P>) => Entity[];
 export interface GeneratorDefinition<P = any> {
@@ -46,7 +48,7 @@ export function regionConstraints(map: MapDoc, region: Point[][], excludeId: str
 export function runGenerator(map: MapDoc, options: {
   genId: string; type: string; seed: number; params: Record<string, unknown>;
   regionEntityId: string; layerId: string; theme: Theme; themeName?: string; dressingOnly?: boolean;
-  climate?: GeneratorInput<unknown>['climate'];
+  climate?: GeneratorInput<unknown>['climate']; takenNames?: string[];
 }): string[] {
   if (options.type === 'glade' && map.kind !== 'site') throw new Error('Outdoor generators need a site map.');
   if (options.type === 'city' ? map.kind !== 'settlement' : options.type === 'world' ? !['world', 'region'].includes(map.kind) : map.kind !== 'site' && map.kind !== 'interior') {
@@ -63,7 +65,12 @@ export function runGenerator(map: MapDoc, options: {
   const definition = getGenerator(options.type);
   const input: GeneratorInput<unknown> = { seed: options.seed, params: definition.params.parse(options.params),
     region: region.rings, constraints: regionConstraints(map, region.rings, region.id), theme: options.theme, grid: map.grid.size,
-    mapKind: map.kind, inheritedTerrain: map.terrain, climate: options.climate };
+    mapKind: map.kind, inheritedTerrain: map.terrain, climate: options.climate, takenNames: options.takenNames };
+  if (options.type === 'world') {
+    // Places attached to existing towns and sites travel with them, so the generator can see their notes exist.
+    const ids = new Set(input.constraints.map(e => e.id));
+    input.constraints.push(...Object.values(map.entities).filter(e => e.type === 'place' && e.origin !== 'generated' && e.entityIds.some(id => ids.has(id))));
+  }
   if(options.type==='world'&&options.params.mode==='populate'&&source?.type==='area'&&source.role==='land'&&source.usage!=='boundary')input.constraints.push(source);
   if (options.type === 'city' && region.district) input.params = definition.params.parse({...options.params,...region.district});
   if (options.type === 'city') {

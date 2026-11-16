@@ -4,7 +4,9 @@ import { StreamableHTTPClientTransport } from '@modelcontextprotocol/sdk/client/
 import { mkdirSync, writeFileSync } from 'node:fs';
 import { resolve, join } from 'node:path';
 
-const dir = resolve('visual-review/rook-current');
+// Usage: node visual-review/rook-review.mjs [outDir] [caseNameRegex]
+const dir = resolve(process.argv[2] ?? 'visual-review/rook-current');
+const only = process.argv[3] ? new RegExp(process.argv[3]) : null;
 mkdirSync(dir, { recursive: true });
 const app = await electron.launch({ args: [resolve('out/main/index.js'), `--user-data-dir=${join(dir, 'profile')}`] });
 const client = new Client({ name: 'rook-visual-review', version: '1' });
@@ -26,12 +28,17 @@ try {
     ['03-site-woodland', 'site', 'glade', { clearings: 4, density: 1, water: true }, undefined],
     ['04-site-dungeon', 'site', 'dungeon', { mode: 'dungeon', rooms: 10 }, undefined],
     ['05-interior-tavern', 'interior', 'dungeon', { mode: 'building', rooms: 5, purpose: 'tavern' }, undefined],
+    // Regions are developed from this seed's world and populated, like the app's Create location flow.
+    ['06-region-coast', 'region', 'world', { mode: 'populate' }, { x: 740000, y: 290000, w: 260000, h: 260000 }],
+    ['07-region-inland', 'region', 'world', { mode: 'populate' }, { x: 574000, y: 447000, w: 260000, h: 260000 }],
   ];
   const summaries = [];
   for (const seed of [42, 7]) {
     for (const [name, kind, type, params, bounds] of cases) {
       const id = `${name}-${seed}`;
-      await command('map.create', { id, name: id, kind, ...(bounds ? { bounds } : {}) });
+      if (only && name !== '01-world' && !only.test(name)) continue;
+      if (kind === 'region') await command('map.developArea', { parentMapId: `01-world-${seed}`, childMapId: id, name: id, kind, rect: bounds });
+      else await command('map.create', { id, name: id, kind, ...(bounds ? { bounds } : {}) });
       const start = Date.now();
       try {
         await command('generator.run', { mapId: id, genId: 'review', type, seed, params, entireMap: true, layerId: 'layer-base' });

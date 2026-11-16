@@ -171,4 +171,21 @@ describe('clipInherit', () => {
     expect(mtn?.type === 'prop' && mtn.w).toBeLessThan(100);
     expect(mtn?.type === 'prop' && mtn.w).toBeCloseTo(22, 5);
   });
+
+  it('draws inherited relief, roads and town labels at region scale', () => {
+    const parent = makeParentMap();
+    parent.kind = 'world';
+    const prop = { layerId: 'l1', origin: 'generated' as const, rev: 1, scale: 1, rotation: 0, flipX: false };
+    parent.entities.mtn = { ...prop, id: 'mtn', type: 'prop', symbolKind: 'mountain', x: 150, y: 150, w: 100, h: 100 };
+    parent.entities.town = { ...prop, id: 'town', type: 'prop', symbolKind: 'settlement', name: 'Oldtown', x: 120, y: 180, w: 50, h: 50 };
+    parent.entities.townLabel = { id: 'townLabel', type: 'label', layerId: 'l1', origin: 'generated', rev: 1, text: 'Oldtown', x: 120, y: 190, size: 16 };
+    parent.entities.road1 = { ...parent.entities.road1!, routeTier: 'road' } as MapDoc['entities'][string];
+    const inherited = clipAndInheritEntities(parent, { x: 100, y: 100, w: 100, h: 100 }, 'child-l1', undefined, 'region');
+    const find = (id: string) => inherited.find((e) => e.inheritedFrom?.entityId === id);
+    const [mtn, town, label, road] = ['mtn', 'town', 'townLabel', 'road1'].map(find);
+    expect(mtn?.type === 'prop' && mtn.w).toBeCloseTo(12, 5); // 100 × 0.1 × 1.2
+    expect(town?.type === 'prop' && town.w).toBeCloseTo(7, 5); // 50 × 0.1 × 1.4
+    expect(road?.type === 'path' && road.width).toBeCloseTo(0.64, 5); // 4 × 0.1 × 1.6
+    expect(label?.type === 'label' && label.y).toBeCloseTo(80 + 10 * 0.13, 5); // label pulled in toward its icon
+  });
 });

@@ -21,7 +21,9 @@ export function generateWorld(input: GeneratorInput<WorldParams>) {
   const terrain = buildTerrain(input);
   if (input.params.rivers) drainTerrain(terrain).forEach((next, i) => { terrain.cells[i]!.downstream = next; });
   const climate = buildClimate(terrain, input);
-  const rivers = input.params.rivers ? riverEntities(terrain, buildRivers(terrain, climate.values.map(v => v.moisture), input.params.riverThreshold), input.constraints) : [];
+  // A populated region already has the world's rivers; only its larger streams are worth adding on top.
+  const riverThreshold = input.params.riverThreshold * (input.mapKind === 'region' && input.params.mode === 'populate' ? 3 : 1);
+  const rivers = input.params.rivers ? riverEntities(terrain, buildRivers(terrain, climate.values.map(v => v.moisture), riverThreshold), input.constraints) : [];
   const box=bboxFromPoints(input.region[0]!)!,x=box.minX,y=box.minY;
   input.terrainResult={algorithmVersion:input.params.algorithmVersion,seed:input.seed,bounds:{x,y,w:box.maxX-x,h:box.maxY-y},plates:terrain.plates??[],cells:terrain.cells.map(c=>({...c.point,elevation:c.elevation,land:c.land,plate:c.plate??0,downstream:c.downstream}))};
   return [...terrainEntities(terrain).filter(e=>input.params.mode!=='populate'||e.type==='area'&&e.role==='water'), ...climate.entities, ...rivers, ...decorateWorld(terrain, climate.values, input, rivers)];

@@ -1,5 +1,6 @@
 import { expect, it } from 'vitest';
 import { rectRing } from '../../geom/fog';
+import { distanceToSegment } from '../../geom/hitTest';
 import { contains, buildTerrain } from './terrain';
 import { buildClimate } from './climate';
 import { decorateWorld } from './decoration';
@@ -151,4 +152,87 @@ it('gives each seed its own named, road-linked land with hooked adventure sites'
     return ps.reduce((t, p) => t + Math.min(...towns.map(s => Math.hypot(s.x - p.x, s.y - p.y))), 0) / ps.length;
   };
   expect(remoteness(['ruin', 'lair'])).toBeGreaterThan(remoteness(['travel']));
+});
+
+it('builds a region around inherited towns, roads and sites instead of fencing them off', () => {
+  const size = 400000, inh = { origin: 'inherited' as const, rev: 1, layerId: 'l' };
+  const roadPts = [{ x: 250000, y: 220000 }, { x: 330000, y: 240000 }, { x: size, y: 250000 }];
+  const source = { ...input(), mapKind: 'region' as const, region: [rectRing({ x: 0, y: 0, w: size, h: size })] };
+  source.constraints = [
+    // L-shaped sea: its bounding box covers the whole sheet, which used to block every placement.
+    { ...inh, id: 'sea', type: 'area', role: 'water', waterKind: 'ocean', rings: [[{ x: 0, y: 0 }, { x: size, y: 0 }, { x: size, y: 60000 }, { x: 150000, y: 60000 }, { x: 150000, y: size }, { x: 0, y: size }]] },
+    { ...inh, id: 'anchor', type: 'prop', symbolKind: 'settlement', name: 'Oldtown', x: 250000, y: 220000, w: 9000, h: 9000, scale: 1, rotation: 0, flipX: false },
+    { ...inh, id: 'anchor-label', type: 'label', text: 'Oldtown', x: 250000, y: 230000, size: 16 },
+    { ...inh, id: 'ruin', type: 'prop', symbolKind: 'ruin', name: 'Ruins of Testa', x: 330000, y: 110000, w: 7000, h: 7000, scale: 1, rotation: 0, flipX: false, gmOnly: true },
+    { ...inh, id: 'road', type: 'path', role: 'trail', routeTier: 'road', name: 'Oldtown–Farport Road', points: roadPts, width: 1200, closed: false },
+  ];
+  const terrain = buildTerrain(source), climate = buildClimate(terrain, source);
+  const out = decorateWorld(terrain, climate.values, source, []);
+  const props = out.filter((e): e is Extract<Entity, { type: 'prop' }> => e.type === 'prop');
+  const places = out.filter((e): e is Extract<Entity, { type: 'place' }> => e.type === 'place');
+  const towns = props.filter(p => p.symbolKind === 'settlement');
+
+  // The coast still fills up, with new names only.
+  expect(towns.length).toBeGreaterThanOrEqual(3);
+  expect(places.filter(p => ['Ruin', 'Lair', 'Stronghold', 'Sacred Site', 'Travel Stop'].includes(p.category)).length).toBeGreaterThanOrEqual(4);
+  expect(towns.some(t => ['Oldtown', 'Farport'].includes(t.name!))).toBe(false);
+  expect(out.some(e => e.type === 'label' && e.text === 'Oldtown')).toBe(false);
+
+  // Every new town joins the existing network (the inherited road and the town on it).
+  const all = [{ id: 'anchor', x: 250000, y: 220000 }, ...towns];
+  const parent = new Map(all.map(t => [t.id, t.id]));
+  const root = (id: string): string => (parent.get(id) === id ? id : root(parent.get(id)!));
+  const onNetwork = (p: { x: number; y: number }) => roadPts.slice(1).some((b, k) => distanceToSegment(p, roadPts[k]!, b) < size * 0.04);
+  const keyOf = (p: { x: number; y: number }) => {
+    const t = all.find(q => Math.hypot(q.x - p.x, q.y - p.y) < size * 0.04);
+    if (t) return t.id;
+    expect(onNetwork(p)).toBe(true);
+    return 'anchor';
+  };
+  for (const road of out) if (road.type === 'path' && road.name?.endsWith(' Road')) parent.set(root(keyOf(road.points[0]!)), root(keyOf(road.points.at(-1)!)));
+  for (const t of towns) expect(root(t.id)).toBe(root('anchor'));
+
+  // The inherited town gets local rumours; the inherited ruin gets two leads; leads give walking time.
+  expect(places.find(p => p.entityIds.includes('anchor'))?.rumours).toHaveLength(2);
+  const leads = [...places.flatMap(p => p.rumours ?? []), ...places.flatMap(p => (p.clueNext ? [p.clueNext] : []))];
+  expect(leads.filter(l => l.includes('Ruins of Testa')).length).toBeGreaterThanOrEqual(2);
+  expect(leads.every(l => l.includes('on foot'))).toBe(true);
+  // The road off the east edge says where it goes.
+  expect(out.some(e => e.type === 'label' && e.text === 'to Farport')).toBe(true);
+});
+
+it('locks names per region and adopts the world places of inherited towns and sites', () => {
+  const map = MapDocSchema.parse({ id: 'w', name: 'Continent', kind: 'world', bounds, grid: { size: 100, visible: false },
+    layers: [{ id: 'l', name: 'Base', visible: true, locked: false, gmOnly: false }], entities: {},
+    generators: {}, revision: 0, deleted: {}, fog: { enabled: false, revealed: [] } });
+  const store = createWorldStore(), s = () => store.getState();
+  s().loadWorld({ id: 'doc', name: 'World', formatVersion: 1, maps: [{ id: 'w', name: 'Continent', kind: 'world' }], themes: {} }, { w: map });
+  s().execute('generator.run', { mapId: 'w', genId: 'g', type: 'world', seed: 9, params: { cells: 2000 }, entireMap: true, layerId: 'l' });
+  const world = () => s().world!.maps.w!;
+  // Develop regions around two world sites, populated with the world's own seed.
+  const sites = Object.values(world().entities).filter((e): e is Extract<Entity, { type: 'prop' }> => e.type === 'prop' && ['ruin', 'lair', 'stronghold'].includes(e.symbolKind ?? ''));
+  const names = (id: string) => Object.values(s().world!.maps[id]!.entities).flatMap(e => (e.origin === 'generated' && e.type === 'prop' && e.name && e.symbolKind && !['mountain', 'hill', 'forest'].includes(e.symbolKind) ? [e.name] : []));
+  const regionIds = sites.slice(0, 2).map((site, k) => {
+    const id = `r${k}`, half = 120000;
+    s().execute('map.developArea', { parentMapId: 'w', childMapId: id, name: id, kind: 'region', rect: { x: site.x - half, y: site.y - half, w: half * 2, h: half * 2 } });
+    s().execute('generator.run', { mapId: id, genId: 'g', type: 'world', seed: 9, params: { cells: 1500, mode: 'populate' }, entireMap: true, layerId: 'layer-base' });
+    return id;
+  });
+  const [a, b] = regionIds.map(names);
+  expect(a!.length).toBeGreaterThan(3);
+  expect(b!.filter(n => a!.includes(n) || names('w').includes(n))).toEqual([]);
+  expect(a!.filter(n => names('w').includes(n))).toEqual([]);
+
+  // The world site's Place (notes, stocking, leads) comes along, pointing at the region's own copy.
+  const region = s().world!.maps.r0!;
+  const adopted = Object.values(region.entities).find((e): e is Extract<Entity, { type: 'place' }> => e.type === 'place' && e.origin === 'inherited' && e.name === sites[0]!.name);
+  const source = Object.values(world().entities).find((e): e is Extract<Entity, { type: 'place' }> => e.type === 'place' && e.name === sites[0]!.name)!;
+  expect(adopted).toMatchObject({ gmNotes: source.gmNotes, notes: source.notes });
+  expect(adopted!.entityIds.every(id => region.entities[id]?.origin === 'inherited')).toBe(true);
+  // A town with an adopted Place gets no second, generated one.
+  for (const place of Object.values(region.entities)) {
+    if (place.type !== 'place' || place.origin !== 'generated') continue;
+    expect(place.entityIds.some(id => region.entities[id]?.origin === 'inherited')).toBe(false);
+  }
+  expect(() => validateWorld(s().world!)).not.toThrow();
 });

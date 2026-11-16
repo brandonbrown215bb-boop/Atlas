@@ -11,8 +11,8 @@ const DREAD_B = ['maw', 'tooth', 'fang', 'claw', 'gut', 'hide', 'jaw', 'horn'];
 export type SiteNameKind = 'stronghold' | 'ruin' | 'lair' | 'sacred' | 'travel' | 'beacon' | 'bridge';
 
 /** Seeded, non-repeating fantasy names so every world reads as its own place. */
-export function makeNamer(seed: number) {
-  const random = mulberry32((seed ^ 0x2a4e1d) >>> 0), used = new Set<string>();
+export function makeNamer(seed: number, taken: Iterable<string> = []) {
+  const random = mulberry32((seed ^ 0x2a4e1d) >>> 0), used = new Set<string>(taken);
   const pick = <T>(list: readonly T[]) => list[Math.floor(random() * list.length)]!;
   const common = () => pick(ROOTS) + pick(PLACE_ENDS);
   const old = () => pick(OLD_A) + pick(OLD_B);
@@ -42,5 +42,6 @@ export function makeNamer(seed: number) {
     wood: () => unique(() => pick([() => `${common()} Wood`, () => `${common()} Weald`, () => `The ${old()} Wilds`])()),
     sea: () => unique(() => `THE ${pick(['SEA OF', 'DEEPS OF', 'GULF OF'])} ${old().toUpperCase()}`),
     pass: () => unique(() => pick([() => `${common()} Pass`, () => `${old()} Gap`])()),
+    river: () => unique(() => pick([() => `River ${old()}`, () => `The ${pick(ROOTS)}${pick(['brook', 'water', 'burn', 'rill'])}`])()),
   };
 }

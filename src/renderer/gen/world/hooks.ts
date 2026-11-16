@@ -72,6 +72,13 @@ export function bearing(from: Point, to: Point): string {
   return names[(Math.round(Math.atan2(to.y - from.y, to.x - from.x) / (Math.PI / 4)) + 8) % 8]!;
 }
 
+/** "14 miles (half a day on foot)"; walking pace is about 24 miles a day. */
+export function distance(from: Point, to: Point): string {
+  const miles = Math.max(2, Math.round(Math.hypot(to.x - from.x, to.y - from.y) / 1609.344));
+  const days = Math.round(miles / 24);
+  return `${miles} miles (${days < 1 ? 'half a day' : days === 1 ? 'a day' : `${days} days`} on foot)`;
+}
+
 /** Seeded hook tables; an entry repeats only once its list is used up. */
 export function makeHooks(random: () => number) {
   const used = new Set<string>();
@@ -90,12 +97,11 @@ export function makeHooks(random: () => number) {
               : band === 2 || random() < band * 0.3 ? 'Monster' : 'Empty';
       return { stockingRole, gmNotes: `Occupants: ${pick(OCCUPANTS[kind][band])}. Complication: ${pick(COMPLICATIONS)}. Reward: ${pick(REWARDS[band])}.` };
     },
-    settlement(rank: number, band: Band): string {
-      return `${rank < 2 ? 'City' : rank < 5 ? 'Town' : 'Village'} known for ${pick(TRAITS)}. Trouble: ${pick(TROUBLES)}. (${BAND_NAMES[band]})`;
+    settlement(size: 'City' | 'Town' | 'Village' | 'Hamlet', band: Band): string {
+      return `${size} known for ${pick(TRAITS)}. Trouble: ${pick(TROUBLES)}. (${BAND_NAMES[band]})`;
     },
     rumour(kind: SiteKind, name: string, from: Point, to: Point): string {
-      const miles = Math.max(2, Math.round(Math.hypot(to.x - from.x, to.y - from.y) / 1609.344));
-      return `${pick(RUMOUR_LEADS[kind])} ${name}, about ${miles} miles ${bearing(from, to)}.`;
+      return `${pick(RUMOUR_LEADS[kind])} ${name}, about ${distance(from, to)} ${bearing(from, to)}.`;
     },
   };
 }
