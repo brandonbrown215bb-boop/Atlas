@@ -84,9 +84,71 @@ it('attaches settlement labels closely with linked Place records and populates 6
   const categories = new Set(places.map((p) => p.category));
   expect(categories.has('Settlement')).toBe(true);
   expect(categories.size).toBeGreaterThanOrEqual(4);
-  const highwatch = out.find((e): e is Extract<Entity, { type: 'prop' }> => e.type === 'prop' && e.name === 'Highwatch');
-  const highwatchLabel = out.find((e): e is Extract<Entity, { type: 'label' }> => e.type === 'label' && e.text === 'Highwatch');
-  if (highwatch && highwatchLabel) {
-    expect(Math.hypot(highwatch.x - highwatchLabel.x, highwatch.y - highwatchLabel.y)).toBeLessThan(terrain.size * 0.02);
+  const town = out.find((e): e is Extract<Entity, { type: 'prop' }> => e.type === 'prop' && e.symbolKind === 'settlement')!;
+  const townLabel = out.find((e): e is Extract<Entity, { type: 'label' }> => e.type === 'label' && e.text === town.name);
+  if (townLabel) {
+    expect(Math.hypot(town.x - townLabel.x, town.y - townLabel.y)).toBeLessThan(terrain.size * 0.02);
   }
+});
+
+it('gives each seed its own named, road-linked land with hooked adventure sites', () => {
+  const world = (seed: number) => {
+    const source = { ...input(), seed, params: WorldParamsSchema.parse({ cells: 3000 }) };
+    const terrain = buildTerrain(source), climate = buildClimate(terrain, source);
+    return { terrain, out: decorateWorld(terrain, climate.values, source, []) };
+  };
+  const { terrain, out } = world(9);
+  const props = out.filter((e): e is Extract<Entity, { type: 'prop' }> => e.type === 'prop');
+  const places = out.filter((e): e is Extract<Entity, { type: 'place' }> => e.type === 'place');
+  const towns = props.filter(p => p.symbolKind === 'settlement');
+
+  // Seeded, unique names; never the old numbered fallback.
+  const names = [...props.filter(p => p.symbolKind !== 'mountain' && p.symbolKind !== 'hill' && p.symbolKind !== 'forest').map(p => p.name!), ...out.flatMap(e => (e.type === 'label' ? [e.text] : []))];
+  expect(names.some(n => /^Settlement \d+$/.test(n))).toBe(false);
+  expect(new Set(towns.map(t => t.name)).size).toBe(towns.length);
+  const otherTowns = world(10).out.flatMap(e => (e.type === 'prop' && e.symbolKind === 'settlement' ? [e.name] : []));
+  expect(otherTowns).not.toEqual(towns.map(t => t.name));
+
+  // Every settlement on a landmass is reachable by road (union-find over route endpoints).
+  const nearestTown = (p: { x: number; y: number }) => towns.reduce((m, t) => (Math.hypot(t.x - p.x, t.y - p.y) < Math.hypot(m.x - p.x, m.y - p.y) ? t : m));
+  const parent = new Map(towns.map(t => [t.id, t.id]));
+  const root = (id: string): string => (parent.get(id) === id ? id : root(parent.get(id)!));
+  for (const road of out) {
+    if (road.type !== 'path' || !road.name?.endsWith(' Road')) continue;
+    parent.set(root(nearestTown(road.points[0]!).id), root(nearestTown(road.points.at(-1)!).id));
+  }
+  const cellOf = (p: { x: number; y: number }) => terrain.cells.reduce((m, c, i) => (c.land && Math.hypot(c.point.x - p.x, c.point.y - p.y) < Math.hypot(terrain.cells[m]!.point.x - p.x, terrain.cells[m]!.point.y - p.y) ? i : m), terrain.cells.findIndex(c => c.land));
+  const mass = new Map<number, number>();
+  terrain.cells.forEach((c, i) => {
+    if (!c.land || mass.has(i)) return;
+    const stack = [i];
+    mass.set(i, i);
+    while (stack.length) for (const n of terrain.cells[stack.pop()!]!.neighbors) if (terrain.cells[n]!.land && !mass.has(n)) { mass.set(n, i); stack.push(n); }
+  });
+  for (const a of towns) for (const b of towns) {
+    if (mass.get(cellOf(a)) === mass.get(cellOf(b))) expect(root(a.id)).toBe(root(b.id));
+  }
+
+  // Ranges, not blankets.
+  expect(props.filter(p => p.symbolKind === 'mountain').length).toBeLessThan(terrain.cells.filter(c => c.land).length * 0.06);
+
+  // Sites carry GM hooks, and every ruin and lair has at least two leads pointing at it.
+  const sites = places.filter(p => ['Stronghold', 'Ruin', 'Lair', 'Sacred Site', 'Travel Stop'].includes(p.category) && !p.name.endsWith('Bridge'));
+  expect(sites.length).toBeGreaterThanOrEqual(10);
+  for (const s of sites) {
+    expect(s.stockingRole).toBeDefined();
+    expect(s.gmNotes).toMatch(/Occupants: .+ Complication: .+ Reward: /);
+  }
+  const leads = [...places.flatMap(p => p.rumours ?? []), ...places.flatMap(p => (p.clueNext ? [p.clueNext] : []))];
+  for (const s of sites.filter(p => p.category === 'Ruin' || p.category === 'Lair')) {
+    expect(leads.filter(l => l.includes(s.name)).length).toBeGreaterThanOrEqual(2);
+  }
+  for (const t of places.filter(p => p.category === 'Settlement')) expect(t.rumours?.length).toBe(2);
+
+  // Danger lives away from civilisation: ruins and lairs sit farther out than travel stops.
+  const remoteness = (cat: string[]) => {
+    const ps = props.filter(p => cat.includes(p.symbolKind ?? ''));
+    return ps.reduce((t, p) => t + Math.min(...towns.map(s => Math.hypot(s.x - p.x, s.y - p.y))), 0) / ps.length;
+  };
+  expect(remoteness(['ruin', 'lair'])).toBeGreaterThan(remoteness(['travel']));
 });

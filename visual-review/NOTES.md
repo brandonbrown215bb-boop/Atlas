@@ -101,3 +101,22 @@
   - Added room labels (`1`, `2`, `3`... in `dungeon` mode; `Taproom`, `Pantry`, `Guest Room`, `Shrine`, `Guardroom` in `building` mode) in `generateDungeon` (`src/renderer/gen/dungeon/layout.ts`).
   - Prevented orphan bedroom chairs without tables in `dressing.ts`, and spaced `Grand Temple` at least 100m from `Market Square` and `High Keep` in `city.ts` after checking `round-9-seed7/02-settlement-city.png`.
 - **Verification**: `npm run check` (50/50 test files, 203/203 tests), `npm run build`, and MCP `render_png` across both seed `42` (`round-9/`) and seed `7` (`round-9-seed7/`) verified.
+
+## Round 10 (`round-10-adventure/`) — World maps that invite adventure
+- **Goal**: world maps a party wants to explore: distinct names, crossable ranges, roads everywhere, dangerous sites in the wilds, and GM hooks that link them.
+- **Changes** (`src/renderer/gen/world/`):
+  - New `names.ts`: seeded, non-repeating syllable names for towns, sites, ranges, woods, passes and seas. The old fixed lists ("Alderford", "Ironspine Peaks", "THE AZURE DEEP", "Settlement 9") are gone. Names follow the world seed only, so a restyle keeps them.
+  - Mountains need real highland (`height > .28`, or `> .22` with slope `> .022`; chance `.36 → .22`). Seed 42 dropped from 108 to 71 mountains, seed 7 from 77 to 34. Roads routed through high ground leave gaps that are labelled as passes, and watchtowers prefer those passes.
+  - Roads form a spanning tree over every settlement on each landmass, plus 2 short loops. Routes touching the two cities are `road` tier. Travel stops and strongholds get spur tracks; ruins, lairs and shrines stay off-road.
+  - Site count scales with settlements (12 by default, up from 5). Ruins and lairs are weighted toward places far from towns and roads. The danger band is measured from the nearest settlement, not the capital.
+  - New `hooks.ts` (GM layer):
+    - each site gets `stockingRole` and occupant/complication/reward `gmNotes`, scaled by danger;
+    - clue chains (`clueNext`) lead outward;
+    - each town gets a trait, a trouble and 2 directional rumours;
+    - every ruin and lair has at least 2 leads.
+  - Sea label is placed at the open-water cell farthest from any coast.
+- **Verification**:
+  - New decoration test covers seeded unique names, road connectivity per landmass, the mountain cap, hooks on every site, at least 2 leads per ruin and lair, and the remoteness ordering.
+  - `npm run check` passes, apart from one existing dungeon layout test that times out under parallel load and passes on its own.
+  - `npm run build` passes.
+  - Seeds 42 and 7 were rendered via `rook-review.mjs` and checked by eye.

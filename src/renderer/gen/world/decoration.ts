@@ -5,6 +5,8 @@ import type { GeneratorInput } from '../framework';
 import { mulberry32 } from '../rng';
 import type { buildClimate } from './climate';
 import { contains, type Terrain } from './terrain';
+import { makeNamer } from './names';
+import { BAND_NAMES, makeHooks, SITE_SUMMARY, type Band, type SiteKind } from './hooks';
 
 type LabelBox = { minX: number; maxX: number; minY: number; maxY: number };
 
@@ -96,6 +98,8 @@ type ClimateValues = ReturnType<typeof buildClimate>['values'];
 /** Symbols use metres at continent scale. Seeded weighted sampling gives clusters and gaps. */
 export function decorateWorld(terrain: Terrain, climate: ClimateValues, input: GeneratorInput<DecorationParams>, rivers: Entity[]): Entity[] {
   const random = mulberry32((input.seed ^ 0x651fea ^ (((input.params.renderSeed ?? 0) * 2654435761) >>> 0)) >>> 0), result: Entity[] = [];
+  // Names and GM hooks follow the world seed only, so a restyle keeps them.
+  const namer = makeNamer(input.seed), hooks = makeHooks(mulberry32((input.seed ^ 0x9e3779b9) >>> 0));
   const bounds = input.constraints.flatMap(e => {
     if (e.type === 'image') return [];
     if (e.type === 'area' && (e.role === 'land' || e.role.startsWith('biome:'))) return [];
@@ -187,15 +191,12 @@ export function decorateWorld(terrain: Terrain, climate: ClimateValues, input: G
     })
     .sort((a, b) => a.score - b.score);
 
-  const townNames = ['Alderford', 'Highwatch', 'Oakhaven', 'Ravenhold', 'Briarwood', 'Saltmere', 'Cinderfall', 'Westmarch'];
   for (const candidate of ranked) {
     if (result.length >= input.params.settlements) break;
     const isMajor = result.length < 2;
     const size = isMajor ? candidate.size * 1.45 : candidate.size;
     if (safe(candidate.point, size * 0.6, size * 0.6)) {
-      const idx = result.length;
-      const name = idx < townNames.length ? townNames[idx]! : `Settlement ${idx + 1}`;
-      result.push(symbol('settlement', candidate.point, size, name, true));
+      result.push(symbol('settlement', candidate.point, size, namer.town(), true));
     }
   }
 
@@ -203,122 +204,240 @@ export function decorateWorld(terrain: Terrain, climate: ClimateValues, input: G
   const settlementProps = result.filter(
     (e): e is Extract<Entity, { type: 'prop' }> => e.type === 'prop' && e.symbolKind === 'settlement',
   );
-  if (settlementProps.length >= 2) {
-    const nearestLandIdx = (pt: Point): number => {
-      let best = -1;
-      let bestD = Infinity;
-      for (let idx = 0; idx < terrain.cells.length; idx++) {
-        const c = terrain.cells[idx]!;
-        if (!c.land) continue;
-        const d = Math.hypot(c.point.x - pt.x, c.point.y - pt.y);
-        if (d < bestD) { bestD = d; best = idx; }
-      }
-      return best;
-    };
-    const segOnLand = (a: Point, b: Point): boolean => {
-      const dist = Math.hypot(b.x - a.x, b.y - a.y);
-      const steps = Math.max(2, Math.ceil(dist / (terrain.size * 0.015)));
-      for (let s = 1; s < steps; s++) {
-        const t = s / steps;
-        const p = { x: a.x + (b.x - a.x) * t, y: a.y + (b.y - a.y) * t };
-        if (!terrain.land.some((r) => contains(r, p))) return false;
-      }
-      return true;
-    };
-    const routeOverland = (fromPt: Point, toPt: Point): Point[] | null => {
-      const start = nearestLandIdx(fromPt);
-      const goal = nearestLandIdx(toPt);
-      if (start < 0 || goal < 0 || start === goal) return null;
-      const goalPt = terrain.cells[goal]!.point;
-      const distMap = new Map<number, number>([[start, 0]]);
-      const prev = new Map<number, number>();
-      const queue: Array<{ idx: number; f: number }> = [{ idx: start, f: Math.hypot(terrain.cells[start]!.point.x - goalPt.x, terrain.cells[start]!.point.y - goalPt.y) }];
-      let steps = 0;
-      while (queue.length && steps++ < 4500) {
-        queue.sort((a, b) => a.f - b.f);
-        const cur = queue.shift()!;
-        if (cur.idx === goal) break;
-        const curCell = terrain.cells[cur.idx]!;
-        const gCur = distMap.get(cur.idx)!;
-        for (const n of curCell.neighbors) {
-          const nc = terrain.cells[n]!;
-          if (!nc.land || !segOnLand(curCell.point, nc.point)) continue;
-          const inConstraint = bounds.some((b) => nc.point.x >= b.minX && nc.point.x <= b.maxX && nc.point.y >= b.minY && nc.point.y <= b.maxY);
-          if (inConstraint) continue;
-          const segLen = Math.hypot(nc.point.x - curCell.point.x, nc.point.y - curCell.point.y);
-          const climb = Math.max(0, nc.elevation - input.params.seaLevel - 0.18);
-          const stepCost = segLen * (1 + climb * 14);
-          const nextG = gCur + stepCost;
-          if (nextG < (distMap.get(n) ?? Infinity)) {
-            distMap.set(n, nextG);
-            prev.set(n, cur.idx);
-            const h = Math.hypot(nc.point.x - goalPt.x, nc.point.y - goalPt.y);
-            queue.push({ idx: n, f: nextG + h });
-          }
-        }
-      }
-      if (!prev.has(goal)) return null;
-      const pts: Point[] = [];
-      let curr: number | undefined = goal;
-      while (curr !== undefined) {
-        pts.push(terrain.cells[curr]!.point);
-        curr = prev.get(curr);
-      }
-      pts.reverse();
-      if (pts.length < 3) return pts;
-      // Corner-smooth once into graceful winding caravan curves without crossing bays or coves.
-      const smooth: Point[] = [pts[0]!];
-      for (let i = 1; i < pts.length - 1; i++) {
-        const p0 = pts[i - 1]!, p1 = pts[i]!, p2 = pts[i + 1]!;
-        const c1 = { x: p0.x * 0.25 + p1.x * 0.75, y: p0.y * 0.25 + p1.y * 0.75 };
-        const c2 = { x: p1.x * 0.75 + p2.x * 0.25, y: p1.y * 0.75 + p2.y * 0.25 };
-        if (segOnLand(smooth[smooth.length - 1]!, c1) && segOnLand(c1, c2) && segOnLand(c2, p2)) {
-          smooth.push(c1, c2);
-        } else {
-          smooth.push(p1);
-        }
-      }
-      smooth.push(pts.at(-1)!);
-      return smooth;
-    };
-
-    const routedPairs = new Set<string>();
-    const maxRouteSpan = terrain.size * 0.42;
-    for (let i = 0; i < Math.min(8, settlementProps.length); i++) {
-      const a = settlementProps[i]!;
-      const neighbors = settlementProps
-        .slice(0, 8)
-        .filter((b, j) => j !== i && Math.hypot(a.x - b.x, a.y - b.y) < maxRouteSpan)
-        .sort((u, v) => Math.hypot(u.x - a.x, u.y - a.y) - Math.hypot(v.x - a.x, v.y - a.y))
-        .slice(0, 2);
-      for (const b of neighbors) {
-        const key = a.id < b.id ? `${a.id}|${b.id}` : `${b.id}|${a.id}`;
-        if (routedPairs.has(key)) continue;
-        routedPairs.add(key);
-        const pts = routeOverland(a, b);
-        if (!pts || pts.length < 2) continue;
-        const w = terrain.size * 0.0022;
-        result.push({
-          id: `king-road-${routedPairs.size}`,
-          type: 'path',
-          role: 'trail',
-          routeTier: 'track',
-          name: 'Trade Route',
-          layerId: 'base',
-          origin: 'generated',
-          rev: 0,
-          points: pts,
-          width: w,
-          closed: false,
-        });
-        for (let k = 1; k < pts.length; k++) {
-          lines.push({ a: pts[k - 1]!, b: pts[k]!, width: w * 1.6 });
+  const nearestLandIdx = (pt: Point): number => {
+    let best = -1;
+    let bestD = Infinity;
+    for (let idx = 0; idx < terrain.cells.length; idx++) {
+      const c = terrain.cells[idx]!;
+      if (!c.land) continue;
+      const d = Math.hypot(c.point.x - pt.x, c.point.y - pt.y);
+      if (d < bestD) { bestD = d; best = idx; }
+    }
+    return best;
+  };
+  const segOnLand = (a: Point, b: Point): boolean => {
+    const dist = Math.hypot(b.x - a.x, b.y - a.y);
+    const steps = Math.max(2, Math.ceil(dist / (terrain.size * 0.015)));
+    for (let s = 1; s < steps; s++) {
+      const t = s / steps;
+      const p = { x: a.x + (b.x - a.x) * t, y: a.y + (b.y - a.y) * t };
+      if (!terrain.land.some((r) => contains(r, p))) return false;
+    }
+    return true;
+  };
+  const peak = { cell: -1 }; // highest cell on the last routed path
+  const routeOverland = (fromPt: Point, toPt: Point): Point[] | null => {
+    peak.cell = -1;
+    const start = nearestLandIdx(fromPt);
+    const goal = nearestLandIdx(toPt);
+    if (start < 0 || goal < 0 || start === goal) return null;
+    const goalPt = terrain.cells[goal]!.point;
+    const distMap = new Map<number, number>([[start, 0]]);
+    const prev = new Map<number, number>();
+    const queue: Array<{ idx: number; f: number }> = [{ idx: start, f: Math.hypot(terrain.cells[start]!.point.x - goalPt.x, terrain.cells[start]!.point.y - goalPt.y) }];
+    let steps = 0;
+    while (queue.length && steps++ < 4500) {
+      queue.sort((a, b) => a.f - b.f);
+      const cur = queue.shift()!;
+      if (cur.idx === goal) break;
+      const curCell = terrain.cells[cur.idx]!;
+      const gCur = distMap.get(cur.idx)!;
+      for (const n of curCell.neighbors) {
+        const nc = terrain.cells[n]!;
+        if (!nc.land || !segOnLand(curCell.point, nc.point)) continue;
+        const inConstraint = bounds.some((b) => nc.point.x >= b.minX && nc.point.x <= b.maxX && nc.point.y >= b.minY && nc.point.y <= b.maxY);
+        if (inConstraint) continue;
+        const segLen = Math.hypot(nc.point.x - curCell.point.x, nc.point.y - curCell.point.y);
+        const climb = Math.max(0, nc.elevation - input.params.seaLevel - 0.18);
+        const stepCost = segLen * (1 + climb * 14);
+        const nextG = gCur + stepCost;
+        if (nextG < (distMap.get(n) ?? Infinity)) {
+          distMap.set(n, nextG);
+          prev.set(n, cur.idx);
+          const h = Math.hypot(nc.point.x - goalPt.x, nc.point.y - goalPt.y);
+          queue.push({ idx: n, f: nextG + h });
         }
       }
     }
+    if (!prev.has(goal)) return null;
+    const pts: Point[] = [];
+    let curr: number | undefined = goal;
+    while (curr !== undefined) {
+      pts.push(terrain.cells[curr]!.point);
+      if (peak.cell < 0 || terrain.cells[curr]!.elevation > terrain.cells[peak.cell]!.elevation) peak.cell = curr;
+      curr = prev.get(curr);
+    }
+    pts.reverse();
+    if (pts.length < 3) return pts;
+    // Corner-smooth once into graceful winding caravan curves without crossing bays or coves.
+    const smooth: Point[] = [pts[0]!];
+    for (let i = 1; i < pts.length - 1; i++) {
+      const p0 = pts[i - 1]!, p1 = pts[i]!, p2 = pts[i + 1]!;
+      const c1 = { x: p0.x * 0.25 + p1.x * 0.75, y: p0.y * 0.25 + p1.y * 0.75 };
+      const c2 = { x: p1.x * 0.75 + p2.x * 0.25, y: p1.y * 0.75 + p2.y * 0.25 };
+      if (segOnLand(smooth[smooth.length - 1]!, c1) && segOnLand(c1, c2) && segOnLand(c2, p2)) {
+        smooth.push(c1, c2);
+      } else {
+        smooth.push(p1);
+      }
+    }
+    smooth.push(pts.at(-1)!);
+    return smooth;
+  };
+
+  // Landmass ids so the road tree never tries to cross open sea.
+  const landmass = new Int32Array(terrain.cells.length).fill(-1);
+  terrain.cells.forEach((c, i) => {
+    if (!c.land || landmass[i]! >= 0) return;
+    const stack = [i];
+    landmass[i] = i;
+    while (stack.length) {
+      for (const n of terrain.cells[stack.pop()!]!.neighbors) {
+        if (terrain.cells[n]!.land && landmass[n]! < 0) { landmass[n] = i; stack.push(n); }
+      }
+    }
+  });
+  const massOf = (p: Point) => landmass[nearestLandIdx(p)] ?? -1;
+  const passes: Point[] = [];
+  let roadCount = 0;
+  const addRoad = (from: Point, to: Point, name: string, tier: 'road' | 'track') => {
+    const pts = routeOverland(from, to);
+    if (!pts || pts.length < 2) return;
+    const w = terrain.size * (tier === 'road' ? 0.003 : 0.0022);
+    result.push({ id: `king-road-${++roadCount}`, type: 'path', role: 'trail', routeTier: tier, name, layerId: 'base', origin: 'generated', rev: 0, points: pts, width: w, closed: false });
+    for (let k = 1; k < pts.length; k++) lines.push({ a: pts[k - 1]!, b: pts[k]!, width: w * 1.6 });
+    if (peak.cell >= 0 && terrain.cells[peak.cell]!.elevation - input.params.seaLevel > 0.2) passes.push(terrain.cells[peak.cell]!.point);
+  };
+
+  // Spanning tree per landmass so every settlement is reachable, plus a couple of short loops.
+  const gap = (i: number, j: number) => Math.hypot(settlementProps[i]!.x - settlementProps[j]!.x, settlementProps[i]!.y - settlementProps[j]!.y);
+  const masses = settlementProps.map(massOf);
+  const edges: Array<[number, number]> = [], inTree = new Set<number>();
+  for (let s = 0; s < settlementProps.length; s++) {
+    if (inTree.has(s)) continue;
+    inTree.add(s);
+    for (;;) {
+      let best: [number, number] | null = null;
+      for (const i of inTree) {
+        for (let j = 0; j < settlementProps.length; j++) {
+          if (!inTree.has(j) && masses[j] === masses[i] && (!best || gap(i, j) < gap(...best))) best = [i, j];
+        }
+      }
+      if (!best) break;
+      inTree.add(best[1]);
+      edges.push(best);
+    }
+  }
+  const linked = new Set(edges.map(([i, j]) => `${Math.min(i, j)}|${Math.max(i, j)}`));
+  const loops = settlementProps.flatMap((_, i) => settlementProps.map((__, j) => [i, j] as [number, number]))
+    .filter(([i, j]) => i < j && masses[i] === masses[j] && !linked.has(`${i}|${j}`) && gap(i, j) < terrain.size * 0.25)
+    .sort((a, b) => gap(...a) - gap(...b))
+    .slice(0, 2);
+  for (const [i, j] of [...edges, ...loops]) {
+    const a = settlementProps[i]!, b = settlementProps[j]!;
+    addRoad(a, b, `${a.name}–${b.name} Road`, i < 2 || j < 2 ? 'road' : 'track');
   }
 
   if (!input.params.density) return result;
+
+  // Seed landmark obstacle list with all settlement icons before placing any POIs or labels
+  const landmarkIconBoxes: LabelBox[] = [
+    compassKeepoutBox(0, 0, terrain.size, terrain.size),
+    ...settlementProps.map((s) => propIconBox(s, terrain.size)),
+  ];
+
+  // Remoteness from settlements and roads drives both site placement and danger.
+  const roadPts = result.flatMap(e => (e.type === 'path' && e.id.startsWith('king-road-') ? e.points : []));
+  const nearest = (p: Point, pts: Point[]) => pts.reduce((m, q) => Math.min(m, Math.hypot(p.x - q.x, p.y - q.y)), Infinity);
+  const bandOf = (p: Point): Band => {
+    if (!settlementProps.length) return 1;
+    // A settlement is judged by its nearest neighbour, so isolated villages read as frontier.
+    const d = nearest(p, settlementProps.filter(s => s !== p)) / terrain.size;
+    return d < 0.07 ? 0 : d < 0.16 ? 1 : 2;
+  };
+  const dangerBandFor = (p: Point) => BAND_NAMES[bandOf(p)];
+
+  // Populate the 5 POI families (strongholds, ruins, lairs, sacred sites, travel stops)
+  const isRegion = input.mapKind === 'region';
+  const siteTotal = Math.max(5, input.params.settlements);
+  const countFor = (share: number, regionCount: number) => (isRegion ? regionCount : Math.max(1, Math.round(siteTotal * share)));
+  const remote = (p: Point) => Math.min(2.5, Math.min(nearest(p, settlementProps), nearest(p, roadPts)) / (terrain.size * 0.12));
+  const poiSpecs: Array<{
+    role: SiteKind;
+    category: string;
+    gmOnly: boolean;
+    count: number;
+    score: (c: Terrain['cells'][number], i: number) => number;
+  }> = [
+    {
+      role: 'stronghold', category: 'Stronghold', gmOnly: false, count: countFor(0.2, 2),
+      // Watchtowers favour high ground, rivers and above all mountain passes.
+      score: (c) => (c.elevation - input.params.seaLevel) * 2 + (lines.some(s => distanceToSegment(c.point, s.a, s.b) < riverDist * 1.5) ? 0.5 : 0) + (nearest(c.point, passes) < terrain.size * 0.04 ? 3 : 0),
+    },
+    {
+      role: 'ruin', category: 'Ruin', gmOnly: true, count: countFor(0.25, 3),
+      score: (c, i) => ((c.elevation - input.params.seaLevel) + (1 - climate[i]!.moisture) * 0.4) * (0.3 + remote(c.point)),
+    },
+    {
+      role: 'lair', category: 'Lair', gmOnly: true, count: countFor(0.25, 2),
+      score: (c) => (0.15 + Math.max(0, c.elevation - input.params.seaLevel - 0.08) * 3) * (0.3 + remote(c.point)),
+    },
+    {
+      role: 'sacred', category: 'Sacred Site', gmOnly: false, count: countFor(0.15, 2),
+      score: (c, i) => climate[i]!.moisture * 1.2 * (0.6 + remote(c.point) * 0.4),
+    },
+    {
+      role: 'travel', category: 'Travel Stop', gmOnly: false, count: countFor(0.15, 3),
+      score: (c) => (nearest(c.point, roadPts) < riverDist ? 3 : lines.some(s => distanceToSegment(c.point, s.a, s.b) < riverDist * 0.9) ? 1 : 0.2),
+    },
+  ];
+  const minPoiGap = terrain.size * 0.085;
+  const landOnly = terrain.cells.map((c, i) => ({ c, i })).filter(({ c }) => c.land);
+  const placedPois: Array<{ prop: Extract<Entity, { type: 'prop' }>; category: string; gmOnly: boolean; role: SiteKind }> = [];
+  for (const spec of poiSpecs) {
+    const candidates = [...landOnly]
+      .map(({ c, i }) => ({ c, weight: Math.max(0.05, spec.score(c, i)) * (0.6 + random() * 0.8) }))
+      .sort((a, b) => b.weight - a.weight);
+    let placed = 0;
+    for (const cand of candidates) {
+      if (placed >= spec.count) break;
+      const size = terrain.size * (isRegion ? 0.018 : 0.011);
+      const { x, y } = cand.c.point, edge = terrain.size * 0.04;
+      if (x < edge || y < edge || x > terrain.size - edge || y > terrain.size - edge) continue;
+      if (!safe(cand.c.point, size * 0.9, size * 1.4)) continue;
+      if (result.some(e => e.type === 'prop' && POI_SYMBOL_KINDS.has(e.symbolKind ?? '') && Math.hypot(cand.c.point.x - e.x, cand.c.point.y - e.y) < minPoiGap)) continue;
+      const prop: Extract<Entity, { type: 'prop' }> = {
+        id: `${spec.role}-${placed}`,
+        type: 'prop',
+        layerId: 'base',
+        origin: 'generated',
+        rev: 0,
+        name: namer.site(spec.role),
+        symbolKind: spec.role,
+        builtin: spec.role,
+        x: cand.c.point.x,
+        y: cand.c.point.y,
+        w: size,
+        h: size,
+        scale: 1,
+        rotation: 0,
+        flipX: false,
+        ...(spec.gmOnly ? { gmOnly: true } : {}),
+      };
+      result.push(prop);
+      landmarkIconBoxes.push(propIconBox(prop, terrain.size));
+      placedPois.push({ prop, category: spec.category, gmOnly: spec.gmOnly, role: spec.role });
+      placed++;
+    }
+  }
+
+  // Waystations and forts sit on the network; ruins, lairs and shrines stay off-road on purpose.
+  for (const { prop, role } of placedPois) {
+    if (role !== 'travel' && role !== 'stronghold' || !roadPts.length) continue;
+    const to = roadPts.reduce((m, q) => (Math.hypot(prop.x - q.x, prop.y - q.y) < Math.hypot(prop.x - m.x, prop.y - m.y) ? q : m));
+    const d = Math.hypot(prop.x - to.x, prop.y - to.y);
+    if (d > terrain.size * 0.012 && d < terrain.size * 0.2) addRoad(prop, to, `${prop.name} Track`, 'track');
+  }
 
   const manualBiomes = input.constraints.filter(e => e.type === 'area' && e.role.startsWith('biome:'));
   const relief = terrain.cells.map(c =>
@@ -342,7 +461,8 @@ export function decorateWorld(terrain: Terrain, climate: ClimateValues, input: G
     const isPlainsBiome = /grass|savanna|steppe|plain|tundra/i.test(biome);
     const nearRiver = lines.some(s => distanceToSegment(c.point, s.a, s.b) < riverDist * 0.75);
     const isForest = isForestBiome || isMarshBiome || (nearRiver && climate[i]!.moisture > 0.34 && height < 0.16) || (isPlainsBiome && random() < 0.18);
-    const isMountain = height > 0.18 && (height > 0.21 || slope > 0.016);
+    // Only true highlands become peaks, so ranges read as spines with valleys and passes between them.
+    const isMountain = height > 0.28 || (height > 0.22 && slope > 0.022);
     const nearMountain = result.some(e => e.type === 'prop' && e.symbolKind === 'mountain' && Math.hypot(c.point.x - e.x, c.point.y - e.y) < terrain.size * 0.08);
     const isHill = !isMountain && !isForest && ((height > 0.08 && nearMountain) || (height > 0.12 && slope > 0.015) || (isDesertBiome && height > 0.02));
 
@@ -350,7 +470,7 @@ export function decorateWorld(terrain: Terrain, climate: ClimateValues, input: G
     if (!role) continue;
 
     const chance = role === 'mountain'
-      ? 0.36 * input.params.density
+      ? 0.22 * input.params.density
       : role === 'forest'
         ? (isMarshBiome ? 0.11 : isPlainsBiome && !isForestBiome ? 0.045 : 0.09 + climate[i]!.moisture * 0.09) * input.params.density
         : (nearMountain ? 0.22 : isDesertBiome ? 0.06 : 0.12) * input.params.density;
@@ -377,102 +497,6 @@ export function decorateWorld(terrain: Terrain, climate: ClimateValues, input: G
           result.push(symbol(role, subPt, subSize, reliefName));
         }
       }
-    }
-  }
-
-  // Seed landmark obstacle list with all settlement icons before placing any POIs or labels
-  const landmarkIconBoxes: LabelBox[] = [
-    compassKeepoutBox(0, 0, terrain.size, terrain.size),
-    ...settlementProps.map((s) => propIconBox(s, terrain.size)),
-  ];
-
-  // Populate the remaining 5 POI families (strongholds, ruins, lairs, sacred sites, travel stops)
-  const isRegion = input.mapKind === 'region';
-  const poiSpecs: Array<{
-    role: 'stronghold' | 'ruin' | 'lair' | 'sacred' | 'travel';
-    category: string;
-    names: string[];
-    hook: string;
-    gmOnly: boolean;
-    count: number;
-    score: (c: Terrain['cells'][number], i: number) => number;
-  }> = [
-    {
-      role: 'stronghold', category: 'Stronghold',
-      names: ['Blackspire Watch', 'Greywall Keep', 'Redoubt of the Ford', 'Stonehelm Tower'],
-      hook: 'Fortified watchpost guarding nearby approaches.', gmOnly: false, count: isRegion ? 2 : 1,
-      score: (c) => (c.elevation - input.params.seaLevel) * 2 + (lines.some(s => distanceToSegment(c.point, s.a, s.b) < riverDist * 1.5) ? 0.5 : 0),
-    },
-    {
-      role: 'ruin', category: 'Ruin',
-      names: ['Sunken Barrow', 'Old Ashford', 'Barrow of Kings', 'Abandoned Shafts'],
-      hook: 'Ancient stonework and forgotten vaults beneath the turf.', gmOnly: true, count: isRegion ? 3 : 1,
-      score: (c, i) => (c.elevation - input.params.seaLevel) + (1 - climate[i]!.moisture) * 0.4,
-    },
-    {
-      role: 'lair', category: 'Lair',
-      names: ['Wyrmtooth Cavern', 'Hollow Crag', 'Dusk Den', 'Mossjaw Cave'],
-      hook: 'Dark cavern mouth used as a beast or monster lair.', gmOnly: true, count: isRegion ? 2 : 1,
-      score: (c) => Math.max(0, c.elevation - input.params.seaLevel - 0.08) * 3,
-    },
-    {
-      role: 'sacred', category: 'Sacred Site',
-      names: ['Whispering Stones', 'St. Aldric Shrine', 'Moonwell Abbey', 'Oakheart Altar'],
-      hook: 'Quiet sanctuary or standing stones revered by locals.', gmOnly: false, count: isRegion ? 2 : 1,
-      score: (_c, i) => climate[i]!.moisture * 1.2,
-    },
-    {
-      role: 'travel', category: 'Travel Stop',
-      names: ['Crossroads Inn', 'Old Stone Bridge', 'Ferryman Landing', 'Timber Mill'],
-      hook: 'Waystation, crossing, or working camp for travelers.', gmOnly: false, count: isRegion ? 3 : 1,
-      score: (c) => (lines.some(s => distanceToSegment(c.point, s.a, s.b) < riverDist * 0.9) ? 2.5 : 0.2),
-    },
-  ];
-  const minPoiGap = terrain.size * 0.085;
-  const landOnly = terrain.cells.map((c, i) => ({ c, i })).filter(({ c }) => c.land);
-  const placedPois: Array<{ prop: Extract<Entity, { type: 'prop' }>; category: string; hook: string; gmOnly: boolean; role: string }> = [];
-  for (const spec of poiSpecs) {
-    const candidates = [...landOnly]
-      .map(({ c, i }) => ({ c, weight: Math.max(0.05, spec.score(c, i)) * (0.6 + random() * 0.8) }))
-      .sort((a, b) => b.weight - a.weight);
-    let placed = 0;
-    for (const cand of candidates) {
-      if (placed >= spec.count) break;
-      const size = terrain.size * (isRegion ? 0.018 : 0.011);
-      if (!safe(cand.c.point, size * 0.9, size * 1.4)) continue;
-      if (
-        result.some(
-          (e) =>
-            e.type === 'prop' &&
-            POI_SYMBOL_KINDS.has(e.symbolKind ?? '') &&
-            Math.hypot(cand.c.point.x - e.x, cand.c.point.y - e.y) < minPoiGap,
-        )
-      ) {
-        continue;
-      }
-      const name = spec.names[placed % spec.names.length]!;
-      const prop: Extract<Entity, { type: 'prop' }> = {
-        id: `${spec.role}-${placed}`,
-        type: 'prop',
-        layerId: 'base',
-        origin: 'generated',
-        rev: 0,
-        name,
-        symbolKind: spec.role,
-        builtin: spec.role,
-        x: cand.c.point.x,
-        y: cand.c.point.y,
-        w: size,
-        h: size,
-        scale: 1,
-        rotation: 0,
-        flipX: false,
-        ...(spec.gmOnly ? { gmOnly: true } : {}),
-      };
-      result.push(prop);
-      landmarkIconBoxes.push(propIconBox(prop, terrain.size));
-      placedPois.push({ prop, category: spec.category, hook: spec.hook, gmOnly: spec.gmOnly, role: spec.role });
-      placed++;
     }
   }
 
@@ -535,12 +559,6 @@ export function decorateWorld(terrain: Terrain, climate: ClimateValues, input: G
   };
 
   const mainHub = settlementProps[0];
-  const dangerBandFor = (pt: Point) => {
-    if (!mainHub) return 'Borderland';
-    const d = Math.hypot(pt.x - mainHub.x, pt.y - mainHub.y);
-    return d < terrain.size * 0.2 ? 'Heartland (Low Risk)' : d < terrain.size * 0.45 ? 'Borderland (Patrolled Passes)' : 'Frontier Wilds (High Risk)';
-  };
-  const primaryDanger = placedPois.find((p) => p.role === 'ruin' || p.role === 'lair')?.prop;
 
   // Road-river crossing bridges & situational coastal lighthouse hooks (respecting manual constraints)
   const riverSegs = rivers.flatMap((e) =>
@@ -577,14 +595,14 @@ export function decorateWorld(terrain: Terrain, climate: ClimateValues, input: G
         const sz = terrain.size * 0.0085;
         if (!safeCrossing(hit, sz)) continue;
         const ang = Math.atan2(road.points[i]!.y - road.points[i - 1]!.y, road.points[i]!.x - road.points[i - 1]!.x);
-        const fordId = `ford-${fordCount++}`;
+        const fordId = `ford-${fordCount++}`, bridgeName = namer.site('bridge');
         result.push({
           id: fordId,
           type: 'prop',
           layerId: 'base',
           origin: 'generated',
           rev: 0,
-          name: 'Stone River Bridge',
+          name: bridgeName,
           builtin: 'bridge',
           x: hit.x,
           y: hit.y,
@@ -600,9 +618,9 @@ export function decorateWorld(terrain: Terrain, climate: ClimateValues, input: G
           layerId: 'base',
           origin: 'generated',
           rev: 0,
-          name: `Stone Bridge Crossing ${fordCount}`,
+          name: bridgeName,
           category: 'Travel Stop',
-          notes: `${dangerBandFor(hit)} · Guarded stone bridge spanning the main trade road.`,
+          notes: `${dangerBandFor(hit)} · Guarded stone bridge on the ${road.name ?? 'road'}.`,
           gmNotes: 'Toll house and ferryman gossip track passing caravans.',
           entityIds: [fordId],
         });
@@ -618,13 +636,14 @@ export function decorateWorld(terrain: Terrain, climate: ClimateValues, input: G
   if (cliffCape) {
     const lSize = terrain.size * 0.011;
     if (safe(cliffCape.c.point, lSize, lSize * 1.4) && !result.some((e) => e.type === 'prop' && POI_SYMBOL_KINDS.has(e.symbolKind ?? '') && Math.hypot(e.x - cliffCape.c.point.x, e.y - cliffCape.c.point.y) < minPoiGap)) {
+      const beaconName = namer.site('beacon');
       const beacon: Extract<Entity, { type: 'prop' }> = {
         id: 'lighthouse-0',
         type: 'prop',
         layerId: 'base',
         origin: 'generated',
         rev: 0,
-        name: 'Seaward Beacon',
+        name: beaconName,
         symbolKind: 'sacred',
         builtin: 'sacred',
         x: cliffCape.c.point.x,
@@ -643,7 +662,7 @@ export function decorateWorld(terrain: Terrain, climate: ClimateValues, input: G
         layerId: 'base',
         origin: 'generated',
         rev: 0,
-        name: 'Seaward Beacon',
+        name: beaconName,
         category: 'Landmark',
         notes: `${dangerBandFor(beacon)} · High stone watch-fire warning ships off rocky shoals.`,
         gmNotes: '',
@@ -676,22 +695,32 @@ export function decorateWorld(terrain: Terrain, climate: ClimateValues, input: G
     });
   }
 
+  // Clue chains lead outward: each site points at the nearest site that is more remote than itself.
+  const byRemoteness = [...placedPois].sort((a, b) => nearest(a.prop, settlementProps) - nearest(b.prop, settlementProps));
+  const clueNext = new Map<string, (typeof placedPois)[number]>();
+  byRemoteness.forEach((site, k) => {
+    const next = byRemoteness.slice(k + 1).sort((a, b) => Math.hypot(a.prop.x - site.prop.x, a.prop.y - site.prop.y) - Math.hypot(b.prop.x - site.prop.x, b.prop.y - site.prop.y))[0];
+    if (next && Math.hypot(next.prop.x - site.prop.x, next.prop.y - site.prop.y) < terrain.size * 0.3) clueNext.set(site.prop.id, next);
+  });
+  // Every ruin and lair gets at least two leads (clues plus town rumours); then each town gets two rumours.
+  const rumoursAbout = settlementProps.map(() => [] as Array<(typeof placedPois)[number]>);
+  const byDistance = (p: Point) => settlementProps.map((s, i) => ({ i, d: Math.hypot(s.x - p.x, s.y - p.y) })).sort((a, b) => a.d - b.d);
+  for (const site of placedPois) {
+    if (site.role !== 'ruin' && site.role !== 'lair') continue;
+    const leads = [...clueNext.values()].filter(n => n === site).length;
+    for (const { i } of byDistance(site.prop).slice(0, Math.max(0, 2 - leads))) rumoursAbout[i]!.push(site);
+  }
+  settlementProps.forEach((s, i) => {
+    for (const site of [...placedPois].sort((a, b) => Math.hypot(a.prop.x - s.x, a.prop.y - s.y) - Math.hypot(b.prop.x - s.x, b.prop.y - s.y))) {
+      if (rumoursAbout[i]!.length >= 2) break;
+      if (!rumoursAbout[i]!.includes(site)) rumoursAbout[i]!.push(site);
+    }
+  });
+
   settlementProps.forEach((s, idx) => {
     const entityIds = [s.id];
-    if (idx < 5) {
-      const sz = idx < 2 ? 20 : 16;
-      const lbl = placeLabel(`label-settlement-${idx}`, s.name ?? `Settlement ${idx + 1}`, s.x, s.y, sz, Boolean(s.gmOnly), s);
-      if (lbl) entityIds.push(lbl.id);
-    }
-    const nearHook = placedPois
-      .map((p) => ({ name: p.prop.name, d: Math.hypot(p.prop.x - s.x, p.prop.y - s.y) }))
-      .sort((a, b) => a.d - b.d)[0];
-    const distMiles = nearHook ? Math.max(2, Math.round(nearHook.d / 1609.344)) : 18;
-    const rumour = nearHook
-      ? `Caravans say ${nearHook.name} lies roughly ${distMiles} miles out, though directions conflict.`
-      : primaryDanger
-        ? `Traders warn of old stonework near ${primaryDanger.name}.`
-        : 'Passersby trade tall tales from distant passes.';
+    const lbl = placeLabel(`label-settlement-${idx}`, s.name ?? 'Settlement', s.x, s.y, idx < 2 ? 20 : idx < 5 ? 16 : 13, Boolean(s.gmOnly), s);
+    if (lbl) entityIds.push(lbl.id);
     result.push({
       id: `place-settlement-${idx}`,
       type: 'place',
@@ -699,11 +728,11 @@ export function decorateWorld(terrain: Terrain, climate: ClimateValues, input: G
       origin: 'generated',
       rev: 0,
       gmOnly: Boolean(s.gmOnly),
-      name: s.name ?? `Settlement ${idx + 1}`,
+      name: s.name ?? 'Settlement',
       category: 'Settlement',
-      notes: `${idx < 2 ? 'Major regional hub with trade and lodging.' : 'Local settlement.'} (${dangerBandFor(s)})`,
+      notes: hooks.settlement(idx, bandOf(s)),
       gmNotes: '',
-      rumours: [rumour],
+      rumours: rumoursAbout[idx]!.map(site => hooks.rumour(site.role, site.prop.name!, s, site.prop)),
       entityIds,
     });
   });
@@ -713,9 +742,9 @@ export function decorateWorld(terrain: Terrain, climate: ClimateValues, input: G
     const entityIds = [prop.id];
     const lbl = placeLabel(`label-${entry.role}-${idx}`, prop.name ?? entry.category, prop.x, prop.y, 14, entry.gmOnly, prop);
     if (lbl) entityIds.push(lbl.id);
-    const nearestTown = settlementProps
-      .map((s) => ({ name: s.name, d: Math.hypot(s.x - prop.x, s.y - prop.y) }))
-      .sort((a, b) => a.d - b.d)[0];
+    const nearestTown = byDistance(prop)[0];
+    const hook = hooks.site(entry.role, bandOf(prop));
+    const next = clueNext.get(prop.id);
     result.push({
       id: `place-${entry.role}-${idx}`,
       type: 'place',
@@ -725,17 +754,32 @@ export function decorateWorld(terrain: Terrain, climate: ClimateValues, input: G
       gmOnly: entry.gmOnly,
       name: prop.name ?? entry.category,
       category: entry.category,
-      notes: `${dangerBandFor(prop)} · ${entry.hook}`,
-      gmNotes: nearestTown ? `Nearest supply point: ${nearestTown.name}.` : '',
+      notes: `${dangerBandFor(prop)} · ${SITE_SUMMARY[entry.role]}`,
+      gmNotes: `${hook.gmNotes}${nearestTown ? ` Nearest supply point: ${settlementProps[nearestTown.i]!.name}.` : ''}`,
+      stockingRole: hook.stockingRole,
+      ...(next ? { clueNext: `A clue here points toward ${next.prop.name}, ${Math.max(2, Math.round(Math.hypot(next.prop.x - prop.x, next.prop.y - prop.y) / 1609.344))} miles away.` } : {}),
       entityIds,
     });
   });
 
+  // Name up to two ranges at their densest clusters, and the passes roads take through them.
   const mountains = result.filter((e): e is Extract<Entity, { type: 'prop' }> => e.type === 'prop' && e.symbolKind === 'mountain');
-  if (mountains.length >= 3) {
-    const m = mountains[Math.floor(mountains.length * 0.35)]!;
-    placeLabel('label-mountains-0', 'Ironspine Peaks', m.x, m.y - terrain.size * 0.04, 21);
+  const rangeR = terrain.size * 0.08;
+  const ranges = mountains
+    .map((m) => ({ m, members: mountains.filter((o) => Math.hypot(o.x - m.x, o.y - m.y) <= rangeR) }))
+    .sort((a, b) => b.members.length - a.members.length);
+  const namedRanges: Point[] = [];
+  for (const { m, members } of ranges) {
+    if (namedRanges.length >= 2 || members.length < (namedRanges.length ? 5 : 3)) break;
+    if (namedRanges.some((p) => Math.hypot(p.x - m.x, p.y - m.y) < terrain.size * 0.3)) continue;
+    namedRanges.push(m);
+    const cx = members.reduce((t, o) => t + o.x, 0) / members.length, cy = members.reduce((t, o) => t + o.y, 0) / members.length;
+    placeLabel(`label-mountains-${namedRanges.length - 1}`, namer.range(), cx, cy, 21);
   }
+  passes
+    .filter((p, k) => passes.findIndex((q) => Math.hypot(p.x - q.x, p.y - q.y) < terrain.size * 0.05) === k)
+    .slice(0, 3)
+    .forEach((p, k) => placeLabel(`label-pass-${k}`, namer.pass(), p.x, p.y, 12));
   const forests = result.filter((e): e is Extract<Entity, { type: 'prop' }> => e.type === 'prop' && e.symbolKind === 'forest');
   if (forests.length >= 4) {
     const clusterR = terrain.size * 0.065;
@@ -746,7 +790,7 @@ export function decorateWorld(terrain: Terrain, climate: ClimateValues, input: G
       }))
       .sort((a, b) => b.density - a.density);
     const primary = rankedForests[0]!.f;
-    placeLabel('label-forest-0', 'Whispering Weald', primary.x, primary.y, 18);
+    placeLabel('label-forest-0', namer.wood(), primary.x, primary.y, 18);
     const secondary = rankedForests.find(
       (c) => c.density >= 5 && Math.hypot(c.f.x - primary.x, c.f.y - primary.y) >= terrain.size * 0.26,
     );
@@ -762,16 +806,26 @@ export function decorateWorld(terrain: Terrain, climate: ClimateValues, input: G
           result.push(symbol('forest', pt, sz, 'Forest'));
         }
       }
-      placeLabel('label-forest-1', 'Elderwood', secondary.f.x, secondary.f.y, 17);
+      placeLabel('label-forest-1', namer.wood(), secondary.f.x, secondary.f.y, 17);
     }
   }
-  const oceanCells = terrain.cells.filter(
-    (c) => !c.land && !c.lake && c.neighbors.every((n) => !terrain.cells[n]!.land) && !(c.point.x > terrain.size * 0.74 && c.point.y > terrain.size * 0.74),
-  );
-  if (oceanCells.length > 0) {
-    const deep = oceanCells[Math.floor(oceanCells.length * 0.8)]!;
-    placeLabel('label-ocean-0', 'THE AZURE DEEP', deep.point.x, deep.point.y, 24);
+  // Sea label goes on the open-water cell farthest (in hops) from any coast, clear of the compass.
+  const sea = (i: number) => !terrain.cells[i]!.land && !terrain.cells[i]!.lake;
+  const hops = new Int32Array(terrain.cells.length).fill(-1);
+  const frontier = terrain.cells.flatMap((c, i) => (sea(i) && c.neighbors.some((n) => terrain.cells[n]!.land) ? [i] : []));
+  frontier.forEach((i) => { hops[i] = 0; });
+  for (let k = 0; k < frontier.length; k++) {
+    for (const n of terrain.cells[frontier[k]!]!.neighbors) {
+      if (sea(n) && hops[n]! < 0) { hops[n] = hops[frontier[k]!]! + 1; frontier.push(n); }
+    }
   }
+  const inner = (v: number) => v > terrain.size * 0.12 && v < terrain.size * 0.88; // wide label must clear the frame
+  const seaName = namer.sea();
+  frontier
+    .filter((i) => hops[i]! > 0 && inner(terrain.cells[i]!.point.x) && inner(terrain.cells[i]!.point.y))
+    .sort((a, b) => hops[b]! - hops[a]!)
+    .slice(0, 30)
+    .some((i) => placeLabel('label-ocean-0', seaName, terrain.cells[i]!.point.x, terrain.cells[i]!.point.y, 24));
 
   return result;
 }
