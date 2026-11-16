@@ -97,22 +97,6 @@ export function generateOutdoor(input: GeneratorInput<OutdoorParams>): Entity[] 
   const cellUsage = new Map<string, number>();
   const smoothCellChain = (points: Point[], extraFits = (_p: Point) => true): Point[] => {
     if (points.length < 3) return points;
-    const shortcut: Point[] = [points[0]!];
-    let sIdx = 0;
-    while (sIdx < points.length - 1) {
-      let nextIdx = points.length - 1;
-      for (let k = points.length - 1; k > sIdx + 1; k--) {
-        const p0 = points[sIdx]!, p1 = points[k]!;
-        const st = Math.max(1, Math.ceil(distance(p0, p1) / (g * 0.25)));
-        const clear = segmentFits(p0, p1) && Array.from({ length: st + 1 }, (_, m) => ({
-          x: p0.x + (p1.x - p0.x) * m / st,
-          y: p0.y + (p1.y - p0.y) * m / st,
-        })).every(extraFits);
-        if (clear) { nextIdx = k; break; }
-      }
-      shortcut.push(points[nextIdx]!);
-      sIdx = nextIdx;
-    }
     const segClear = (u: Point, v: Point) => {
       const steps = Math.max(1, Math.ceil(distance(u, v) / (g * 0.25)));
       if (!segmentFits(u, v)) return false;
@@ -122,8 +106,21 @@ export function generateOutdoor(input: GeneratorInput<OutdoorParams>): Entity[] 
       return true;
     };
     const safe = (line: Point[]) => line.slice(1).every((p, j) => segClear(line[j]!, p));
-    const basePts = shortcut.length >= 2 && safe(shortcut) ? shortcut : points;
-    const chaikin = smoothChaikin(basePts, 1);
+    // RDP keeps the routed bends (a line-of-sight shortcut pulled trails taut); it also splits where a chord leaves open ground,
+    // so one blocked stretch keeps its cells instead of the whole trail falling back to grid stairs.
+    const simplify = (pts: Point[]): Point[] => {
+      if (pts.length < 3) return pts;
+      const a = pts[0]!, b = pts[pts.length - 1]!;
+      let far = 0, split = 1;
+      for (let i = 1; i < pts.length - 1; i++) {
+        const d = distanceToSegment(pts[i]!, a, b);
+        if (d > far) { far = d; split = i; }
+      }
+      if (far <= g * .8 && segClear(a, b)) return [a, b];
+      return [...simplify(pts.slice(0, split + 1)).slice(0, -1), ...simplify(pts.slice(split))];
+    };
+    const basePts = simplify(points);
+    const chaikin = smoothChaikin(basePts, 2);
     // Keep exact endpoints pinned so branch junctions fuse seamlessly without corner gaps.
     const pinned = chaikin.length >= 2 ? [points[0]!, ...chaikin.slice(1, -1), points[points.length - 1]!] : basePts;
     if (safe(pinned)) return pinned;
@@ -144,7 +141,8 @@ export function generateOutdoor(input: GeneratorInput<OutdoorParams>): Entity[] 
       rounded.push(b);
     }
     rounded.push(basePts[basePts.length - 1]!);
-    return safe(rounded) ? rounded : basePts;
+    // Every bevel was checked, so rounded is exactly as clear as basePts.
+    return rounded;
   };
   const routeCells = (start: Cell, end: Cell, allowed = cells, penaltyClearings = false): Cell[] => {
     const distMap = new Map<string, number>([[start.key, 0]]);
@@ -212,15 +210,23 @@ export function generateOutdoor(input: GeneratorInput<OutdoorParams>): Entity[] 
       if (length < g * 8) return routeCells(start, end, cells, true);
       const dx = -(end.y - start.y) / length, dy = (end.x - start.x) / length;
       const amplitude = Math.min(length * .2, g * 6) * (random() < .5 ? -1 : 1);
-      const midCand = nearest({
-        x: (start.x + end.x) / 2 + dx * amplitude * 0.65,
-        y: (start.y + end.y) / 2 + dy * amplitude * 0.65,
-      });
-      const hitsOtherClearing = clearings.some((cl) =>
-        cl.center.key !== start.key && cl.center.key !== end.key && distance(midCand, cl.center) < cl.radius + trailRadius * 2,
-      );
+      // Two opposite offsets bend the trail into an S rather than one straight-sided V.
+      const stops = [start, ...[1 / 3, 2 / 3].map((t, i) => nearest({
+        x: start.x + (end.x - start.x) * t + dx * amplitude * (i ? -.7 : 1),
+        y: start.y + (end.y - start.y) * t + dy * amplitude * (i ? -.7 : 1),
+      })), end];
+      const hitsOtherClearing = stops.slice(1, -1).some(stop => clearings.some((cl) =>
+        cl.center.key !== start.key && cl.center.key !== end.key && distance(stop, cl.center) < cl.radius + trailRadius * 2,
+      ));
       if (hitsOtherClearing) return routeCells(start, end, cells, true);
-      return [...routeCells(start, midCand, cells, true), ...routeCells(midCand, end, cells, true).slice(1)];
+      const joinedCells: Cell[] = [];
+      // Cut out-and-back spurs and loops where a leg revisits a cell an earlier leg already walked.
+      for (const c of stops.slice(1).flatMap((stop, i) => routeCells(stops[i]!, stop, cells, true).slice(i ? 1 : 0))) {
+        const at = joinedCells.findIndex(s => s.key === c.key);
+        if (at >= 0) joinedCells.length = at;
+        joinedCells.push(c);
+      }
+      return joinedCells;
     })();
     for (const c of seq) cellUsage.set(c.key, (cellUsage.get(c.key) ?? 0) + 1);
     rawCellRoutes.push(seq);

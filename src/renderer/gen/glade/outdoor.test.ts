@@ -60,6 +60,22 @@ describe('outdoor woodland generator', () => {
       }
     }
   });
+  it('winds trails instead of pulling them taut or stepping them along the grid', () => {
+    // Before the fix these seeds gave 3-8 ruler-straight trails each and grid stairs with up to 13 sharp turns.
+    for (const clearings of [4, 6]) for (const seed of [1, 2, 7, 42]) {
+      let straight = 0;
+      for (const { points: p } of trails(generateOutdoor(makeInput(seed, { clearings })))) {
+        const a = p[0]!, b = p.at(-1)!, chord = Math.hypot(a.x - b.x, a.y - b.y);
+        if (chord > 15 && Math.max(...p.map(q => distanceToSegment(q, a, b))) < chord * .05) straight++;
+        const sharp = p.slice(2).filter((c, i) => {
+          const ex = p[i + 1]!.x - p[i]!.x, ey = p[i + 1]!.y - p[i]!.y, dx = c.x - p[i + 1]!.x, dy = c.y - p[i + 1]!.y;
+          return Math.abs(Math.atan2(ex * dy - ey * dx, ex * dx + ey * dy)) > Math.PI / 3;
+        }).length;
+        expect(sharp, `seed ${seed} grid stairs`).toBeLessThanOrEqual(3);
+      }
+      expect(straight, `seed ${seed} straight trails`).toBeLessThanOrEqual(1);
+    }
+  });
   it('handles concave footprints, holes, custom entrances, manual areas, trails and props', () => {
     const shape = [[{ x: 0, y: 0 }, { x: 80, y: 0 }, { x: 80, y: 65 }, { x: 45, y: 65 }, { x: 45, y: 50 }, { x: 0, y: 50 }],
       [{ x: 25, y: 15 }, { x: 35, y: 15 }, { x: 35, y: 25 }, { x: 25, y: 25 }]];
