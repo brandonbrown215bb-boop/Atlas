@@ -7,5 +7,7 @@ playwright-report/
 *.tsbuildinfo
 .DS_Store
 assets/
-visual-review/rook-current/profile/
-visual-review/rook-current/world/
+# Generated review screenshots and map dumps; keep the notes and the script.
+visual-review/*
+!visual-review/NOTES.md
+!visual-review/rook-review.mjs
