@@ -30,26 +30,30 @@ try {
     ['02-settlement-hamlet', 'settlement', 'city', { scale: 'hamlet' }, undefined],
     ['03-site-woodland', 'site', 'glade', { clearings: 4, density: 1, water: true }, undefined],
     ['04-site-dungeon', 'site', 'dungeon', { mode: 'dungeon', rooms: 10 }, undefined],
+    ['04-site-cave', 'site', 'dungeon', { mode: 'cave' }, undefined],
     ['05-interior-tavern', 'interior', 'dungeon', { mode: 'building', rooms: 5, purpose: 'tavern' }, undefined],
     // Regions are developed from this seed's world and populated, like the app's Create location flow.
     ['06-region-coast', 'region', 'world', { mode: 'populate' }, { x: 740000, y: 290000, w: 260000, h: 260000 }],
     ['07-region-inland', 'region', 'world', { mode: 'populate' }, { x: 574000, y: 447000, w: 260000, h: 260000 }],
     // A one-mile settlement developed around the coastal region's first inherited world town (else its first town).
     ['08-settlement-from-region', 'settlement', 'city', {}, 'from:06-region-coast'],
+    // A 500 ft dungeon site developed on the coastal region's first ruin or lair; it should become that place.
+    ['09-dungeon-from-region', 'site', 'dungeon', { mode: 'dungeon', rooms: 10 }, 'from:06-region-coast'],
   ];
   const summaries = [];
   for (const seed of [42, 7]) {
     for (const [name, kind, type, params, bounds] of cases) {
       const id = `${name}-${seed}`;
-      if (only && name !== '01-world' && !only.test(name) && !(name === '06-region-coast' && only.test('08-settlement-from-region'))) continue;
+      if (only && name !== '01-world' && !only.test(name) && !(name === '06-region-coast' && (only.test('08-settlement-from-region') || only.test('09-dungeon-from-region')))) continue;
       if (typeof bounds === 'string') {
         const parentMapId = `${bounds.slice(5)}-${seed}`;
         const parent = JSON.parse((await call('map_get', { mapId: parentMapId }))[0].text);
-        const towns = Object.values(parent.entities).filter(e => e.type === 'prop' && e.symbolKind === 'settlement');
+        const kinds = kind === 'site' ? ['ruin', 'lair'] : ['settlement'];
+        const towns = Object.values(parent.entities).filter(e => e.type === 'prop' && kinds.includes(e.symbolKind));
         const town = towns.find(e => e.origin === 'inherited') ?? towns[0];
-        if (!town) { summaries.push({ id, error: 'no inherited town' }); continue; }
-        const mile = 1609.344;
-        await command('map.developArea', { parentMapId, childMapId: id, name: town.name, kind, rect: { x: town.x - mile / 2, y: town.y - mile / 2, w: mile, h: mile } });
+        if (!town) { summaries.push({ id, error: `no ${kinds.join('/')} on ${parentMapId}` }); continue; }
+        const size = kind === 'site' ? 152.4 : 1609.344;
+        await command('map.developArea', { parentMapId, childMapId: id, name: town.name, kind, rect: { x: town.x - size / 2, y: town.y - size / 2, w: size, h: size } });
       } else if (kind === 'region') await command('map.developArea', { parentMapId: `01-world-${seed}`, childMapId: id, name: id, kind, rect: bounds });
       else await command('map.create', { id, name: id, kind, ...(bounds ? { bounds } : {}) });
       const start = Date.now();

@@ -215,3 +215,64 @@
   - Seeds 42 and 7 rendered for every scale and for the region-developed town; checked by eye.
   - City generation is 3–4 s, village under 1 s (was 11–13 s).
   - Remaining nit: inn labels next to the square can overlap the square's label.
+
+## Round 13 (`round-13-baseline/` → `round-13/`) — Dungeon maps worth delving
+- **Goal**: a dungeon a party wants to explore. It should be a compact complex with a front door and a sense of going deeper. It needs a name, a locked goal with its key somewhere else, varied rooms with real contents, and continuity with the world site it was developed from.
+- **Baseline** (`04-site-dungeon`, 500 ft site, 10 rooms, seeds 42 and 7):
+  - The dungeon sat on a green lawn: every `site` map got the grass backdrop.
+  - The second "far entrance" corridor ran 600–900 ft along the sheet edge.
+  - Rooms were evenly sized rectangles scattered over the whole sheet and joined by long empty corridors. Seed 7 also had a 1-cell rock sliver between two passages.
+  - Purposes came from a shuffled bag that ignored position (a Vault by the door), and rooms were numbered in placement order.
+  - Stocking was `(seed + n*5) % 6`, and all 10 Places shared the notes "Air feels damp…". There was no name and no goal.
+  - There were no lights, locks, keys or traps, so the audit's lighting pillar failed.
+  - A site developed from a world ruin ignored that ruin's Place.
+- **Changes**:
+  - `backdrop.ts`: a site holding a dungeon generator draws on dark rock.
+  - `layout.ts`, dungeon mode:
+    - **Growth**: rooms grow from a front room at the sheet edge. Each new room sits within 7 cells × scale of an earlier one, favouring the newest, so the complex reaches deeper. If growth stalls, the old free placement is the fallback.
+    - **Rooms**: the last room is a 1.6× goal hall and a third of the rooms are small. Rooms come in rectangle, octagon, round and cross shapes.
+    - **Entrances**: the front door is the edge nearest room 1. A back way is cut only from a room already near the edge and far from the front door.
+    - One-cell slivers between passages are opened up.
+  - New `story.ts`:
+    - `planDungeon`:
+      - reads the room graph, with corridors free and each room one step deeper;
+      - numbers areas from the entrance outward;
+      - picks a theme (tomb, den, fortress, temple) from the inherited Place, or from the seed;
+      - assigns purposes by depth tier;
+      - picks the largest deep room as the goal and locks its public doors;
+      - hides the key in a dead-end room that can be reached without them;
+      - puts stairs down in the deepest other room.
+    - `stockDungeon`:
+      - names the dungeon and gives it a title label and a Place (occupants, complication, reward), unless one is inherited;
+      - stocks rooms Moldvay-style from a shuffled bag (entrance never a Trap, goal always the boss and treasure);
+      - writes per-room sense, feature and GM lines;
+      - adds the key's `clueNext`, three-clue notes on both sides of a secret door, lights in lived-in rooms, and GM-only trap plates inside the first door.
+    - Caves get the name and Place only.
+    - The alt portal is a ladder up or a chute, hatch or pit down. The random "Overlook Gallery" is gone.
+  - `hooks.ts`: room senses, per-purpose features, monsters by theme and band, traps with tells, specials, empties, treasure and keys.
+  - `names.ts`: no more "Thornthorn".
+  - Parent link:
+    - `clipInherit.ts`: site children drop world icons and adopt their Places, as settlements do.
+    - `framework.ts`: the dungeon generator sees inherited Places. A crypt reads as a tomb, and ruins and lairs win over keeps and temples.
+    - `commands.ts`: dungeon names are locked against the world.
+  - `rook-review.mjs`: new `04-site-cave` and `09-dungeon-from-region` cases. The latter is a 500 ft site on the coastal region's first ruin or lair.
+- **Verification**:
+  - New `story.test.ts`:
+    - seeds 42 and 7 pass all seven audit pillars;
+    - corridors cover less floor than rooms and no corridor spans more than 60% of the sheet;
+    - the goal's public doors are locked and the key room is reachable without them;
+    - stocking mix, distinct notes, depth numbering, theme variety;
+    - inherited-ruin adoption;
+    - backdrop by generator.
+  - A site case was added to `clipInherit.test.ts`.
+  - Trap plates are excluded from the furniture doorway-clearance check in `dressing.test.ts`, because they sit in the walking line on purpose.
+  - A dungeon developed on surface ground (a region's desert or forest) gets a bedrock fill under its rooms. An uninherited cave is a lair. Both were found in the first round-13 render.
+  - `npm run check`: 54/54 files, 249/249 tests.
+  - `npm run build` passes.
+  - Seeds 42 and 7 rendered for `04|05|09`; checked by eye.
+    - Tavern output matches the baseline counts, since building mode is unchanged.
+    - `09` adopts the world ruin's name and occupants and writes no second Place.
+  - Dungeon generation takes 0.6–0.7 s; caves about 4 s, as before.
+  - Remaining nits:
+    - stepped round rooms read as jagged at 5 ft;
+    - the title can sit near the entrance corridor.

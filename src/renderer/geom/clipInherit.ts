@@ -131,8 +131,10 @@ export function clipAndInheritEntities(
   const zoomedRegion = childKind === 'region' && rectSpan < parentSpan;
   // A settlement is the town itself: world icons and labels mean nothing a mile across, and world-scale roads shrink to lanes.
   const settlement = childKind === 'settlement';
+  // A site (dungeon or woodland) is likewise the place itself, so it drops world icons and adopts their Places too.
+  const local = settlement || childKind === 'site';
   const dropped = new Set<string>();
-  const iconNames = new Set(settlement ? Object.values(parentMap.entities).filter(e => e.type === 'prop' && isWorldSymbol(e) && e.name && pointInRect(e, rect)).map(e => e.name!) : []);
+  const iconNames = new Set(local ? Object.values(parentMap.entities).filter(e => e.type === 'prop' && isWorldSymbol(e) && e.name && pointInRect(e, rect)).map(e => e.name!) : []);
   const routeWidthScale = zoomedRegion ? Math.min(1, (rectSpan / parentSpan) * 1.6) : 1;
   const junctions=new Map<string,string>();
   const junction=(p:Point)=>{const key=`${p.x.toFixed(6)},${p.y.toFixed(6)}`;if(!junctions.has(key))junctions.set(key,createId());return junctions.get(key)!;};
@@ -253,7 +255,7 @@ export function clipAndInheritEntities(
       case 'prop':
       case 'light':
       case 'label': {
-        if (settlement && (isWorldSymbol(entity) || entity.type === 'label' && iconNames.has(entity.text))) { if (pointInRect(entity, rect)) dropped.add(inheritedFrom.entityId); break; }
+        if (local && (isWorldSymbol(entity) || entity.type === 'label' && iconNames.has(entity.text))) { if (pointInRect(entity, rect)) dropped.add(inheritedFrom.entityId); break; }
         if (pointInRect(entity, rect)) {
           let translated = translatePoint(entity, rect);
           // A town or site label sat a world-scale gap from its icon; pull it in to match the shrunken icon.
@@ -296,7 +298,7 @@ export function clipAndInheritEntities(
   }
 
   // A region adopts the notes, rumours and links of every town and site it inherits, pointing at its own copies.
-  if (childKind === 'region' || settlement) {
+  if (childKind === 'region' || local) {
     for (const place of Object.values(parentMap.entities)) {
       if (place.type !== 'place') continue;
       const copies = result.filter(e => e.type !== 'label' && e.inheritedFrom && place.entityIds.includes(e.inheritedFrom.entityId));

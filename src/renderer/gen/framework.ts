@@ -94,6 +94,8 @@ export function runGenerator(map: MapDoc, options: {
     // The world town this map was developed from: its rank, trouble and rumours shape the settlement.
     input.constraints.push(...Object.values(map.entities).filter(e => e.type === 'place' && e.origin === 'inherited' && /settlement/i.test(e.category)));
   }
+  // The world ruin, lair or crypt this site was developed from names and stocks the dungeon.
+  if (options.type === 'dungeon') input.constraints.push(...Object.values(map.entities).filter(e => e.type === 'place' && e.origin === 'inherited'));
   const groupId = map.generators[options.genId]?.groupId ?? options.genId;
   map.groups ??= {};
   map.groups[groupId] = { name: map.groups[groupId]?.name ?? source?.name ??

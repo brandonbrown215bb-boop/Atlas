@@ -116,7 +116,75 @@ const TROUBLE_CLUES = [
   'a witness who saw too much lives here', 'lodgings of someone missing, door forced', 'a locked cellar with fresh scratches on the door',
   'a strongbox of coin that should not be here', 'a frightened child hiding in the loft', 'a letter half-burned in the hearth',
 ];
-const SETTLEMENT_RE = /^(City|Town|Village|Hamlet) known for (.+?)\. Trouble: (.+?)\./;
+export type DungeonTheme = 'tomb' | 'den' | 'fortress' | 'temple';
+const ROOM_SENSES = [
+  'Water drips steadily somewhere out of sight.', 'The air is cold enough to fog breath.', 'A sweet, rotten smell hangs here.',
+  'Scratches cover the lower walls.', 'Old soot blackens the ceiling.', 'The floor slopes gently toward a drain.',
+  'Faded murals peel from the plaster.', 'Every footstep echoes twice.', 'Roots have split the far wall.',
+  'Dust lies thick and undisturbed.', 'Fresh tracks cross the dust.', 'A faint draught smells of earth.',
+  'Bones are swept into one corner.', 'Something skittered away as the door opened.', 'Wax drippings crust the floor.',
+  'The stones are warm to the touch.', 'Rusted chains hang from ceiling hooks.', 'Mould glows faintly along the joints.',
+  'A dried bloodstain trails to the far door.', 'Chalk marks in a crude hand label the doors.', 'Rubble half-blocks one wall.',
+  'The ceiling is carved with staring faces.',
+];
+const ROOM_FEATURES: Record<string, string[]> = {
+  guardroom: ['A rack of rusted spears stands by the door', 'A dice game lies abandoned on the table', 'A signal gong hangs from a bracket'],
+  storage: ['Split sacks spill mouldy grain', 'Crates are stencilled with a merchant\'s mark', 'A ledger lies open on a barrel head'],
+  crypt: ['Stone coffins line the walls, one lid ajar', 'Niches hold skulls with coins in their teeth', 'A carved effigy lies on the central tomb'],
+  cistern: ['Dark water fills a sunken basin', 'A rusted wheel works a sluice gate', 'Steps lead down into black water'],
+  prison: ['Cell doors hang open on broken hinges', 'Names are scratched into every wall', 'A key ring hangs just out of reach'],
+  alchemy: ['Cracked glassware covers the benches', 'A cauldron still holds a crust of something green', 'Shelves of labelled jars, most empty'],
+  treasury: ['Iron-bound chests sit behind a low rail', 'An empty pedestal stands in the centre', 'Coin dust glitters between the flagstones'],
+  shrine: ['A defaced idol watches the door', 'Offering bowls hold dried flowers', 'Candles burn low on the altar, recently lit'],
+  bedroom: ['Bedrolls are laid around a cold firepit', 'A hammock sags between two hooks', 'Personal trinkets are hidden under a loose stone'],
+  tavern: ['A long table is set for a feast nobody ate', 'Tankards hang from pegs above a cold hearth', 'A cask is tapped and still dripping'],
+};
+const DUNGEON_MONSTERS: Record<DungeonTheme, [string[], string[], string[]]> = {
+  tomb: [
+    ['a swarm of rats', 'two skeletons that rise when the coffins open', 'a grave-robber who would rather talk than fight', 'giant centipedes'],
+    ['ghouls feeding on the old dead', 'a wight and its skeleton guard', 'a shadow that drinks lantern light', 'cultists guarding a dig'],
+    ['a mummy lord in its wrappings', 'a wraith bound to the vault', 'a bone golem built from the ossuary', 'a lich\'s spectral steward'],
+  ],
+  den: [
+    ['a nest of giant rats', 'a stirge flock clinging to the ceiling', 'kobolds who trap everything', 'a lone hungry wolf'],
+    ['goblins and their worg', 'a gelatinous cube cleaning the halls', 'an ogre gnawing a bone', 'a pair of ghouls fighting over scraps'],
+    ['a troll with a fresh kill', 'a young black dragon on a bed of coins', 'a chimera that hunts by smell', 'an owlbear mother with cubs'],
+  ],
+  fortress: [
+    ['a bored sentry and his dog', 'bandit lookouts dicing for watches', 'two deserters hiding from their captain', 'a goblin scout'],
+    ['an orc patrol of six', 'a mercenary sergeant and crossbowmen', 'a hobgoblin drill squad', 'a hungry gargoyle perched above the door'],
+    ['a fallen knight in black plate', 'an ogre warlord and bodyguards', 'a hobgoblin captain with war-trained wolves', 'an iron golem guarding the arms'],
+  ],
+  temple: [
+    ['an acolyte who mistakes the party for pilgrims', 'zombies of the faithful', 'a cultist novice and two thugs', 'animated candlesticks'],
+    ['a cult priest leading a rite', 'a gargoyle that moves when unwatched', 'a possessed statue', 'a choir of shadows'],
+    ['a fallen angel chained in prayer', 'a demon half-summoned in a circle', 'the cult\'s high priest and their champion', 'a naga coiled around the relic'],
+  ],
+};
+const TRAPS = [
+  'a pressure plate fires darts from the walls (tell: tiny holes at chest height)', 'a pit trap under false flagstones (tell: the dust is thinner in a square)',
+  'a scything blade swings across the doorway (tell: a groove cut in the floor)', 'the door handle carries contact poison (tell: a green stain on the brass)',
+  'a falling block seals the room for an hour (tell: fresh mortar dust on the sills)', 'a gas vent fills the room with sleeping fumes (tell: a faint smell of almonds)',
+  'a rune flashes a lightning bolt at the first to cross it (tell: scorch marks on the far wall)', 'the floor tilts toward a spiked trench (tell: the stones rock underfoot)',
+];
+const SPECIALS = [
+  'a talking skull that trades answers for secrets', 'a fountain whose water shows one true vision', 'a statue that turns its head to follow light',
+  'a lever that drains the nearest cistern', 'a mirror showing the room as it was long ago', 'a ghost that asks to be buried properly',
+  'a map of the level scratched on a door, with one room wrong', 'an altar that blesses anyone who leaves a coin, and curses thieves',
+];
+const EMPTY = [
+  'signs of a camp with ashes still warm', 'a dead adventurer with a half-written letter', 'rubble hides a crawl-space to the next room',
+  'old supplies, mostly spoiled; one potion survives', 'a collapsed corner with a view down into a lower level', 'nothing but echoes and a draught',
+  'a message chalked in a rival party\'s code', 'the bones of something large, picked clean',
+];
+const TREASURE: [string[], string[], string[]] = [
+  ['a purse of mixed silver', 'a silver holy symbol', 'a jade ring', 'a cask of fine brandy'],
+  ['a chest of old coin', 'a jewelled dagger', 'a scroll of protection', 'a pair of gold candlesticks'],
+  ['a crown of the old kings', 'a coffer of gems', 'a magic blade with a name', 'a wand with three charges left'],
+];
+const KEYS = ['an iron key on a bone ring', 'a bronze key shaped like a hand', 'a black glass key that hums', 'a heavy brass seal-key', 'a key carved from a femur', 'a silver key wrapped in a prayer strip'];
+
+const SETTLEMENT_RE =/^(City|Town|Village|Hamlet) known for (.+?)\. Trouble: (.+?)\./;
 
 /** Reads back what `settlement()` wrote: rank, trait and trouble. */
 export function parseSettlement(notes: string | undefined) {
@@ -157,5 +225,14 @@ export function makeHooks(random: () => number) {
       return { notes: `${service} Run by ${owner}, ${pick(QUIRKS)}.`, gmNotes: `Secret: ${pick(secrets)}. Job: ${owner} ${pick(JOBS)}.` };
     },
     troubleClue: () => pick(TROUBLE_CLUES),
+    // Dungeon rooms: what you notice, what you can poke at, and what is really there.
+    sense: () => pick(ROOM_SENSES),
+    feature: (purpose: string) => pick(ROOM_FEATURES[purpose] ?? ROOM_FEATURES.storage!),
+    monster: (theme: DungeonTheme, band: Band) => pick(DUNGEON_MONSTERS[theme][band]),
+    trap: () => pick(TRAPS),
+    special: () => pick(SPECIALS),
+    empty: () => pick(EMPTY),
+    treasure: (band: Band) => pick(TREASURE[band]),
+    key: () => pick(KEYS),
   };
 }

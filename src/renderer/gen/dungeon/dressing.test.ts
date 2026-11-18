@@ -8,7 +8,8 @@ import { DungeonParamsSchema, generateDungeon } from './layout';
 
 const region=[[{x:0,y:0},{x:30,y:0},{x:30,y:24},{x:0,y:24}]];
 const input={seed:6,params:DungeonParamsSchema.parse({purpose:'tavern'}),region,constraints:[],theme:{table:['table-asset']},grid:1.524};
-const props=(entities:Entity[])=>entities.filter((e):e is Extract<Entity,{type:'prop'}>=>e.type==='prop');
+// Trap plates are deliberately in the walking line; only furniture must keep doorways clear.
+const props=(entities:Entity[])=>entities.filter((e):e is Extract<Entity,{type:'prop'}>=>e.type==='prop'&&e.tacticalTag!=='hazard');
 
 describe('dungeon dressing',()=>{
   it('is deterministic, uses theme roles and placeholders, and leaves doorways and door-to-door routes clear',()=>{

@@ -143,7 +143,7 @@ registerCommand({
       map.bounds = { x, y, w: Math.max(...p.map(q=>q.x))-x, h: Math.max(...p.map(q=>q.y))-y };
     }
     const ids = runGenerator(map, { ...input, regionEntityId, genId, theme: draft.meta.themes[input.themeName] ?? {}, climate: climateContext(draft, map),
-      takenNames: input.type === 'world' ? namesInUse(draft, map.id, genId) : undefined });
+      takenNames: input.type === 'world' || input.type === 'dungeon' ? namesInUse(draft, map.id, genId) : undefined });
     return { genId, ids };
   },
 });
@@ -164,7 +164,7 @@ registerCommand({
     const themeName = input.themeName ?? record.themeName ?? 'default';
     const ids = runGenerator(map, { ...record, ...input, regionEntityId, params: input.params ?? record.params,
       layerId: record.layerId ?? map.layers[0]!.id, themeName, theme: draft.meta.themes[themeName] ?? {}, climate: climateContext(draft, map),
-      takenNames: record.type === 'world' ? namesInUse(draft, map.id, input.genId) : undefined });
+      takenNames: record.type === 'world' || record.type === 'dungeon' ? namesInUse(draft, map.id, input.genId) : undefined });
     return { genId: input.genId, ids };
   },
 });

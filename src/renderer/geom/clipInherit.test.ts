@@ -207,4 +207,15 @@ describe('clipInherit', () => {
     const road = inherited.find(e => e.inheritedFrom?.entityId === 'road1');
     expect(road?.type === 'path' && road.width).toBe(9);
   });
+
+  it('makes a site child the ruin itself: adopts its Place and drops its world icon', () => {
+    const parent = makeParentMap();
+    const prop = { layerId: 'l1', origin: 'generated' as const, rev: 1, scale: 1, rotation: 0, flipX: false };
+    parent.entities.ruin = { ...prop, id: 'ruin', type: 'prop', symbolKind: 'ruin', builtin: 'ruin', name: 'Barrow of Ithmar', x: 150, y: 150, w: 50, h: 50 };
+    parent.entities.ruinPlace = { id: 'ruinPlace', type: 'place', layerId: 'l1', origin: 'generated', rev: 1, name: 'Barrow of Ithmar', category: 'Ruin',
+      notes: 'Ancient stonework.', gmNotes: 'Occupants: restless dead.', entityIds: ['ruin'] };
+    const inherited = clipAndInheritEntities(parent, { x: 100, y: 100, w: 100, h: 100 }, 'child-l1', undefined, 'site');
+    expect(inherited.some(e => e.type === 'prop')).toBe(false);
+    expect(inherited.find(e => e.type === 'place')).toMatchObject({ name: 'Barrow of Ithmar', category: 'Ruin', origin: 'inherited', gmNotes: 'Occupants: restless dead.' });
+  });
 });

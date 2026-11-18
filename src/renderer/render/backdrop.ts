@@ -9,10 +9,14 @@ export interface BackdropStyle {
 }
 
 export function mapBackdropStyle(
-  mapOrKind: Pick<MapDoc, 'kind' | 'outsideLandIsWater'> | MapKind,
+  mapOrKind: Pick<MapDoc, 'kind' | 'outsideLandIsWater'> & Partial<Pick<MapDoc, 'generators'>> | MapKind,
   outsideLandIsWater?: boolean,
 ): BackdropStyle {
   const kind = typeof mapOrKind === 'string' ? mapOrKind : mapOrKind.kind;
+  // A site holding a dungeon is underground: rock, not lawn.
+  const underground = typeof mapOrKind !== 'string' && kind === 'site'
+    && Object.values(mapOrKind.generators ?? {}).some(g => g.type === 'dungeon');
+  if (underground) return { color: 0x2b221a, texKind: 'parchment', texAlpha: 0.14 };
   const oceanOutside =
     typeof mapOrKind === 'string' ? outsideLandIsWater : mapOrKind.outsideLandIsWater;
   if (kind === 'world' || (kind === 'region' && oceanOutside !== false)) {

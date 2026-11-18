@@ -20,7 +20,7 @@ export type SiteNameKind = 'stronghold' | 'ruin' | 'lair' | 'sacred' | 'travel' 
 export function makeNamer(seed: number, taken: Iterable<string> = []) {
   const random = mulberry32((seed ^ 0x2a4e1d) >>> 0), used = new Set<string>(taken);
   const pick = <T>(list: readonly T[]) => list[Math.floor(random() * list.length)]!;
-  const common = () => pick(ROOTS) + pick(PLACE_ENDS);
+  const common = () => { const root = pick(ROOTS), end = pick(PLACE_ENDS); return root + (root.toLowerCase() === end ? '' : end); };
   const old = () => pick(OLD_A) + pick(OLD_B);
   const dread = () => pick(DREAD_A) + pick(DREAD_B);
   const unique = (make: () => string) => {
