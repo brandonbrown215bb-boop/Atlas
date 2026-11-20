@@ -1,3 +1,4 @@
+import { generationPanel } from './context-helpers';
 import { mkdtempSync, readFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
@@ -11,7 +12,7 @@ test('direct interior creation, draft settings, undo navigation, preservation an
   let app=await electron.launch({args:[resolve(__dirname,'../out/main/index.js'),`--user-data-dir=${join(dir,'profile')}`]});
   const client=new Client({name:'generator-test',version:'1'});
   try {
-    const main=await app.firstWindow();
+    const main=await app.firstWindow(); main.setDefaultTimeout(10_000);
     await main.waitForFunction(()=>Boolean((window as any).__atlasWorldStore));
     const info=await main.evaluate(()=>(window as unknown as {atlasApi:import('../src/preload').AtlasApi}).atlasApi.getAgentInfo());
     await client.connect(new StreamableHTTPClientTransport(new URL(info.url),{requestInit:{headers:{Authorization:`Bearer ${info.token}`}}}));
@@ -35,16 +36,15 @@ test('direct interior creation, draft settings, undo navigation, preservation an
       w.__atlasViewStore.getState().setPanelMap('map-main','town');
       w.__atlasViewStore.getState().setSelection(['building']);
     });
-    const strip=main.getByTestId('generation-strip');
+    const strip=(await generationPanel(main));
     const beforeSettings=await main.evaluate(()=>{const s=(window as any).__atlasWorldStore.getState();return {world:s.world,history:s.history};});
     await strip.getByLabel('Room purpose',{exact:true}).selectOption('tavern');
-    await strip.getByRole('button',{name:'Settings…',exact:true}).click();
-    const settings=main.getByTestId('generation-settings');
+    const settings=strip; // settings and actions share the Generator panel now
     await expect(settings.getByLabel('Room purpose',{exact:true})).toHaveValue('tavern');
     await settings.getByLabel('Generator seed').fill('2');
     expect(await main.evaluate(()=>{const s=(window as any).__atlasWorldStore.getState();return {world:s.world,history:s.history};})).toEqual(beforeSettings);
     await strip.getByRole('button',{name:'Generate interior',exact:true}).click();
-    await expect(main.getByTestId('panel-map-main')).toContainText('(interior)');
+    await expect(main.getByTestId('active-map-title')).toContainText('(interior)');
     const town:MapDoc=await call('map_get',{mapId:'town'});
     const place=town.entities.inn!;
     expect(place).toMatchObject({notes:'Keep these notes',gmNotes:'Hidden cellar'});
@@ -58,7 +58,7 @@ test('direct interior creation, draft settings, undo navigation, preservation an
     await call('undo');
     expect((await call('map_list')).length).toBe(2);
     expect((await call('map_get',{mapId:'town'})).entities.inn.childMapId).toBeUndefined();
-    await expect(main.getByTestId('panel-map-main')).toContainText('Town (settlement)');
+    await expect(main.getByTestId('active-map-title')).toContainText('Town (settlement)');
     await call('redo');
     // All remaining generation actions are exposed through command_run alone.
     const mapId='agent-interior';
@@ -89,7 +89,7 @@ test('direct interior creation, draft settings, undo navigation, preservation an
     await client.close();
     await app.close();
     app=await electron.launch({args:[resolve(__dirname,'../out/main/index.js'),`--user-data-dir=${join(dir,'profile')}`]});
-    const reopened=await app.firstWindow();
+    const reopened=await app.firstWindow(); reopened.setDefaultTimeout(10_000);
     await app.evaluate(({dialog},path)=>{dialog.showOpenDialog=async()=>({canceled:false,filePaths:[path]});},join(dir,'world'));
     await reopened.getByTestId('btn-open-world').click();
     await reopened.getByTestId('map-tree-item-town').click();
@@ -97,7 +97,7 @@ test('direct interior creation, draft settings, undo navigation, preservation an
     await reopened.getByTestId('places-list').getByText('The Anchor',{exact:true}).click();
     await expect(reopened.getByTestId('place-edit-notes')).toHaveValue('Keep these notes');
     await reopened.getByTestId('btn-open-interior').click();
-    await expect(reopened.getByTestId('panel-map-main')).toContainText('The Anchor Interior');
+    await expect(reopened.getByTestId('active-map-title')).toContainText('The Anchor Interior');
     expect(await reopened.evaluate(id=>(window as any).__atlasWorldStore.getState().world.maps[id],interiorId)).toEqual(interior);
     await reopened.getByTestId('panel-map-main').screenshot({path:testInfo.outputPath('reopened-interior.png')});
   } finally {await client.close();await app.close();}

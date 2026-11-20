@@ -17,7 +17,7 @@ test('opens two map panels and an edit made through the store appears in both', 
     });
 
     try {
-      const win = await app.firstWindow();
+      const win = await app.firstWindow(); win.setDefaultTimeout(10_000);
       win.on('pageerror', (err) => console.error('PAGEERROR:', err));
       win.on('console', (msg) => {
         if (msg.type() === 'error') console.error('CONSOLE ERROR:', msg.text());

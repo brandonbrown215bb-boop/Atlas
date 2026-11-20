@@ -10,7 +10,7 @@ test('player PNG exports through UI and MCP preserve size, hide GM art and omit 
   const app=await electron.launch({args:[resolve(__dirname,'../out/main/index.js'),`--user-data-dir=${join(dir,'profile')}`]});
   const client=new Client({name:'outputs-test',version:'1'});
   try {
-    const main=await app.firstWindow();
+    const main=await app.firstWindow(); main.setDefaultTimeout(10_000);
     await main.waitForFunction(() => Boolean((window as any).__atlasWorldStore));
     const info=await main.evaluate(()=>(window as unknown as {atlasApi:import('../src/preload').AtlasApi}).atlasApi.getAgentInfo());
     await client.connect(new StreamableHTTPClientTransport(new URL(info.url),{requestInit:{headers:{Authorization:`Bearer ${info.token}`}}}));

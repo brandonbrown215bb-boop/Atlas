@@ -7,7 +7,7 @@ test('opening a world before its map panel is visible fits the map when it appea
   const root = mkdtempSync(join(tmpdir(), 'atlas-hidden-map-'));
   const app = await electron.launch({ args: [resolve(__dirname, '../out/main/index.js'), `--user-data-dir=${join(root, 'profile')}`] });
   try {
-    const page = await app.firstWindow();
+    const page = await app.firstWindow(); page.setDefaultTimeout(10_000);
     const errors: string[] = [];
     page.on('pageerror', error => errors.push(error.message));
     const hidden = await page.addStyleTag({ content: '[data-testid="canvas-host-map-main"] { display: none !important; }' });
@@ -35,7 +35,7 @@ test('opening a world before its map panel is visible fits the map when it appea
     const box = (await host.boundingBox())!;
     await page.mouse.move(box.x + box.width / 2, box.y + box.height / 2);
     await page.mouse.down({ button: 'middle' });
-    await page.mouse.move(box.x + box.width * .8, box.y + box.height * .7, { steps: 8 });
+    await page.mouse.move(box.x + box.width * .6, box.y + box.height * .6, { steps: 8 });
     await page.mouse.up({ button: 'middle' });
     const beforeZoom = (await camera()).zoom;
     for (let i = 0; i < 8; i++) await page.mouse.wheel(0, -100);
@@ -52,7 +52,7 @@ test('an error outside the dock panels shows recovery controls and keeps the wor
   const root = mkdtempSync(join(tmpdir(), 'atlas-app-recovery-'));
   const app = await electron.launch({ args: [resolve(__dirname, '../out/main/index.js'), `--user-data-dir=${join(root, 'profile')}`] });
   try {
-    const page = await app.firstWindow();
+    const page = await app.firstWindow(); page.setDefaultTimeout(10_000);
     await app.evaluate(({ dialog }, dir) => { dialog.showOpenDialog = async () => ({ canceled: false, filePaths: [dir] }); }, join(root, 'world'));
     await page.getByTestId('btn-new-world').click();
     await expect(page.getByTestId('save-status')).toContainText('New World');
@@ -65,7 +65,8 @@ test('an error outside the dock panels shows recovery controls and keeps the wor
       } });
       const source = structuredClone(store.getState().world);
       const broken = structuredClone(source);
-      broken.meta.maps[0].name = { invalid: 'app render fault' };
+      // The world name renders in the top bar, outside every panel's own error boundary.
+      broken.meta.name = { invalid: 'app render fault' };
       // Only the valid edited map is dirty; the injected bad metadata is never saved.
       store.setState({ world: broken, dirtyWorld: false });
       return source;

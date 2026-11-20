@@ -1,3 +1,4 @@
+import { openPanel } from './context-helpers';
 import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
@@ -55,12 +56,15 @@ async function calibrateBackdrop(page: Page, unit: 'ft' | 'mi' | 'm', distance: 
     return { image, zoom: w.__atlasViewStore.getState().panels['map-main'].camera.zoom };
   });
   const before = await snapshot();
+  await openPanel(page, 'newMap');
   await page.getByTestId('btn-calibrate-scale').click();
   const canvas = page.getByTestId('panel-map-main').locator('canvas');
   const box = (await canvas.boundingBox())!;
-  await page.mouse.move(box.x + 80, box.y + 110);
+  // Floating panels sit over the canvas edges; drag across the open middle.
+  const midX = box.x + box.width / 2, midY = box.y + box.height / 2;
+  await page.mouse.move(midX - 60, midY);
   await page.mouse.down();
-  await page.mouse.move(box.x + 200, box.y + 110, { steps: 5 });
+  await page.mouse.move(midX + 60, midY, { steps: 5 });
   await page.mouse.up();
   const bar = page.getByTestId('calibration-bar');
   await bar.locator('input').fill(String(distance));
@@ -97,7 +101,7 @@ test('imports and calibrates reference maps 02, 03, 04; rendered images and dime
     });
 
     try {
-      const win1 = await app1.firstWindow();
+      const win1 = await app1.firstWindow(); win1.setDefaultTimeout(10_000);
       await win1.waitForLoadState('domcontentloaded');
 
       // 1. Create world
@@ -111,6 +115,7 @@ test('imports and calibrates reference maps 02, 03, 04; rendered images and dime
       await app1.evaluate(({ dialog }, file) => {
         dialog.showOpenDialog = async () => ({ canceled: false, filePaths: [file] });
       }, img02);
+      await openPanel(win1, 'newMap');
       await win1.getByTestId('btn-import-backdrop').click();
       await expect(win1.getByTestId('panel-map-main')).toHaveAttribute('data-entity-count', '1');
       await expectBackdropRendered(app1, win1);
@@ -119,14 +124,17 @@ test('imports and calibrates reference maps 02, 03, 04; rendered images and dime
       await win1.getByTestId('panel-map-main').screenshot({ path: testInfo.outputPath('world-backdrop.png') });
 
       // 3. Create settlement map & import 03-khartoum-city.jpg
+      await openPanel(win1, 'newMap');
       await win1.getByTestId('input-new-map-name').fill('Khartoum');
+      await openPanel(win1, 'newMap');
       await win1.getByTestId('select-new-map-kind').selectOption('settlement');
       await win1.getByTestId('btn-create-map').click();
-      await expect(win1.getByTestId('panel-map-main')).toContainText('Khartoum (settlement)');
+      await expect(win1.getByTestId('active-map-title')).toContainText('Khartoum (settlement)');
 
       await app1.evaluate(({ dialog }, file) => {
         dialog.showOpenDialog = async () => ({ canceled: false, filePaths: [file] });
       }, img03);
+      await openPanel(win1, 'newMap');
       await win1.getByTestId('btn-import-backdrop').click();
       await expect(win1.getByTestId('panel-map-main')).toHaveAttribute('data-entity-count', '1');
       await expectBackdropRendered(app1, win1);
@@ -135,14 +143,17 @@ test('imports and calibrates reference maps 02, 03, 04; rendered images and dime
       await win1.getByTestId('panel-map-main').screenshot({ path: testInfo.outputPath('city-backdrop.png') });
 
       // 4. Create interior map & import 04-pyramid-interior.jpg
+      await openPanel(win1, 'newMap');
       await win1.getByTestId('input-new-map-name').fill('Pyramid');
+      await openPanel(win1, 'newMap');
       await win1.getByTestId('select-new-map-kind').selectOption('interior');
       await win1.getByTestId('btn-create-map').click();
-      await expect(win1.getByTestId('panel-map-main')).toContainText('Pyramid (interior)');
+      await expect(win1.getByTestId('active-map-title')).toContainText('Pyramid (interior)');
 
       await app1.evaluate(({ dialog }, file) => {
         dialog.showOpenDialog = async () => ({ canceled: false, filePaths: [file] });
       }, img04);
+      await openPanel(win1, 'newMap');
       await win1.getByTestId('btn-import-backdrop').click();
       await expect(win1.getByTestId('panel-map-main')).toHaveAttribute('data-entity-count', '1');
       await expectBackdropRendered(app1, win1);
@@ -166,7 +177,7 @@ test('imports and calibrates reference maps 02, 03, 04; rendered images and dime
     });
 
     try {
-      const win2 = await app2.firstWindow();
+      const win2 = await app2.firstWindow(); win2.setDefaultTimeout(10_000);
       await win2.waitForLoadState('domcontentloaded');
 
       await app2.evaluate(({ dialog }, dir) => {
@@ -187,12 +198,12 @@ test('imports and calibrates reference maps 02, 03, 04; rendered images and dime
       expect(images).toEqual(calibrated);
 
       await mapItems.nth(1).click();
-      await expect(win2.getByTestId('panel-map-main')).toContainText('Khartoum (settlement)');
+      await expect(win2.getByTestId('active-map-title')).toContainText('Khartoum (settlement)');
       await expect(win2.getByTestId('panel-map-main')).toHaveAttribute('data-entity-count', '1');
       await expectBackdropRendered(app2, win2);
 
       await mapItems.nth(2).click();
-      await expect(win2.getByTestId('panel-map-main')).toContainText('Pyramid (interior)');
+      await expect(win2.getByTestId('active-map-title')).toContainText('Pyramid (interior)');
       await expect(win2.getByTestId('panel-map-main')).toHaveAttribute('data-entity-count', '1');
       await expectBackdropRendered(app2, win2);
     } finally {

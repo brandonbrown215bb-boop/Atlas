@@ -14,7 +14,7 @@ test('map panel pops out, renders while main is minimised, docks back, and retur
   });
 
   try {
-    const main = await app.firstWindow();
+    const main = await app.firstWindow(); main.setDefaultTimeout(10_000);
     await main.waitForLoadState('domcontentloaded');
     await app.evaluate(({ dialog }, dir) => {
       dialog.showOpenDialog = async () => ({ canceled: false, filePaths: [dir] });

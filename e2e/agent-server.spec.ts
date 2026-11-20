@@ -19,7 +19,7 @@ test('MCP agent server: auth, world_create, command_run, map_get, render_png, un
     });
 
     try {
-      const win = await app.firstWindow();
+      const win = await app.firstWindow(); win.setDefaultTimeout(10_000);
       await win.waitForLoadState('domcontentloaded');
 
       // Open Settings panel to verify UI entry and read server URL + token

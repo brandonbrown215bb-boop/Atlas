@@ -18,7 +18,7 @@ test('phase 7: UI moves and MCP copies re-climate biomes while keeping manual wo
   const app = await electron.launch({ args: [resolve(__dirname, '../out/main/index.js'), `--user-data-dir=${join(dir, 'profile')}`] });
   const client = new Client({ name: 'reclimate-test', version: '1' });
   try {
-    const main = await app.firstWindow();
+    const main = await app.firstWindow(); main.setDefaultTimeout(10_000);
     await main.waitForFunction(() => Boolean((window as any).__atlasWorldStore));
     await app.evaluate(({ dialog }, path) => { dialog.showOpenDialog = async () => ({ canceled: false, filePaths: [path] }); }, source);
     await main.getByTestId('btn-new-world').click();

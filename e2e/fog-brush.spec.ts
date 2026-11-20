@@ -1,4 +1,4 @@
-import { chooseTool } from './context-helpers';
+import { chooseTool, clearStage, openPanel } from './context-helpers';
 import { mkdtempSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
@@ -8,7 +8,7 @@ test('fog strokes, holes and undo render correctly in GM and player windows', as
   const dir = mkdtempSync(join(tmpdir(), 'atlas-fog-check-'));
   const app = await electron.launch({ args: [resolve(__dirname, '../out/main/index.js'), `--user-data-dir=${join(dir, 'profile')}`] });
   try {
-    const main = await app.firstWindow();
+    const main = await app.firstWindow(); main.setDefaultTimeout(10_000);
     await app.evaluate(({ dialog }, path) => { dialog.showOpenDialog = async () => ({ canceled: false, filePaths: [path] }); }, join(dir, 'world'));
     await main.getByTestId('btn-new-world').click();
     await expect(main.getByTestId('save-status')).toContainText('New World');
@@ -37,9 +37,10 @@ test('fog strokes, holes and undo render correctly in GM and player windows', as
     await expect.poll(() => playerPixel(120, 145)).toBeGreaterThan(150);
     const exposed = await playerPixel(120, 145);
     await main.getByRole('button', { name: 'Hide all', exact: true }).click();
-    await expect.poll(() => playerPixel(120, 145)).toBe(0);
+    await expect.poll(() => playerPixel(120, 145)).toBeLessThan(60); // fog is dark, with paper grain on top
     await chooseTool(main,'fog');
     await main.getByLabel('Fog brush radius').fill('10');
+    await clearStage(main); // the strokes and GM pixel checks sit where the Tools panel floats
     const box = (await canvas.boundingBox())!;
     const before = await snapshot();
     await main.mouse.move(box.x + 120, box.y + 145);
@@ -47,31 +48,36 @@ test('fog strokes, holes and undo render correctly in GM and player windows', as
     await main.mouse.move(box.x + 320, box.y + 145, { steps: 12 });
     await main.mouse.up();
     await main.mouse.move(5, 5);
-    await expect.poll(() => playerPixel(120, 145)).toBe(exposed);
-    await expect.poll(() => playerPixel(420, 245)).toBe(0);
+    await expect.poll(() => playerPixel(120, 145)).toBeGreaterThan(150); // exposed: textured floor varies a little from spot to spot
+    await expect.poll(() => playerPixel(420, 245)).toBeLessThan(60);
     const revealed = await snapshot();
     expect(revealed.history).toBe(before.history + 1);
+    await openPanel(main, 'player'); // fog brush settings live in Player & fog
     await main.getByLabel('Fog brush mode').selectOption('hide');
     await main.getByLabel('Fog brush radius').fill('3');
+    await clearStage(main);
     await main.mouse.click(box.x + 220, box.y + 145);
     await main.mouse.move(5, 5);
-    await expect.poll(() => playerPixel(220, 145)).toBe(0);
-    await expect.poll(() => playerPixel(170, 145)).toBe(exposed);
+    await expect.poll(() => playerPixel(220, 145)).toBeLessThan(60);
+    await expect.poll(() => playerPixel(170, 145)).toBeGreaterThan(150); // exposed: textured floor varies a little from spot to spot
     expect((await snapshot()).fog.revealed[0].length).toBe(2);
     await main.getByTestId('btn-undo').click();
     expect((await snapshot()).fog).toEqual(revealed.fog);
-    await expect.poll(() => playerPixel(220, 145)).toBe(exposed);
+    await expect.poll(() => playerPixel(220, 145)).toBeGreaterThan(150); // exposed: textured floor varies a little from spot to spot
     await main.getByTestId('btn-redo').click();
-    await expect.poll(() => playerPixel(220, 145)).toBe(0);
+    await expect.poll(() => playerPixel(220, 145)).toBeLessThan(60);
     const gmPixels = await app.evaluate(({ nativeImage }, data) => {
       const image = nativeImage.createFromBuffer(Buffer.from(data, 'base64')), width = image.getSize().width, pixels = image.toBitmap();
       return [170, 220].map(x => pixels[(145 * width + x) * 4 + 2]!);
     }, (await canvas.screenshot()).toString('base64'));
     expect(gmPixels[0]).toBeGreaterThan(150);
-    expect(Math.abs(gmPixels[1]! * 2 - gmPixels[0]!)).toBeLessThan(4);
+    // The GM sees hidden areas through half-strength fog (textured floor, so roughly half).
+    expect(gmPixels[1]!).toBeGreaterThan(gmPixels[0]! * .3);
+    expect(gmPixels[1]!).toBeLessThan(gmPixels[0]! * .7);
     await main.screenshot({ path: testInfo.outputPath('gm-fog.png') });
     await player.screenshot({ path: testInfo.outputPath('player-fog.png') });
+    await openPanel(main, 'player');
     await main.getByRole('button', { name: 'Reveal all', exact: true }).click();
-    await expect.poll(() => playerPixel(420, 245)).toBe(exposed);
+    await expect.poll(() => playerPixel(420, 245)).toBeGreaterThan(150); // exposed: textured floor varies a little from spot to spot
   } finally { await app.close(); }
 });

@@ -1,4 +1,4 @@
-import { chooseTool } from './context-helpers';
+import { chooseTool, popOutMapView, stageOrigin } from './context-helpers';
 import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
@@ -27,7 +27,7 @@ test('Phase 2: draws and edits an area with undo/redo, then measures a route and
   const tempBase = mkdtempSync(join(tmpdir(), 'atlas-e2e-measure-'));
   const app = await electron.launch({ args: [resolve(__dirname, '../out/main/index.js'), `--user-data-dir=${join(tempBase, 'userData')}`] });
   try {
-    const win = await app.firstWindow();
+    const win = await app.firstWindow(); win.setDefaultTimeout(10_000);
     await win.waitForLoadState('domcontentloaded');
     await app.evaluate(({ dialog }, dir) => {
       dialog.showOpenDialog = async () => ({ canceled: false, filePaths: [dir] });
@@ -43,20 +43,20 @@ test('Phase 2: draws and edits an area with undo/redo, then measures a route and
     });
     const panel = win.getByTestId('panel-map-main');
     const canvas = panel.locator('canvas');
-    await expect(panel).toContainText('Drawing (site)');
+    await expect(win.getByTestId('active-map-title')).toContainText('Drawing (site)');
     await expect.poll(async () => Number(await panel.getAttribute('data-render-count'))).toBeGreaterThan(0);
     await chooseTool(win,'area');
     let box = (await canvas.boundingBox())!;
-    for (const [x, y] of [[80, 80], [240, 80], [240, 240], [80, 240]]) await win.mouse.click(box.x + x!, box.y + y!);
+    for (const [x, y] of [[80, 80], [240, 80], [240, 240], [80, 240]]) await win.mouse.click(stageOrigin(box).x + x!, stageOrigin(box).y + y!);
     await canvas.press('Enter');
     await expect(panel).toHaveAttribute('data-entity-count', '1');
     const siteSnapshot = () => win.evaluate(() => (window as unknown as TestWindow).__atlasWorldStore.getState().world.maps['site']!);
     const drawn = await siteSnapshot();
     await chooseTool(win,'pointEdit');
     box = (await canvas.boundingBox())!;
-    await win.mouse.move(box.x + 240, box.y + 80);
+    await win.mouse.move(stageOrigin(box).x + 240, stageOrigin(box).y + 80);
     await win.mouse.down();
-    await win.mouse.move(box.x + 280, box.y + 80, { steps: 4 });
+    await win.mouse.move(stageOrigin(box).x + 280, stageOrigin(box).y + 80, { steps: 4 });
     await win.mouse.up();
     const edited = await siteSnapshot();
     expect(edited.entities).not.toEqual(drawn.entities);
@@ -72,7 +72,7 @@ test('Phase 2: draws and edits an area with undo/redo, then measures a route and
       w.__atlasViewStore.getState().setPanelMap('map-main', 'route');
       w.__atlasViewStore.getState().setPanelCamera('map-main', { x: 0, y: 0, zoom: 0.1 });
     });
-    await expect(panel).toContainText('Travel (region)');
+    await expect(win.getByTestId('active-map-title')).toContainText('Travel (region)');
     await win.getByTestId('tool-btn-measure').click();
     await win.getByTestId('measure-departure').fill('23:50');
     const snapshot = () => win.evaluate(() => {
@@ -81,12 +81,12 @@ test('Phase 2: draws and edits an area with undo/redo, then measures a route and
     });
     const before = await snapshot();
     box = (await canvas.boundingBox())!;
-    for (const [x, y] of [[50, 50], [150, 50], [150, 150]]) await win.mouse.click(box.x + x!, box.y + y!);
+    for (const [x, y] of [[50, 50], [150, 50], [150, 150]]) await win.mouse.click(stageOrigin(box).x + x!, stageOrigin(box).y + y!);
     await canvas.press('Enter');
     await expect(win.getByTestId('measure-distance')).toHaveText('1.24 mi');
     await expect(win.getByTestId('measure-duration')).toHaveText('Travel: 25 min');
     await expect(win.getByTestId('measure-arrival')).toHaveText('Arrive: 00:15 (+1 day)');
-    await win.mouse.move(box.x + 200, box.y + 200);
+    await win.mouse.move(stageOrigin(box).x + 200, stageOrigin(box).y + 200);
     await expect(win.getByTestId('measure-distance')).toHaveText('1.24 mi');
     await win.getByTestId('measure-speed').fill('1.5');
     await expect(win.getByTestId('measure-duration')).toHaveText('Travel: 50 min');
@@ -106,17 +106,19 @@ test('Phase 2: draws and edits an area with undo/redo, then measures a route and
     await win.screenshot({ path: testInfo.outputPath('scheduled-route.png') });
 
     // Moving the panel into another window keeps the route and its readout.
-    const popupPromise = win.waitForEvent('popup');
-    await win.getByTestId('popout-btn-map-main').click();
-    const popup = await popupPromise;
-    await expect(popup.getByTestId('measure-distance')).toHaveText('1.24 mi');
-    await expect(popup.getByTestId('measure-arrival')).toHaveText('Arrive: 08:10 (+1 day)');
-    await popup.getByTestId('dockback-btn-map-main').click();
+    const routeMap = await win.evaluate(() => (window as any).__atlasWorldStore.getState().activeMapId);
+    const { id: viewId, popup } = await popOutMapView(win, routeMap);
+    // The readout lives in the Tools panel now; the route must survive another view popping out.
+    await expect(popup.getByTestId(`panel-${viewId}`)).toBeVisible();
+    await expect(win.getByTestId('measure-distance')).toHaveText('1.24 mi');
+    await expect(win.getByTestId('measure-arrival')).toHaveText('Arrive: 08:10 (+1 day)');
+    await popup.getByTestId(`dockback-btn-${viewId}`).click();
+    await win.evaluate(id => (window as any).__atlasHudStore.getState().closePanel(id), viewId);
     await expect(win.getByTestId('measure-distance')).toHaveText('1.24 mi');
     // A different map does not inherit the old route.
-    await win.evaluate(() => (window as unknown as TestWindow).__atlasViewStore.getState().setPanelMap('map-main', 'site'));
+    await win.evaluate(() => { const w = window as any; w.__atlasWorldStore.getState().setActiveMap('site'); const v = w.__atlasViewStore.getState(); v.setPanelMap('map-main', 'site'); v.setActiveMapPanelId('map-main'); });
     await expect(win.getByTestId('measure-bar')).toHaveAttribute('data-point-count', '0');
-    await win.evaluate(() => (window as unknown as TestWindow).__atlasViewStore.getState().setPanelMap('map-main', 'route'));
+    await win.evaluate(() => { const w = window as any; w.__atlasWorldStore.getState().setActiveMap('route'); const v = w.__atlasViewStore.getState(); v.setPanelMap('map-main', 'route'); v.setActiveMapPanelId('map-main'); });
     await expect(win.getByTestId('measure-bar')).toHaveAttribute('data-point-count', '3');
     await win.getByTestId('measure-clear').click();
     await expect(win.getByTestId('measure-distance')).toHaveText('0 ft');

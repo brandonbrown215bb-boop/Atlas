@@ -1,4 +1,4 @@
-import { generationSettings } from './context-helpers';
+import { generationSettings, generationPanel } from './context-helpers';
 import { mkdtempSync, readFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
@@ -13,7 +13,7 @@ test('phase 7: continent commands, UI settings, manual lake reroll, undo and sav
   const app = await electron.launch({ args: [resolve(__dirname, '../out/main/index.js'), `--user-data-dir=${join(dir, 'profile')}`] });
   const client = new Client({ name: 'continent-test', version: '1' });
   try {
-    const main = await app.firstWindow();
+    const main = await app.firstWindow(); main.setDefaultTimeout(10_000);
     await main.waitForFunction(() => Boolean((window as any).__atlasWorldStore));
     const info = await main.evaluate(() => (window as any).atlasApi.getAgentInfo());
     await client.connect(new StreamableHTTPClientTransport(new URL(info.url), { requestInit: { headers: { Authorization: `Bearer ${info.token}` } } }));
@@ -67,7 +67,7 @@ test('phase 7: continent commands, UI settings, manual lake reroll, undo and sav
     // The climate command is a separate undo step from the terrain reroll.
     await main.getByLabel('Sea level').fill('0.5');
     await main.getByText('World climate and biome table', { exact: true }).click();
-    await main.getByTestId('generation-strip').getByRole('button', { name: 'Try another', exact: true }).click();
+    await (await generationPanel(main)).getByRole('button', { name: 'Try another', exact: true }).click();
     await expect(main.getByTestId('generation-settings')).toHaveAttribute('aria-busy','false');
     await expect(main.getByTestId('generation-settings').getByRole('alert')).toHaveCount(0);
     const rerolled: MapDoc = await call('map_get', { mapId: 'continent' });

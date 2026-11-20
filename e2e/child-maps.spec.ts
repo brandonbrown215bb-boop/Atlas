@@ -18,7 +18,7 @@ test('develops a child area, zooms through parent <-> child, opens place interio
     });
 
     try {
-      const win = await app.firstWindow();
+      const win = await app.firstWindow(); win.setDefaultTimeout(10_000);
       win.on('pageerror', (err) => console.error('PAGEERROR:', err));
       await win.waitForLoadState('domcontentloaded');
 
@@ -79,7 +79,7 @@ test('develops a child area, zooms through parent <-> child, opens place interio
         w.__atlasWorldStore.getState().setActiveMap('region-1');
         w.__atlasViewStore.getState().setPanelMap('map-main', 'region-1');
       });
-      await expect(win.getByTestId('panel-map-main')).toContainText('Big Region (region)');
+      await expect(win.getByTestId('active-map-title')).toContainText('Big Region (region)');
 
       // Use Develop Area tool by dragging a rectangle on the canvas
       await chooseTool(win,'developArea');
@@ -96,7 +96,7 @@ test('develops a child area, zooms through parent <-> child, opens place interio
       await win.getByTestId('btn-confirm-develop').click();
 
       // Panel switched to the new child map and inherited the clipped land area
-      await expect(win.getByTestId('panel-map-main')).toContainText('Town Square (settlement)');
+      await expect(win.getByTestId('active-map-title')).toContainText('Town Square (settlement)');
       await expect(win.getByTestId('panel-map-main')).toHaveAttribute('data-entity-count', '1');
 
       // Zoom out past child bounds -> switches back to parent region-1
@@ -104,13 +104,13 @@ test('develops a child area, zooms through parent <-> child, opens place interio
       for (let i = 0; i < 12; i++) {
         await win.mouse.wheel(0, 120);
       }
-      await expect(win.getByTestId('panel-map-main')).toContainText('Big Region (region)');
+      await expect(win.getByTestId('active-map-title')).toContainText('Big Region (region)');
 
       // Zoom back in over the center -> switches into Town Square
       for (let i = 0; i < 16; i++) {
         await win.mouse.wheel(0, -120);
       }
-      await expect(win.getByTestId('panel-map-main')).toContainText('Town Square (settlement)');
+      await expect(win.getByTestId('active-map-title')).toContainText('Town Square (settlement)');
 
       // Create a building + place on Town Square and open its interior
       await win.evaluate(() => {
@@ -153,20 +153,20 @@ test('develops a child area, zooms through parent <-> child, opens place interio
       await win.getByTestId('btn-create-place').click();
       await win.getByTestId('btn-open-interior').click();
 
-      // Switch back to the Map tab (Places opened in the same tab group)
-      await win.getByRole('tab', { name: 'Map', exact: true }).click();
-      await expect(win.getByTestId('panel-map-main')).toContainText(
+      await expect(win.getByTestId('active-map-title')).toContainText(
         'Wayfarer Inn Interior (interior)',
       );
 
       // Add a portal back to map-1 and follow it via Inspector
       await chooseTool(win,'portal');
       await win.getByTestId('select-portal-target').selectOption('map-1');
+      // Places floats over the middle of the map, where the portal goes.
+      await win.evaluate(() => (window as any).__atlasHudStore.getState().closePanel('places'));
       await win.mouse.click(box.x + box.width / 2, box.y + box.height / 2);
 
       await expect(win.getByTestId('btn-follow-portal')).toBeVisible();
       await win.getByTestId('btn-follow-portal').click();
-      await expect(win.getByTestId('panel-map-main')).toContainText('Overworld (world)');
+      await expect(win.getByTestId('active-map-title')).toContainText('Overworld (world)');
     } finally {
       await app.close();
     }

@@ -21,7 +21,7 @@ test('creates a world, adds an entity, restarts the app, and finds the entity', 
     });
 
     try {
-      const win1 = await app1.firstWindow();
+      const win1 = await app1.firstWindow(); win1.setDefaultTimeout(10_000);
       await win1.waitForLoadState('domcontentloaded');
 
       await app1.evaluate(({ dialog }, dir) => {
@@ -69,7 +69,7 @@ test('creates a world, adds an entity, restarts the app, and finds the entity', 
     });
 
     try {
-      const win2 = await app2.firstWindow();
+      const win2 = await app2.firstWindow(); win2.setDefaultTimeout(10_000);
       await win2.waitForLoadState('domcontentloaded');
 
       const found = await win2.evaluate(async () => {

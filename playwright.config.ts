@@ -5,4 +5,6 @@ export default defineConfig({
   timeout: 30_000,
   retries: 0,
   workers: 1,
+  // A click that never lands should fail on its own line, not as an anonymous test timeout.
+  use: { actionTimeout: 10_000 },
 });

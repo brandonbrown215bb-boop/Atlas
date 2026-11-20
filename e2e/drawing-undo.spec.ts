@@ -1,4 +1,4 @@
-import { chooseTool } from './context-helpers';
+import { chooseTool, stageOrigin, openPanel } from './context-helpers';
 import { mkdtempSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
@@ -8,21 +8,23 @@ test('drawing Undo removes points without undoing the map or layer, and Redo res
   const tempBase = mkdtempSync(join(tmpdir(), 'atlas-drawing-undo-'));
   const app = await electron.launch({ args: [resolve(__dirname, '../out/main/index.js'), `--user-data-dir=${join(tempBase, 'userData')}`] });
   try {
-    const win = await app.firstWindow();
+    const win = await app.firstWindow(); win.setDefaultTimeout(10_000);
     await win.waitForLoadState('domcontentloaded');
     await app.evaluate(({ dialog }, dir) => {
       dialog.showOpenDialog = async () => ({ canceled: false, filePaths: [dir] });
     }, join(tempBase, 'World'));
     await win.getByTestId('btn-new-world').click();
     await expect(win.getByTestId('save-status')).toContainText('New World');
+    await openPanel(win, 'newMap');
     await win.getByTestId('input-new-map-name').fill('Tracing');
+    await openPanel(win, 'newMap');
     await win.getByTestId('select-new-map-kind').selectOption('site');
     await win.getByTestId('btn-create-map').click();
     await win.getByPlaceholder('New layer name...').fill('Land');
     await win.getByTestId('btn-add-layer').click();
     const panel = win.getByTestId('panel-map-main');
     const canvas = panel.locator('canvas');
-    await expect(panel).toContainText('Tracing (site)');
+    await expect(win.getByTestId('active-map-title')).toContainText('Tracing (site)');
     await expect.poll(async () => Number(await panel.getAttribute('data-render-count'))).toBeGreaterThan(0);
     const snapshot = () => win.evaluate(() => {
       const state = (window as any).__atlasWorldStore.getState();
@@ -33,7 +35,7 @@ test('drawing Undo removes points without undoing the map or layer, and Redo res
     await chooseTool(win,'area');
     const box = (await canvas.boundingBox())!;
     for (const [x, y] of [[80, 80], [240, 80], [240, 240], [80, 240]]) {
-      await win.mouse.click(box.x + x!, box.y + y!);
+      await win.mouse.click(stageOrigin(box).x + x!, stageOrigin(box).y + y!);
     }
     // Undo past the first point must stay in the draft, never reach layer.add.
     for (let i = 0; i < 6; i++) await canvas.press('Control+z');
@@ -55,7 +57,7 @@ test('drawing Undo removes points without undoing the map or layer, and Redo res
     await canvas.press('Control+y');
     expect(await snapshot()).toEqual(drawn);
     // Escape releases an empty draft's history protection.
-    await win.mouse.click(box.x + 300, box.y + 300);
+    await win.mouse.click(stageOrigin(box).x + 300, stageOrigin(box).y + 300);
     await canvas.press('Control+z');
     await canvas.press('Escape');
     await canvas.press('Control+z');

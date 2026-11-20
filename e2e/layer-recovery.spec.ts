@@ -1,3 +1,4 @@
+import { generationPanel, openPanel } from './context-helpers';
 import { mkdtempSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
@@ -7,7 +8,7 @@ test('repairs stranded ocean contents and populates the selected unlocked geogra
   const root=mkdtempSync(join(tmpdir(),'atlas-layer-recovery-'));
   const app=await electron.launch({args:[resolve(__dirname,'../out/main/index.js'),`--user-data-dir=${join(root,'profile')}`]});
   try {
-    const page=await app.firstWindow();
+    const page=await app.firstWindow(); page.setDefaultTimeout(10_000);
     await app.evaluate(({dialog},path)=>{dialog.showOpenDialog=async()=>({canceled:false,filePaths:[path]});},join(root,'world'));
     await page.getByTestId('btn-new-world').click();
     await page.evaluate(()=>{
@@ -21,15 +22,16 @@ test('repairs stranded ocean contents and populates the selected unlocked geogra
         ocean:{...base,id:'ocean',role:'water',waterKind:'ocean',layerId:'missing-layer',rings:[ring(0,0,1000,1000)]}};
       s.loadWorld(world.meta,world.maps,s.worldPath);
     });
+    await openPanel(page, 'newMap');
     await page.getByRole('button',{name:'Repair Existing World…',exact:true}).click();
     await expect(page.getByRole('region',{name:'Repair preview'})).toContainText('deleted layers');
     await page.getByRole('button',{name:'Apply Repair',exact:true}).click();
     await expect(page.getByTestId('layer-delete-missing-layer')).toBeDisabled();
     await expect(page.getByTestId('layer-delete-geography')).toBeDisabled();
     await expect(page.getByText('Recovered contents',{exact:true})).toBeVisible();
-    await page.getByRole('button',{name:'Add terrain detail',exact:true}).click();
-    await expect(page.getByTestId('generation-strip')).toHaveAttribute('aria-busy','false');
-    await expect(page.getByTestId('generation-strip').getByRole('alert')).toHaveCount(0);
+    await (await generationPanel(page)).getByRole('button',{name:'Add terrain detail',exact:true}).click();
+    await expect((await generationPanel(page))).toHaveAttribute('aria-busy','false');
+    await expect((await generationPanel(page)).getByRole('alert')).toHaveCount(0);
     const result=await page.evaluate(()=>{
       const s=(window as any).__atlasWorldStore.getState(),map=s.world.maps[s.activeMapId];
       return {entities:Object.values(map.entities) as any[],layers:map.layers};

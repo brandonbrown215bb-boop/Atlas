@@ -1,4 +1,4 @@
-import { generationSettings } from './context-helpers';
+import { generationSettings, generationPanel } from './context-helpers';
 import { mkdtempSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
@@ -12,7 +12,7 @@ test('city: drawn constraints, district UI, named building preservation, interio
   const app=await electron.launch({args:[resolve(__dirname,'../out/main/index.js'),`--user-data-dir=${join(dir,'profile')}`]});
   const client=new Client({name:'city-test',version:'1'});
   try {
-    const main=await app.firstWindow();
+    const main=await app.firstWindow(); main.setDefaultTimeout(10_000);
     await main.waitForFunction(()=>Boolean((window as any).__atlasWorldStore));
     const info=await main.evaluate(()=>(window as any).atlasApi.getAgentInfo());
     await client.connect(new StreamableHTTPClientTransport(new URL(info.url),{requestInit:{headers:{Authorization:`Bearer ${info.token}`}}}));
@@ -46,9 +46,9 @@ test('city: drawn constraints, district UI, named building preservation, interio
       w.__atlasViewStore.getState().setPanelCamera('map-main',{x:-20,y:-10,zoom:1});
       w.__atlasViewStore.getState().setSelection(['left']);
     });
-    await main.getByTestId('generation-strip').getByRole('button',{name:'Generate district',exact:true}).click();
-    await expect(main.getByTestId('generation-strip')).toHaveAttribute('aria-busy','false');
-    expect(await main.getByTestId('generation-strip').getByRole('alert').allTextContents()).toEqual([]);
+    await (await generationPanel(main)).getByRole('button',{name:'Generate district',exact:true}).click();
+    await expect((await generationPanel(main))).toHaveAttribute('aria-busy','false');
+    expect(await (await generationPanel(main)).getByRole('alert').allTextContents()).toEqual([]);
     let map:MapDoc=await call('map_get',{mapId:'city'});
     const leftId=Object.keys(map.generators)[0]!;
     expect(map.generators[leftId]?.type).toBe('city');
@@ -64,9 +64,9 @@ test('city: drawn constraints, district UI, named building preservation, interio
     await command('theme.setRole',{themeName:'roof-test',role:'roof',packAssetIds:[found.assets[0].id]});
     await main.evaluate(()=>(window as any).__atlasViewStore.getState().setSelection(['right']));
     await (await generationSettings(main)).getByLabel('Generator theme',{exact:true}).selectOption('roof-test');
-    await main.getByTestId('generation-strip').getByLabel('District preset',{exact:true}).selectOption('estates');
-    await main.getByTestId('generation-strip').getByRole('button',{name:'Generate district',exact:true}).click();
-    await expect(main.getByTestId('generation-strip')).toHaveAttribute('aria-busy','false');
+    await (await generationPanel(main)).getByLabel('District preset',{exact:true}).selectOption('estates');
+    await (await generationPanel(main)).getByRole('button',{name:'Generate district',exact:true}).click();
+    await expect((await generationPanel(main))).toHaveAttribute('aria-busy','false');
     map=await call('map_get',{mapId:'city'});
     expect(Object.keys(map.generators)).toHaveLength(2);
     expect(map.entities.right).toMatchObject({district:{density:.35,wealth:.9,access:'restricted'}});

@@ -17,7 +17,7 @@ test('creates places from selection, filters, centers map view, edits notes, and
     });
 
     try {
-      const win = await app.firstWindow();
+      const win = await app.firstWindow(); win.setDefaultTimeout(10_000);
       win.on('pageerror', (err) => console.error('PAGEERROR:', err));
       await win.waitForLoadState('domcontentloaded');
 

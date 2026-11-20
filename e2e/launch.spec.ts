@@ -7,7 +7,7 @@ test('launches the app from app://atlas/index.html and shows the window title', 
   });
 
   try {
-    const window = await electronApp.firstWindow();
+    const window = await electronApp.firstWindow(); window.setDefaultTimeout(10_000);
     await window.waitForLoadState('domcontentloaded');
     expect(window.url()).toBe('app://atlas/index.html');
     const title = await window.title();

@@ -7,7 +7,7 @@ test('player window shares live map state and hides private content', async () =
   const dir = mkdtempSync(join(tmpdir(), 'atlas-player-'));
   const app = await electron.launch({args:[resolve(__dirname,'../out/main/index.js'), `--user-data-dir=${join(dir,'profile')}`]});
   try {
-    const main = await app.firstWindow();
+    const main = await app.firstWindow(); main.setDefaultTimeout(10_000);
     await app.evaluate(({dialog}, path) => {dialog.showOpenDialog = async () => ({canceled:false,filePaths:[path]});},join(dir,'world'));
     await main.getByTestId('btn-new-world').click();
     await expect(main.getByTestId('save-status')).toContainText('New World');
@@ -31,15 +31,24 @@ test('player window shares live map state and hides private content', async () =
     });
     await expect(player.getByTestId('player-image')).toHaveAttribute('src', publicImage!);
     await main.getByRole('button',{name:'Hide all',exact:true}).click();
+    // Hidden means dark (paper grain, frame and compass still draw on top of the fog)…
     await expect.poll(async () => {
       const src = await player.getByTestId('player-image').getAttribute('src');
-      if (!src) return false;
+      if (!src) return 255;
       return app.evaluate(({nativeImage}, data) => {
-        const pixels=nativeImage.createFromDataURL(data).toBitmap();
-        for(let i=0;i<pixels.length;i+=4) if(pixels[i] || pixels[i+1] || pixels[i+2]) return false;
-        return true;
+        const pixels=nativeImage.createFromDataURL(data).toBitmap();let bright=0;
+        for(let i=0;i<pixels.length;i+=4) if(Math.max(pixels[i]!,pixels[i+1]!,pixels[i+2]!)>60) bright++;
+        return bright/(pixels.length/4);
       },src);
-    }).toBe(true);
+    }).toBeLessThan(.02);
+    // …and nothing under the fog shows through: new map content leaves the player image unchanged.
+    const hidden = await player.getByTestId('player-image').getAttribute('src');
+    await main.evaluate(() => {
+      const state = (window as any).__atlasWorldStore.getState(), map = state.world.maps[state.activeMapId];
+      state.execute('entity.add',{mapId:map.id, entity:{id:'under-fog',type:'label',origin:'manual',rev:0,layerId:map.layers[0].id,x:10,y:40,text:'UNDER FOG',size:120}});
+    });
+    await main.waitForTimeout(800);
+    expect(await player.getByTestId('player-image').getAttribute('src')).toBe(hidden);
     await main.getByRole('button',{name:'Reveal all',exact:true}).click();
     await expect.poll(() => player.getByTestId('player-image').getAttribute('src')).not.toBeNull();
     const held = await player.getByTestId('player-image').getAttribute('src');

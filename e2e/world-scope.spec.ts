@@ -1,3 +1,4 @@
+import { generationPanel } from './context-helpers';
 import { mkdtempSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
@@ -7,7 +8,7 @@ test('a selected trace group cannot silently restrict whole-map settlement gener
   const root=mkdtempSync(join(tmpdir(),'atlas-world-scope-'));
   const app=await electron.launch({args:[resolve(__dirname,'../out/main/index.js'),`--user-data-dir=${join(root,'profile')}`]});
   try {
-    const page=await app.firstWindow();
+    const page=await app.firstWindow(); page.setDefaultTimeout(10_000);
     await app.evaluate(({dialog},path)=>{dialog.showOpenDialog=async()=>({canceled:false,filePaths:[path]});},join(root,'world'));
     await page.getByTestId('btn-new-world').click();
     await page.evaluate(()=>{
@@ -18,7 +19,7 @@ test('a selected trace group cannot silently restrict whole-map settlement gener
           rings:[[{x,y},{x:x+w,y},{x:x+w,y:y+h},{x,y:y+h}]]}});
       (window as any).__atlasViewStore.getState().setSelection(['tip','west','east']);
     });
-    const panel=page.getByTestId('generation-strip');
+    const panel=(await generationPanel(page));
     // A mixed trace selection gets no generation action. Explicitly deselect to
     // work on the whole map; it automatically follows the traced coastlines.
     await expect(panel.getByRole('button',{name:'Add terrain detail',exact:true})).toHaveCount(0);

@@ -1,3 +1,4 @@
+import { openPanel } from './context-helpers';
 import { mkdtempSync, writeFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
@@ -27,7 +28,7 @@ test('SVG import preserves holes, transforms and separate paths; roles, cancel, 
   </svg>`);
   const app = await electron.launch({ args: [resolve(__dirname, '../out/main/index.js'), `--user-data-dir=${join(tempBase, 'userData')}`] });
   try {
-    const win = await app.firstWindow();
+    const win = await app.firstWindow(); win.setDefaultTimeout(10_000);
     await win.waitForLoadState('domcontentloaded');
     await app.evaluate(({ dialog }, dir) => {
       dialog.showOpenDialog = async () => ({ canceled: false, filePaths: [dir] });
@@ -44,6 +45,7 @@ test('SVG import preserves holes, transforms and separate paths; roles, cancel, 
     }, svgPath);
     const requests: string[] = [];
     win.on('request', (request) => { if (request.url().includes('must-not-load')) requests.push(request.url()); });
+    await openPanel(win, 'newMap');
     await win.getByTestId('btn-import-svg').click();
     const dialog = win.getByRole('dialog', { name: 'Import SVG', exact: true });
     await expect(dialog).toBeVisible();
@@ -82,11 +84,13 @@ test('SVG import preserves holes, transforms and separate paths; roles, cancel, 
     expect(await snapshot()).toEqual(before);
     await win.getByTestId('btn-redo').click();
     expect(await snapshot()).toEqual(imported);
+    await openPanel(win, 'newMap');
     await win.getByTestId('btn-import-svg').click();
     await expect(dialog).toBeVisible();
     await dialog.getByRole('button', { name: 'Cancel', exact: true }).click();
     expect(await snapshot()).toEqual(imported);
     writeFileSync(svgPath, '<svg><path></svg>');
+    await openPanel(win, 'newMap');
     await win.getByTestId('btn-import-svg').click();
     await expect(win.getByRole('alert').filter({ hasText: 'not a valid SVG' })).toBeVisible();
     expect(await snapshot()).toEqual(imported);

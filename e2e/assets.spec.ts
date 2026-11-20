@@ -1,3 +1,4 @@
+import { popOutMapView } from './context-helpers';
 import { mkdtempSync, mkdirSync, writeFileSync, existsSync, readFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
@@ -13,7 +14,7 @@ test('indexes an asset folder, browses nested folders, searches tags and loads c
   writeFileSync(join(images, 'Oak_Green.png'), png);
   const app = await electron.launch({ args: [resolve(__dirname, '../out/main/index.js'), `--user-data-dir=${join(root,'userData')}`] });
   try {
-    const win = await app.firstWindow();
+    const win = await app.firstWindow(); win.setDefaultTimeout(10_000);
     await win.evaluate(async path => { await (window as unknown as { atlasApi: AtlasApi }).atlasApi.registerPack(path); }, join(root,'Art'));
     await win.getByTestId('btn-assets').click();
     const panel = win.getByTestId('assets-panel');
@@ -43,7 +44,7 @@ test('MCP stamps portable props and textures with one undo step; UI can stamp th
   const worldDir = join(root,'World');
   const app = await electron.launch({ args: [resolve(__dirname, '../out/main/index.js'), `--user-data-dir=${join(root,'userData')}`] });
   try {
-    const win = await app.firstWindow();
+    const win = await app.firstWindow(); win.setDefaultTimeout(10_000);
     const source = join(art,'Tree.png');
     const bytes = await app.evaluate(({ nativeImage }) => {
       const pixels = Buffer.alloc(200*400*4);
@@ -108,29 +109,35 @@ test('MCP stamps portable props and textures with one undo step; UI can stamp th
         const w = window as any;
         w.__atlasWorldStore.getState().setActiveMap('site');
         const v = w.__atlasViewStore.getState();
-        v.setPanelMap('map-main', 'site'); v.setPanelCamera('map-main', { x: 20, y: 20, zoom: 18 });
+        v.setPanelMap('map-main', 'site');
       });
-      const greenPixels = async (page: import('@playwright/test').Page) => app.evaluate(({ nativeImage }, data) => {
+      // Floating panels cover the canvas corners in the main window, so draw the art in the open middle there.
+      const mainBox = (await win.getByTestId('panel-map-main').locator('canvas').boundingBox())!;
+      const shift = { x: Math.round(mainBox.width / 2 - 160), y: Math.round(mainBox.height / 2 - 160) };
+      await win.evaluate(shift => (window as any).__atlasViewStore.getState().setPanelCamera('map-main', { x: 20 + shift.x, y: 20 + shift.y, zoom: 18 }), shift);
+      const greenPixels = async (page: import('@playwright/test').Page, panelId = 'map-main', off = shift) => app.evaluate(({ nativeImage }, { data, off }) => {
         const image = nativeImage.createFromBuffer(Buffer.from(data, 'base64')), width = image.getSize().width, pixels = image.toBitmap();
-        const greenAt = (x: number, y: number) => pixels[(y * width + x) * 4 + 1]! > 120 && pixels[(y * width + x) * 4 + 2]! < 80;
+        const greenAt = (x: number, y: number) => { x += off.x; y += off.y; return pixels[(y * width + x) * 4 + 1]! > 120 && pixels[(y * width + x) * 4 + 2]! < 80; };
         return { floor: greenAt(56, 56), hole: greenAt(92, 92), path: greenAt(92, 236), wall: greenAt(290, 236), prop: greenAt(236, 110) };
-      }, (await page.getByTestId('panel-map-main').locator('canvas').screenshot()).toString('base64'));
+      }, { data: (await page.getByTestId(`panel-${panelId}`).locator('canvas').screenshot()).toString('base64'), off });
       const visibleArt = { floor: true, hole: false, path: true, wall: true, prop: true };
+      // Assets/Places/Generator/Settings open over the middle of the map, where the art is drawn.
+      await win.evaluate(() => { const hud = (window as any).__atlasHudStore.getState(); for (const id of ['assets', 'places', 'generator', 'settings']) hud.closePanel(id); });
       await expect.poll(() => greenPixels(win)).toEqual(visibleArt);
       await win.getByTestId(`layer-visible-${layerId}`).click();
       await expect.poll(() => greenPixels(win)).toEqual({ floor: false, hole: false, path: false, wall: false, prop: false });
       await win.getByTestId(`layer-visible-${layerId}`).click();
       await expect.poll(() => greenPixels(win)).toEqual(visibleArt);
-      const popupReady = win.waitForEvent('popup');
-      await win.getByTestId('popout-btn-map-main').click();
-      const popup = await popupReady;
-      await expect.poll(() => greenPixels(popup)).toEqual(visibleArt);
-      await popup.getByTestId('panel-map-main').screenshot({ path: testInfo.outputPath('textured-popout.png') });
+      const { id: viewId, popup } = await popOutMapView(win, 'site', { x: 20, y: 20, zoom: 18 });
+      const inPopup = { x: 0, y: 0 };
+      await expect.poll(() => greenPixels(popup, viewId, inPopup)).toEqual(visibleArt);
+      await popup.getByTestId(`panel-${viewId}`).screenshot({ path: testInfo.outputPath('textured-popout.png') });
       await win.getByTestId(`layer-visible-${layerId}`).click();
-      await expect.poll(() => greenPixels(popup)).toEqual({ floor: false, hole: false, path: false, wall: false, prop: false });
+      await expect.poll(() => greenPixels(popup, viewId, inPopup)).toEqual({ floor: false, hole: false, path: false, wall: false, prop: false });
       await win.getByTestId(`layer-visible-${layerId}`).click();
-      await expect.poll(() => greenPixels(popup)).toEqual(visibleArt);
-      await popup.getByTestId('dockback-btn-map-main').click();
+      await expect.poll(() => greenPixels(popup, viewId, inPopup)).toEqual(visibleArt);
+      await popup.getByTestId(`dockback-btn-${viewId}`).click();
+      await win.evaluate(id => (window as any).__atlasHudStore.getState().closePanel(id), viewId);
       await expect.poll(() => greenPixels(win)).toEqual(visibleArt);
       // Visibility changes have their own undo steps; return to the stamping transaction.
       for (let i = 0; i < 4; i++) await call('undo');
@@ -141,10 +148,11 @@ test('MCP stamps portable props and textures with one undo step; UI can stamp th
       await win.getByTestId('btn-assets').click();
       await win.getByTestId('assets-panel').getByRole('button',{name:'Tree.png',exact:true}).click();
       await win.getByRole('button',{name:'Stamp on map'}).click();
-      // Docking put Map alongside Assets; activate its tab before stamping.
-      await win.locator('.dv-tab').filter({hasText:/^Map$/}).click();
+      // The Assets panel floats over the middle of the map; put it away before clicking the canvas.
+      const hideAssets = () => win.evaluate(() => (window as any).__atlasHudStore.getState().closePanel('assets'));
+      await hideAssets();
       const canvas = win.getByTestId('canvas-host-map-main').locator('canvas');
-      await canvas.click({position:{x:100,y:100}});
+      await canvas.click({position:{x:mainBox.width/2,y:mainBox.height/2}});
       await expect.poll(async () => Object.values((await call('map_get',{mapId:'site'})).entities).filter((e:any) => e.type==='prop').length).toBe(2);
       await win.getByTestId('btn-assets').click();
       await win.getByLabel('Theme role',{exact:true}).selectOption('rock');
@@ -158,8 +166,8 @@ test('MCP stamps portable props and textures with one undo step; UI can stamp th
       await win.getByText('Built-in flat props',{exact:true}).click();
       await win.getByTestId('assets-panel').getByRole('button',{name:'bed',exact:true}).click();
       await win.getByRole('button',{name:'Stamp on map'}).click();
-      await win.locator('.dv-tab').filter({hasText:/^Map$/}).click();
-      await canvas.click({position:{x:150,y:120}});
+      await hideAssets();
+      await canvas.click({position:{x:mainBox.width/2+50,y:mainBox.height/2+20}});
       await expect.poll(async () => Object.values((await call('map_get',{mapId:'site'})).entities).some((e:any) => e.builtin==='bed')).toBe(true);
       await win.getByTestId('btn-save-now').click();
       await expect(win.getByTestId('save-status')).toContainText('Saved');
@@ -168,7 +176,7 @@ test('MCP stamps portable props and textures with one undo step; UI can stamp th
   // A fresh machine profile has no registered packs; copied art still renders.
   const app2 = await electron.launch({ args:[resolve(__dirname,'../out/main/index.js'),`--user-data-dir=${join(root,'second-machine')}`] });
   try {
-    const win = await app2.firstWindow();
+    const win = await app2.firstWindow(); win.setDefaultTimeout(10_000);
     await expect(win.getByTestId('btn-settings')).toBeVisible();
     const info = await win.evaluate(() => (window as unknown as {atlasApi:AtlasApi}).atlasApi.getAgentInfo());
     const client = new Client({name:'portable-test',version:'1'});
@@ -201,7 +209,7 @@ test('imports a Dungeondraft fixture through Settings and leaves the library unc
   const bad=join(root,'Bad.dungeondraft_pack');writeFileSync(bad,'not a pack');
   const app=await electron.launch({args:[resolve(__dirname,'../out/main/index.js'),`--user-data-dir=${join(root,'userData')}`]});
   try {
-    const win=await app.firstWindow();await win.getByTestId('btn-settings').click();
+    const win=await app.firstWindow(); win.setDefaultTimeout(10_000);await win.getByTestId('btn-settings').click();
     await app.evaluate(({dialog},file)=>{dialog.showOpenDialog=async()=>({canceled:false,filePaths:[file]});},source);
     await win.getByRole('button',{name:'Import Dungeondraft pack'}).click();
     await expect(win.getByLabel('Demo pixels per square')).toHaveValue('256');

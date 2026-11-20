@@ -10,7 +10,7 @@ test('UI copies and forks worlds, then moves a map tree with undo and persisted 
   createWorldFolder(target,'Target');
   const app=await electron.launch({args:[resolve(__dirname,'../out/main/index.js'),`--user-data-dir=${join(dir,'profile')}`]});
   try {
-    const main=await app.firstWindow();
+    const main=await app.firstWindow(); main.setDefaultTimeout(10_000);
     await main.waitForFunction(()=>Boolean((window as any).__atlasWorldStore));
     await app.evaluate(({dialog},path)=>{dialog.showOpenDialog=async()=>({canceled:false,filePaths:[path]});},source);
     await main.getByTestId('btn-new-world').click();
@@ -42,7 +42,7 @@ test('linked copy previews conflicts, takes the chosen version with portable ass
   createWorldFolder(target,'Target');
   const app=await electron.launch({args:[resolve(__dirname,'../out/main/index.js'),`--user-data-dir=${join(dir,'profile')}`]});
   try {
-    const main=await app.firstWindow();await main.waitForFunction(()=>Boolean((window as any).__atlasWorldStore));
+    const main=await app.firstWindow(); main.setDefaultTimeout(10_000);await main.waitForFunction(()=>Boolean((window as any).__atlasWorldStore));
     await app.evaluate(({dialog},path)=>{dialog.showOpenDialog=async()=>({canceled:false,filePaths:[path]});},source);
     await main.getByTestId('btn-new-world').click();await expect(main.getByTestId('save-status')).toContainText('New World');
     await main.evaluate(()=>{

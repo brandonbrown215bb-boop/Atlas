@@ -1,3 +1,4 @@
+import { clearStage } from './context-helpers';
 import { mkdtempSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
@@ -8,7 +9,7 @@ test('renders the traced coastline that overflowed polygon ring nesting', async 
   const root=mkdtempSync(join(tmpdir(),'atlas-trace-coast-'));
   const app=await electron.launch({args:[resolve(__dirname,'../out/main/index.js'),`--user-data-dir=${join(root,'profile')}`]});
   try {
-    const page=await app.firstWindow();
+    const page=await app.firstWindow(); page.setDefaultTimeout(10_000);
     const errors:string[]=[];page.on('pageerror',e=>errors.push(e.message));
     await app.evaluate(({dialog},path)=>{dialog.showOpenDialog=async()=>({canceled:false,filePaths:[path]});},join(root,'world'));
     await page.getByTestId('btn-new-world').click();
@@ -20,6 +21,7 @@ test('renders the traced coastline that overflowed polygon ring nesting', async 
       s.execute('entity.add',{mapId:map.id,entity:{...base,id:'traced-land',role:'land',rings:rings(coast.land)}});
       s.execute('entity.add',{mapId:map.id,entity:{...base,id:'ocean',role:'water',waterKind:'ocean',rings:rings(coast.ocean)}});
     },coast);
+    await clearStage(page); // read the map's own pixels, not the floating panels over it
     await page.getByTestId('fit-map').click();
     const panel=page.getByTestId('panel-map-main');
     await expect.poll(async()=>Number(await panel.getAttribute('data-entity-count'))).toBeGreaterThan(1);
@@ -27,7 +29,7 @@ test('renders the traced coastline that overflowed polygon ring nesting', async 
     const png=await panel.locator('canvas').screenshot();
     const colors=await app.evaluate(({nativeImage},data)=>{
       const pixels=nativeImage.createFromBuffer(Buffer.from(data,'base64')).toBitmap();let land=0,water=0;
-      for(let i=0;i<pixels.length;i+=4){const b=pixels[i]!,g=pixels[i+1]!,r=pixels[i+2]!;if(g>r*1.2&&g>b*1.05)land++;if(b>r*1.5&&b>g*1.1)water++;}
+      for(let i=0;i<pixels.length;i+=4){const b=pixels[i]!,g=pixels[i+1]!,r=pixels[i+2]!;if(r>150&&g>150)land++; /* land is pale parchment, well above the sea's brightness */if(b>r*1.5&&b>g*1.1)water++;}
       return {land,water};
     },png.toString('base64'));
     expect(colors.land).toBeGreaterThan(100);expect(colors.water).toBeGreaterThan(100);
@@ -41,7 +43,7 @@ test('a panel render failure keeps the toolbar and world alive and can be retrie
   const root = mkdtempSync(join(tmpdir(), 'atlas-panel-recovery-'));
   const app = await electron.launch({ args: [resolve(__dirname, '../out/main/index.js'), `--user-data-dir=${join(root, 'profile')}`] });
   try {
-    const page = await app.firstWindow();
+    const page = await app.firstWindow(); page.setDefaultTimeout(10_000);
     await app.evaluate(({ dialog }, path) => { dialog.showOpenDialog = async () => ({ canceled: false, filePaths: [path] }); }, join(root, 'world'));
     await page.getByTestId('btn-new-world').click();
     await expect(page.getByTestId('panel-map-main')).toBeVisible();

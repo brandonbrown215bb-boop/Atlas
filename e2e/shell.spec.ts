@@ -21,7 +21,7 @@ test('shell persists popout layout per world and toggles theme in all windows', 
     });
 
     try {
-      const win1 = await app1.firstWindow();
+      const win1 = await app1.firstWindow(); win1.setDefaultTimeout(10_000);
       await win1.waitForLoadState('domcontentloaded');
 
       // Create world via preload API and load it into the UI? Wait: let's check how UI loads it!
@@ -80,7 +80,7 @@ test('shell persists popout layout per world and toggles theme in all windows', 
     });
 
     try {
-      const win2 = await app2.firstWindow();
+      const win2 = await app2.firstWindow(); win2.setDefaultTimeout(10_000);
       await win2.waitForLoadState('domcontentloaded');
 
       await app2.evaluate(({ dialog }, dir) => {

@@ -1,4 +1,4 @@
-import { generationSettings } from './context-helpers';
+import { generationSettings, generationPanel } from './context-helpers';
 import { mkdtempSync, readFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
@@ -12,7 +12,7 @@ test('phase 6: MCP woodland generation, UI settings, reroll, accept, undo and po
   const app = await electron.launch({ args: [resolve(__dirname, '../out/main/index.js'), `--user-data-dir=${join(dir, 'profile')}`] });
   const client = new Client({ name: 'outdoor-test', version: '1' });
   try {
-    const main = await app.firstWindow();
+    const main = await app.firstWindow(); main.setDefaultTimeout(10_000);
     await main.waitForFunction(() => Boolean((window as any).__atlasWorldStore));
     const info = await main.evaluate(() => (window as unknown as { atlasApi: import('../src/preload').AtlasApi }).atlasApi.getAgentInfo());
     await client.connect(new StreamableHTTPClientTransport(new URL(info.url), { requestInit: { headers: { Authorization: `Bearer ${info.token}` } } }));
@@ -61,9 +61,9 @@ test('phase 6: MCP woodland generation, UI settings, reroll, accept, undo and po
     await main.getByLabel('Entrance 1 x (ft)').fill('0');
     await main.getByLabel('Entrance 1 y (ft)').fill('50');
     await main.getByLabel('Outdoor water').uncheck();
-    await main.getByTestId('generation-strip').getByRole('button', { name: 'Try another', exact: true }).click();
-    await expect(main.getByTestId('generation-strip')).toHaveAttribute('aria-busy','false');
-    await expect(main.getByTestId('generation-strip').getByRole('alert')).toHaveCount(0);
+    await (await generationPanel(main)).getByRole('button', { name: 'Try another', exact: true }).click();
+    await expect((await generationPanel(main))).toHaveAttribute('aria-busy','false');
+    await expect((await generationPanel(main)).getByRole('alert')).toHaveCount(0);
     const fromUI: MapDoc = await call('map_get', { mapId: 'forest' });
     expect(fromUI.generators.woods).toMatchObject({ type: 'glade', seed: 2, params: { water: false, entrances: [{ x: 0, y: 15.24 }] } });
     await generationSettings(main);
@@ -72,8 +72,8 @@ test('phase 6: MCP woodland generation, UI settings, reroll, accept, undo and po
     // Visual QA uses the fully rendered map with the built-in tree and bridge roles.
     await expect.poll(() => main.getByTestId('panel-map-main').getAttribute('data-entity-count')).toBe(String(Object.keys(before.entities).length));
     await main.screenshot({ path: resolve(__dirname, '../test-results/outdoor-generator.png') });
-    await main.getByTestId('generation-strip').getByText('More…',{exact:true}).click();
-    await main.getByTestId('generation-strip').getByRole('button', { name: 'Make independent', exact: true }).click();
+    await (await generationPanel(main)).getByText('More…',{exact:true}).click();
+    await (await generationPanel(main)).getByRole('button', { name: 'Make independent', exact: true }).click();
     const accepted: MapDoc = await call('map_get', { mapId: 'forest' });
     expect(accepted.generators).toEqual({});
     expect(Object.values(accepted.entities).every(e => e.origin === 'manual')).toBe(true);
