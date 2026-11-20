@@ -4,11 +4,21 @@ import { worldStore } from './store';
 const AUTOSAVE_DELAY_MS = 2000;
 const RETRY_DELAY_MS = 10_000;
 const BACKUP_INTERVAL_MS = 10 * 60 * 1000;
+// Autosave waits for a 2 s pause, but steady painting (or an agent sending a command a second)
+// never pauses. Past this long dirty, save anyway instead of waiting for quiet.
+const MAX_UNSAVED_MS = 10_000;
 
 let saveTimer: number | null = null;
 let backupTimer: number | null = null;
 let changedSinceBackup = false;
 let pendingSave: Promise<unknown> | null = null;
+let dirtySince: number | null = null;
+
+/** Commit a half-typed text field: panels save on blur/Enter, and closing the window does neither. */
+function commitFocusedField(): void {
+  const active = document.activeElement;
+  if (active instanceof HTMLElement && active !== document.body) active.blur();
+}
 
 export async function flushDirtyWorld(): Promise<void> {
   if (pendingSave) {
@@ -71,11 +81,14 @@ export function startWorldPersistence(): () => void {
     const hasDirty =
       state.dirtyWorld || Object.keys(state.dirtyMapIds).length > 0;
     if (!hasDirty || !state.worldPath) {
+      dirtySince = null;
       return;
     }
 
     changedSinceBackup = true;
-    scheduleSave(AUTOSAVE_DELAY_MS);
+    const now = Date.now();
+    dirtySince ??= now;
+    scheduleSave(now - dirtySince >= MAX_UNSAVED_MS ? 0 : AUTOSAVE_DELAY_MS);
   });
 
   backupTimer = window.setInterval(() => {
@@ -89,10 +102,14 @@ export function startWorldPersistence(): () => void {
   }, BACKUP_INTERVAL_MS);
 
   const onBeforeUnload = () => {
+    commitFocusedField();
     void flushDirtyWorld();
   };
   window.addEventListener('beforeunload', onBeforeUnload);
-  window.atlasApi?.setBeforeCloseFlush?.(() => flushDirtyWorld());
+  window.atlasApi?.setBeforeCloseFlush?.(() => {
+    commitFocusedField();
+    return flushDirtyWorld();
+  });
 
   return () => {
     unsubscribe();

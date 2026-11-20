@@ -247,8 +247,18 @@ export function buildEntityDisplay(
           const glow = new Graphics();
           glow.eventMode = 'none';
           glow.scale.set(1 / k);
+          // A traced coast has many points per screen pixel, and each one got a round join on all
+          // four strokes: Etharis's coasts came to ~770k vertices each, rebuilt on every zoom step,
+          // and the renderer's memory ratcheted up to fit. A soft glow only needs a point every
+          // ~1.5 px, so thin the outline in screen space first.
+          const glowPts: Point[] = [];
+          for (const p of outer) {
+            const sx = (p.x - origin.x) * k, sy = (p.y - origin.y) * k;
+            const last = glowPts[glowPts.length - 1];
+            if (!last || Math.hypot(sx - last.x, sy - last.y) >= 1.5) glowPts.push({ x: sx, y: sy });
+          }
           const ring = () => {
-            outer.forEach((p, i) => i ? glow.lineTo((p.x - origin.x) * k, (p.y - origin.y) * k) : glow.moveTo((p.x - origin.x) * k, (p.y - origin.y) * k));
+            glowPts.forEach((p, i) => i ? glow.lineTo(p.x, p.y) : glow.moveTo(p.x, p.y));
             glow.closePath();
           };
           for (const [w, color, alpha] of [[37, 0x5c8b91, 0.24], [22, 0x82b2b3, 0.34], [10, 0xb7d8ce, 0.48], [3.6, 0xe6f1e3, 0.68]] as const) {

@@ -1,6 +1,6 @@
 import { afterEach,expect,it,vi } from 'vitest';
 import { worldStore } from './store';
-import { flushDirtyWorld } from './persistence';
+import { flushDirtyWorld, startWorldPersistence } from './persistence';
 
 afterEach(()=>{vi.unstubAllGlobals();worldStore.getState().closeWorld();});
 function load() {
@@ -31,4 +31,19 @@ it('a failed save keeps the unsaved flags so the next save retries',async()=>{
   await expect(flushDirtyWorld()).rejects.toThrow('disk full');
   expect(worldStore.getState().dirtyMapIds.m).toBe(true);
   await flushDirtyWorld();expect(worldStore.getState().dirtyMapIds).toEqual({});
+});
+it('steady editing with no 2 s pause still saves within about 10 s',async()=>{
+  vi.useFakeTimers();
+  try {
+    const write=vi.fn().mockResolvedValue({ok:true});
+    vi.stubGlobal('window',{atlasApi:{saveDirtyWorld:write},setTimeout,clearTimeout,setInterval,clearInterval,addEventListener:()=>{},removeEventListener:()=>{}});
+    load();
+    const stop=startWorldPersistence();
+    for(let i=0;i<12;i++){
+      worldStore.getState().execute('entity.add',{mapId:'m',entity:{id:`e${i}`,type:'label',text:'x',x:i,y:1,size:12,layerId:'layer-base',origin:'manual',rev:0}});
+      await vi.advanceTimersByTimeAsync(1000);
+    }
+    stop();
+    expect(write).toHaveBeenCalled();
+  } finally { vi.useRealTimers(); }
 });

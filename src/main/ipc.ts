@@ -44,6 +44,11 @@ function assetsForDisplay(worldDir: string): AssetsIndex {
   }
 }
 
+let reopenAfterCrash = true;
+export function setReopenAfterCrash(reopen: boolean): void {
+  reopenAfterCrash = reopen;
+}
+
 export function registerWorldIpc(getMainWindow: () => BrowserWindow | null): WorldIpcState {
   let currentWorldDir: string | null = null;
   const userDataDir = () => app.getPath('userData');
@@ -198,13 +203,16 @@ export function registerWorldIpc(getMainWindow: () => BrowserWindow | null): Wor
     return { worldDir: resolved, ...loaded, recent, assetsIndex: {} };
   };
 
-  ipcMain.handle('atlas:current-world-dir', () => currentWorldDir);
+  // After a crash-reload the window asks which world to put back. If that world is what keeps
+  // crashing, index.ts turns this off so the window comes back empty instead of looping.
+  ipcMain.handle('atlas:current-world-dir', () => (reopenAfterCrash ? currentWorldDir : null));
 
   const doOpenWorld = (worldDir: string) => {
     const resolved = resolve(worldDir);
     try {
       const loaded = openWorldFolder(resolved);
       currentWorldDir = resolved;
+      reopenAfterCrash = true; // only an open the user chose gets here while it's off
       const recent = recordRecent(loaded, resolved);
       const assetsIndex = assetsForDisplay(resolved);
       return { ok: true as const, worldDir: resolved, ...loaded, recent, assetsIndex };

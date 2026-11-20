@@ -5,10 +5,9 @@ import { FloatingWindow } from './FloatingWindow';
 import { PopoutPortal } from './PopoutPortal';
 import { renderPanelBody } from './dock';
 import { hudStore } from './hudStore';
-import { startAgentBridge } from '../model/agentBridge';
 import { editorHistory } from '../model/drawingHistory';
 import { hasParentChanged } from '../geom/pullFromParent';
-import { flushDirtyWorld, startWorldPersistence } from '../model/persistence';
+import { flushDirtyWorld } from '../model/persistence';
 import type { MapKind } from '../model/schema';
 import { worldStore } from '../model/store';
 import { viewStore, type ToolId } from '../model/viewStore';
@@ -92,13 +91,7 @@ export function App() {
         __atlasHudStore?: typeof hudStore;
       }
     ).__atlasHudStore = hudStore;
-
-    const stopPersist = startWorldPersistence();
-    const stopAgent = startAgentBridge();
-    return () => {
-      stopPersist();
-      stopAgent();
-    };
+    // Autosave and the agent bridge start in main.tsx, outside React, so the error screen can't stop them.
   }, []);
 
   useEffect(() => {

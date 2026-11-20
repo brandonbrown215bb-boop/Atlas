@@ -18,6 +18,8 @@ function hashString(s: string): number {
   return h >>> 0;
 }
 
+const MAX_DASHES = 1500;
+
 export function drawDashedPolyline(
   gfx: Graphics,
   points: Point[],
@@ -33,6 +35,13 @@ export function drawDashedPolyline(
   if (closed && points.length >= 3) {
     segs.push([points[points.length - 1]!, points[0]!]);
   }
+  // Callers pass screen-sized dashes, so zooming far into a big outline (a 125 km faction zone)
+  // made tens of thousands of round-capped dashes and ran the renderer out of memory. Above
+  // MAX_DASHES, stretch dash and gap together: same look, just longer dashes when zoomed way in.
+  const total = segs.reduce((sum, [a, b]) => sum + Math.hypot(b.x - a.x, b.y - a.y), 0);
+  const stretch = Math.max(1, total / (MAX_DASHES * Math.max(1e-9, dashLen + gapLen)));
+  dashLen *= stretch;
+  gapLen *= stretch;
   const period = Math.max(0.01, dashLen + gapLen);
   let carry = 0;
   for (const [a, b] of segs) {

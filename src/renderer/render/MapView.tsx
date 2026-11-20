@@ -273,6 +273,15 @@ export function MapView(props: MapViewProps) {
 
     const layerContainers = new Map<string, Container>();
     const entityCache = new Map<string, CachedEntityDisplay>();
+    // Inline child-map previews (e.g. Castinella drawn inside Etharis). Rebuilding them on every
+    // pan step was the biggest remaining memory churn, so keep each one until its map, the zoom
+    // bucket, the roof mode or its textures change.
+    const childPreviewCache = new Map<string, { map: MapDoc; roofMode: string; complete: boolean; urls: Set<string>; container: Container }>();
+    const clearChildPreviews = () => {
+      childMapsContainer.removeChildren();
+      for (const cached of childPreviewCache.values()) cached.container.destroy({ children: true, context: true });
+      childPreviewCache.clear();
+    };
     const textureOwner = {};
 
     let panning = false;
@@ -316,11 +325,15 @@ export function MapView(props: MapViewProps) {
       }
       const { x, y, w, h } = m.bounds;
       const strokeW = Math.max(0.05, 1 / cam.zoom);
-      for (let gx = x; gx <= x + w; gx += step) {
-        gridGfx.moveTo(gx, y).lineTo(gx, y + h);
+      // Only the lines on screen: the whole map's grid was tens of thousands of lines rebuilt per pan step.
+      const minX = Math.max(x, -cam.x / cam.zoom), maxX = Math.min(x + w, (host.clientWidth - cam.x) / cam.zoom);
+      const minY = Math.max(y, -cam.y / cam.zoom), maxY = Math.min(y + h, (host.clientHeight - cam.y) / cam.zoom);
+      if (minX > maxX || minY > maxY) return;
+      for (let gx = x + Math.ceil((minX - x) / step) * step; gx <= maxX; gx += step) {
+        gridGfx.moveTo(gx, minY).lineTo(gx, maxY);
       }
-      for (let gy = y; gy <= y + h; gy += step) {
-        gridGfx.moveTo(x, gy).lineTo(x + w, gy);
+      for (let gy = y + Math.ceil((minY - y) / step) * step; gy <= maxY; gy += step) {
+        gridGfx.moveTo(minX, gy).lineTo(maxX, gy);
       }
       gridGfx.stroke({ width: strokeW, color: 0x4b5563, alpha: 0.4 });
     };
@@ -352,8 +365,9 @@ export function MapView(props: MapViewProps) {
       const toolMap=`${worldRef.current?.meta.id}:${mapRef.current?.id}`;
       if(toolMap!==lastToolMap&&mapRef.current){
         lastToolMap=toolMap;
-        for (const cached of entityCache.values()) cached.container.destroy({ children: true });
+        for (const cached of entityCache.values()) cached.container.destroy({ children: true, context: true });
         entityCache.clear();
+        clearChildPreviews();
         const e={key:'Escape',preventDefault(){}} as KeyboardEvent;const ctx={...buildToolContext(mapRef.current),requestRedraw(){}};for(const tool of [areaTool,pathTool,wallTool,pointEditTool,biomeTool,developAreaTool])tool.onKey(e,ctx);
       }
       const live=getActiveTool().extentPreview?.();setLiveDimensions(live?extentLabel(live):'');
@@ -367,15 +381,15 @@ export function MapView(props: MapViewProps) {
       const m = mapRef.current;
       if (!m) {
         entitiesRoot.removeChildren();
-        childMapsContainer.removeChildren().forEach((c) => c.destroy({ children: true }));
-        placeOverlayContainer.removeChildren().forEach((c) => c.destroy({ children: true }));
+        clearChildPreviews();
+        placeOverlayContainer.removeChildren().forEach((c) => c.destroy({ children: true, context: true }));
         fogGfx.clear();
         lightingGfx.clear();
         gridGfx.clear();
         underlayGfx.clear();
         overlayGfx.clear();
         measureGfx.clear();
-        for (const cached of entityCache.values()) cached.container.destroy({ children: true });
+        for (const cached of entityCache.values()) cached.container.destroy({ children: true, context: true });
         entityCache.clear();
         updateTextureUsage(textureOwner, new Set());
         return;
@@ -445,7 +459,7 @@ export function MapView(props: MapViewProps) {
       const desiredLayerIds = new Set(m.layers.map((l) => l.id));
       for (const [lid, container] of layerContainers) {
         if (!desiredLayerIds.has(lid)) {
-          container.destroy({ children: true });
+          container.destroy({ children: true, context: true });
           layerContainers.delete(lid);
         }
       }
@@ -470,7 +484,7 @@ export function MapView(props: MapViewProps) {
       // Remove deleted entities from cache
       for (const [eid, cached] of entityCache) {
         if (!geoIds.has(eid)) {
-          cached.container.destroy({ children: true });
+          cached.container.destroy({ children: true, context: true });
           entityCache.delete(eid);
         }
       }
@@ -491,7 +505,7 @@ export function MapView(props: MapViewProps) {
         const bounds = getEntityBounds(entity);
         if (!m.layers.some(l => l.id === entity.layerId && l.visible) || (bounds && !boxesIntersect(bounds, viewBounds))) {
           const hidden = entityCache.get(entity.id);
-          if (hidden) { hidden.container.destroy({ children: true }); entityCache.delete(entity.id); }
+          if (hidden) { hidden.container.destroy({ children: true, context: true }); entityCache.delete(entity.id); }
           continue;
         }
         const texture = textureFor(entity);
@@ -514,7 +528,7 @@ export function MapView(props: MapViewProps) {
 
         if (needsRebuild) {
           if (cached) {
-            cached.container.destroy({ children: true });
+            cached.container.destroy({ children: true, context: true });
           }
           const wallHatch = mapHatch();
           const display = buildEntityDisplay(entity, {
@@ -616,9 +630,8 @@ export function MapView(props: MapViewProps) {
       drawGrid(m, cam);
 
       // Draw inline child maps whose rectangle is on-screen and > 64px (interiors excluded)
-      childMapsContainer
-        .removeChildren()
-        .forEach((c) => c.destroy({ children: true }));
+      childMapsContainer.removeChildren();
+      const drawnChildIds = new Set<string>();
       const currentWorld = worldRef.current;
       if (currentWorld && viewStore.getState().showChildMaps) {
         const viewW = Math.max(1, host.clientWidth);
@@ -627,6 +640,24 @@ export function MapView(props: MapViewProps) {
           if (childMap.parent?.mapId !== m.id) continue;
           const rect = childMapParentRect(childMap);
           if (!rect || !shouldDrawChildInline(cam, rect, viewW, viewH)) continue;
+          drawnChildIds.add(childMap.id);
+          const cachedPreview = childPreviewCache.get(childMap.id);
+          if (cachedPreview && cachedPreview.map === childMap && cachedPreview.roofMode === currentRoofMode &&
+              cachedPreview.complete && !zoomChangedSignificantly) {
+            cachedPreview.urls.forEach((u) => usedTextures.add(u));
+            childMapsContainer.addChild(cachedPreview.container);
+            continue;
+          }
+          cachedPreview?.container.destroy({ children: true, context: true });
+          const previewUrls = new Set<string>();
+          let previewComplete = true;
+          const childTextureFor = (ent: Entity) => {
+            const tex = textureFor(ent);
+            const id = entityAssetId(ent);
+            if (id) { const url = resolveWorldAssetUrl(worldPathRef.current, assetsIndexRef.current, id); if (url) previewUrls.add(url); }
+            if (id && !tex) previewComplete = false; // still loading: rebuild once it arrives
+            return tex;
+          };
 
           const childContainer = new Container();
           childContainer.eventMode = 'none';
@@ -642,6 +673,7 @@ export function MapView(props: MapViewProps) {
           childContainer.addChild(frame);
           if (childMap.kind === 'settlement' && (m.kind === 'world' || m.kind === 'region')) {
             childMapsContainer.addChild(childContainer);
+            childPreviewCache.set(childMap.id, { map: childMap, roofMode: currentRoofMode, complete: true, urls: previewUrls, container: childContainer });
             continue;
           }
 
@@ -658,7 +690,7 @@ export function MapView(props: MapViewProps) {
                 selected: false,
                 zoom: cam.zoom,
                 layerGmOnly: Boolean(childLayerGmMap.get(layer.id)),
-                texture: textureFor(ent),
+                texture: childTextureFor(ent),
                 mapKind: childMap.kind,
                 roofMode: currentRoofMode,
                 wallHatch: childHatch,
@@ -667,14 +699,20 @@ export function MapView(props: MapViewProps) {
             }
           }
           childMapsContainer.addChild(childContainer);
+          childPreviewCache.set(childMap.id, { map: childMap, roofMode: currentRoofMode, complete: previewComplete, urls: previewUrls, container: childContainer });
         }
+      }
+      for (const [id, cached] of childPreviewCache) {
+        if (drawnChildIds.has(id)) continue;
+        cached.container.destroy({ children: true, context: true });
+        childPreviewCache.delete(id);
       }
       updateTextureUsage(textureOwner, usedTextures);
 
       // Rebuild optional category label overlay for places
       placeOverlayContainer
         .removeChildren()
-        .forEach((c) => c.destroy({ children: true }));
+        .forEach((c) => c.destroy({ children: true, context: true }));
       if (showPlaceCategoryOverlayRef.current) {
         const layerVisibleMap = new Map(m.layers.map((l) => [l.id, l.visible]));
         const invScale = 1 / Math.max(0.01, cam.zoom);
@@ -1123,8 +1161,8 @@ export function MapView(props: MapViewProps) {
         }
       }
 
+      // The camera effect below rebuilds the scene for the new camera; syncing here too built it twice per wheel step.
       viewStore.getState().setPanelCamera(props.panelId, nextCam);
-      syncScene();
       scheduleRender();
     };
 
@@ -1225,7 +1263,7 @@ export function MapView(props: MapViewProps) {
       ownerWin.removeEventListener('keyup', onKeyUp);
       ownerWin.removeEventListener('keydown',onPopupShortcut);
       if (app.renderer) {
-        app.destroy(true, { children: true });
+        app.destroy(true, { children: true, context: true });
       }
       updateTextureUsage(textureOwner, new Set());
       host.replaceChildren();

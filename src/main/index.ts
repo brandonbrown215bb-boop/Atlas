@@ -2,13 +2,14 @@ import { appendFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { app, BrowserWindow, dialog, ipcMain, Menu, screen } from 'electron';
 import { startAgentServer, type AgentServerHandle } from './agent';
-import { registerWorldIpc } from './ipc';
+import { registerWorldIpc, setReopenAfterCrash } from './ipc';
 import { registerAtlasSchemes, setupProtocolHandlers } from './protocol';
 import { clampBoundsToDisplays } from './windowBounds';
 
 registerAtlasSchemes();
 
 const popoutWindows = new Map<string, BrowserWindow>();
+let lastRendererCrashAt = 0;
 let mainWindow: BrowserWindow | null = null;
 let closingMain = false;
 
@@ -216,7 +217,23 @@ function createMainWindow(): BrowserWindow {
 `;
     console.error(line);
     try { appendFileSync(join(app.getPath('userData'), 'renderer-crashes.log'), line); } catch { /* logging is best effort */ }
-    if (details.reason !== 'clean-exit' && !win.isDestroyed()) win.webContents.reload();
+    if (details.reason === 'clean-exit' || win.isDestroyed()) return;
+    // Two crashes within a minute: the world itself is probably what kills the renderer (e.g. OOM
+    // on open). Reopening it again would loop forever, and every open adds a backup, so a loop
+    // would push all the good backups out. Come back with no world open instead.
+    const now = Date.now();
+    const repeat = now - lastRendererCrashAt < 60_000;
+    lastRendererCrashAt = now;
+    setReopenAfterCrash(!repeat);
+    win.webContents.reload();
+    if (repeat) {
+      void dialog.showMessageBox(win, {
+        type: 'warning',
+        title: 'Atlas crashed again',
+        message: 'The editor crashed twice in a row, so the world was not reopened.',
+        detail: 'Your saved work is still in the world folder. Open it again when you are ready; the crash reason is in renderer-crashes.log in the Atlas settings folder.',
+      });
+    }
   });
 
   if (process.env['ELECTRON_RENDERER_URL']) {
