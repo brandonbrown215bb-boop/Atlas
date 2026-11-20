@@ -107,8 +107,10 @@ const CORE_RADIUS: Record<Scale, number> = { hamlet: 45, village: 110, town: 260
 const PLAZA_RADIUS: Record<Scale, number> = { hamlet: 14, village: 22, town: 30, city: 40 };
 /** How far houses keep straggling along the roads beyond the core. */
 const RIBBON_REACH: Record<Scale, number> = { hamlet: 60, village: 150, town: 300, city: 450 };
-const BUILDING_CAP: Record<Scale, number> ={ hamlet: 8, village: 120, town: 3000, city: 8000 };
-const SCALE_DENSITY: Record<Scale, number> = { hamlet: .55, village: .8, town: 1, city: 1 };
+/** Sheet width for a standalone settlement, so the place fills its map instead of floating in a mile of fields. */
+export const SHEET_SIZE: Record<Scale, number> = { hamlet: 220, village: 640, town: 1000, city: 1609.344 };
+const BUILDING_CAP: Record<Scale, number> ={ hamlet: 12, village: 120, town: 3000, city: 8000 };
+const SCALE_DENSITY: Record<Scale, number> = { hamlet: .85, village: .8, town: 1, city: 1 };
 const WARD_PROFILES: Record<WardKind, DistrictProfile> = {
   market: { density: .85, wealth: .55, activity: .95, access: 'open' },
   high: { density: .45, wealth: .9, activity: .35, access: 'gated' },
@@ -357,7 +359,7 @@ export function generateCity(input: GeneratorInput<CityParams>): Entity[] {
   // Empty standalone towns get gate arteries and slightly angled radial avenues meeting at a central hub.
   if (!streets.some(s=>clipLine(s.points,ground).length)) {
     const townGround = walled ? fromPolygons(clipping.intersection(usable,wallInterior)) : ground;
-    const arteryWidth = params.streetWidth * (scale === 'hamlet' || scale === 'village' ? .9 : 1.4);
+    const arteryWidth = params.streetWidth * (scale === 'hamlet' ? .65 : scale === 'village' ? .9 : 1.4);
     for (const p of ground) {
       const b=bboxFromPoints((townRing?townRing:p[0])!)!, w=b.maxX-b.minX, h=b.maxY-b.minY;
       const fullBox=bboxFromPoints(p[0]!)!, reach=Math.hypot(fullBox.maxX-fullBox.minX,fullBox.maxY-fullBox.minY)+20;
@@ -375,7 +377,9 @@ export function generateCity(input: GeneratorInput<CityParams>): Entity[] {
         }
       }
       const baseAngle=(random()-.5)*.42;
-      for (let arm=0;arm<4;arm++) {
+      // A hamlet is one lane through, sometimes with a track off it, not a crossroads.
+      const arms=scale==='hamlet'?(random()<.5?[0,2]:[0,1,2]):[0,1,2,3];
+      for (const arm of arms) {
         const angle=baseAngle+arm*(Math.PI/2)+(random()-.5)*.22;
         const cosA=Math.cos(angle), sinA=Math.sin(angle);
         const curve=(random()-.5)*Math.min(w,h)*.09;
@@ -451,6 +455,8 @@ export function generateCity(input: GeneratorInput<CityParams>): Entity[] {
     const fringe=!inTownPoly(polygon), distToArtery=fringe?polyArteryDistance(polygon[0]!):0;
     const centerDistToArtery=fringe?arteryDistance(center):0;
     const hasRoad=polygon[0]!.some((p,i)=>{const q=polygon[0]![(i+1)%polygon[0]!.length]!;return roadDistance({x:(p.x+q.x)/2,y:(p.y+q.y)/2})<.5;});
+    // Hamlets have no side streets: cottages sit on the lane.
+    if (scale === 'hamlet') { blocks.push(polygon); continue; }
     if (fringe && (!params.fringe || distToArtery > params.blockSize * 0.9 || hubDistance(center) > outskirts || (hasCore && depth >= 1 && centerDistToArtery > params.blockSize * 1.15)) && (depth >= 1 || hasRoad)) { blocks.push(polygon); continue; }
     const frame = orientedFrame(polygon[0]!);
     const target=params.blockSize*(1.25-profile.density*.45)*(fringe?1.35:1);
@@ -707,7 +713,7 @@ export function generateCity(input: GeneratorInput<CityParams>): Entity[] {
         const start=offset; offset+=frontage+1.2+(1-local.density)*2.8;
         // Outside city walls, filterOutskirts decays building probability with distance from main arterial roads (ribbon suburbs).
         const ribbonDecay = fringe ? Math.max(0, 1 - arteryDistance(lotPoint) / (params.lotDepth * 3.2)) * Math.max(0, 1 - (hubDistance(lotPoint) - coreR) / RIBBON_REACH[scale]) : 1;
-        if (random()>(local.density+.2)*ribbonDecay || (fringe&&!params.fringe)) continue;
+        if (random()>(local.density+(scale==='hamlet'?.45:.2))*ribbonDecay || (fringe&&!params.fringe)) continue;
         const setback=local.access==='open'?1.2:local.access==='restricted'?2.5:4;
         const origin={x:a.x+ux*start+nx*setback,y:a.y+uy*start+ny*setback};
         // Rectangular footprints stay rectangular; keep realistic minimum house depth instead of shallow corner slivers.
@@ -739,6 +745,14 @@ export function generateCity(input: GeneratorInput<CityParams>): Entity[] {
           ...(roof ? { texture: roof } : {})};
         output.push(entity);
         lots.push({ entity, c: { x: (rings[0]![0]!.x + rings[0]![2]!.x) / 2, y: (rings[0]![0]!.y + rings[0]![2]!.y) / 2 }, ward, fringe });
+        // Hamlet cottages keep a garden out back: a tree or two behind the house.
+        if (scale === 'hamlet') for (let t = 0; t < 1 + (random() < .5 ? 1 : 0); t++) {
+          const tp = { x: origin.x + ux * frontage * (.25 + random() * .5) + nx * (depth + 4 + random() * 5), y: origin.y + uy * frontage * (.25 + random() * .5) + ny * (depth + 4 + random() * 5) };
+          if (!pointInPolygon(tp, polygon) || roadDistance(tp) < 3) continue;
+          const sz = 4 + random() * 2.5;
+          output.push({ ...base, id: `city-tree-garden-${bId}-${t}`, type: 'prop', name: 'Garden tree', x: tp.x, y: tp.y, w: sz, h: sz, scale: 1,
+            rotation: random() * Math.PI * 2, flipX: random() < .5, ...propArt(input, ['tree'], `garden-tree-${bId}-${t}`, 'tree') });
+        }
         if (buildingCount>=BUILDING_CAP[scale]) break;
       }
       if (buildingCount>=BUILDING_CAP[scale]) break;
@@ -1233,7 +1247,7 @@ export function generateCity(input: GeneratorInput<CityParams>): Entity[] {
     notables.push({ kind, lot: pick, place });
     cityPlaces.push(place);
     if (kind === 'thieves') localSites.push({ kind: 'travel', name: `a ${pick.entity.name} in ${wardAt(pick.c)?.name || 'the back lanes'}`, p: pick.c });
-    if (kind === 'inn' || kind === 'tavern') cityLabels.push({ ...base, id: `city-label-${pick.entity.id}`, type: 'label', text: name, x: pick.c.x, y: pick.c.y - 9, size: 11 });
+    if (kind === 'inn' || kind === 'tavern') cityLabels.push({ ...base, id: `city-label-${pick.entity.id}`, type: 'label', text: name, x: pick.c.x, y: bboxFromPoints(pick.entity.rings[0]!)!.minY - 7, size: 11 });
   }
   // Villages get one odd site out in the fields: a barrow, standing stones or a ruined tower.
   if (isGreen && hasCore) {
@@ -1326,15 +1340,17 @@ export function generateCity(input: GeneratorInput<CityParams>): Entity[] {
   }
 
   // Separate nearby city labels so landmarks never overlap each other horizontally.
+  // Labels draw at screen size, so the gaps shrink with the sheet: a hamlet needs metres, not tens of metres.
+  const labelScale = Math.min(1, Math.max(.15, Math.max(rb.maxX - rb.minX, rb.maxY - rb.minY) / 1609));
   for (let i = 0; i < cityLabels.length; i++) {
     const cur = cityLabels[i]!;
     if (cur.type !== 'label') continue;
     for (let j = 0; j < i; j++) {
       const prev = cityLabels[j]!;
       if (prev.type !== 'label') continue;
-      const minDx = Math.max(cur.text.length, prev.text.length) * 6.5 + 16;
-      if (Math.abs(cur.x - prev.x) < minDx && Math.abs(cur.y - prev.y) < 22) {
-        cur.y += cur.y >= prev.y ? 22 : -22;
+      const minDx = (Math.max(cur.text.length, prev.text.length) * 6.5 + 16) * labelScale, gap = 22 * labelScale;
+      if (Math.abs(cur.x - prev.x) < minDx && Math.abs(cur.y - prev.y) < gap) {
+        cur.y += cur.y >= prev.y ? gap : -gap;
       }
     }
   }

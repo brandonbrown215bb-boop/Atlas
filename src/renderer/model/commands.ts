@@ -7,7 +7,7 @@ import { getGenerator, isDressingProp, regionConstraints, runGenerator } from '.
 import '../gen/dungeon/layout';
 import '../gen/glade/outdoor';
 import '../gen/world/world';
-import '../gen/city/city';
+import { SHEET_SIZE } from '../gen/city/city';
 import { climateContext } from '../gen/world/context';
 import { previewInterior } from '../gen/dungeon/interior';
 import { distanceToSegment, getEntityBounds, pointInPolygon } from '../geom/hitTest';
@@ -124,6 +124,15 @@ registerCommand({
     const genId = input.genId ?? crypto.randomUUID();
     if (map.generators[genId]) throw new Error('Use generator.reroll for an existing run.');
     let regionEntityId = input.entireMap ? undefined : input.regionEntityId;
+    // A blank standalone settlement still has the default one-mile sheet; shrink it to the
+    // settlement's size so a village isn't a dot in fields. Undo restores the old sheet.
+    const def = defaultBounds('settlement');
+    if (input.type === 'city' && input.entireMap && !map.parent && Object.keys(map.entities).length === 0
+      && Math.abs(map.bounds.w - def.w) < 1 && Math.abs(map.bounds.h - def.h) < 1) {
+      const scale = input.params.scale;
+      const size = SHEET_SIZE[scale === 'hamlet' || scale === 'village' || scale === 'city' ? scale : 'town'];
+      map.bounds = { x: map.bounds.x + (map.bounds.w - size) / 2, y: map.bounds.y + (map.bounds.h - size) / 2, w: size, h: size };
+    }
     if (!regionEntityId && (input.entireMap || input.type === 'world')) {
       regionEntityId = `boundary-${genId}`;
       map.entities[regionEntityId] = { id: regionEntityId, type: 'area', role: 'land', usage: 'boundary', layerId: input.layerId, origin: 'manual', rev: map.revision, rings: [rectRing(map.bounds)] };

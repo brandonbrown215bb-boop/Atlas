@@ -152,7 +152,8 @@ it('supports hamlet scale without walls, explicit walled cities, and everyday bu
   const hamlet = generateCity(hamletInput);
   const hamletBuildings = hamlet.filter((e): e is Extract<Entity, { type: 'area' }> => e.type === 'area' && e.role === 'building');
   expect(hamletBuildings.length).toBeGreaterThanOrEqual(4);
-  expect(hamletBuildings.length).toBeLessThanOrEqual(12);
+  // Up to 12 cottages plus the inn, chapel and crypt.
+  expect(hamletBuildings.length).toBeLessThanOrEqual(16);
   expect(hamlet.some(e => e.type === 'path' && e.role === 'cityWall')).toBe(false);
 
   const walledInput = source();
@@ -239,4 +240,17 @@ it('wires competing urban factions across town landmarks and establishments', ()
   const townPlace = places.find((p) => p.id === 'place-town');
   expect(townPlace?.factionLinks?.length).toBeGreaterThanOrEqual(3);
   expect(townPlace?.gmNotes).toContain('Urban Factions:');
+});
+
+it('a blank standalone settlement shrinks its one-mile sheet to the village, and undo restores it',()=>{
+  const store=createWorldStore(),s=()=>store.getState(), mile=1609.344;
+  const map=MapDocSchema.parse({id:'m',name:'Village',kind:'settlement',bounds:{x:0,y:0,w:mile,h:mile},grid:{size:1.524,visible:false},
+    layers:[{id:'l',name:'Base',visible:true,locked:false,gmOnly:false}],entities:{},generators:{},revision:0,deleted:{},fog:{enabled:false,revealed:[]}});
+  s().loadWorld({id:'w',name:'World',formatVersion:1,maps:[{id:'m',name:'Village',kind:'settlement'}],themes:{}},{m:map});
+  s().execute('generator.run',{mapId:'m',type:'city',seed:9,entireMap:true,layerId:'l',params:{scale:'village'}});
+  const b=s().world!.maps.m!.bounds;
+  expect(b.w).toBe(640); expect(b.x+b.w/2).toBeCloseTo(mile/2);
+  expect(Object.values(s().world!.maps.m!.entities).some(e=>e.type==='area'&&e.role==='building')).toBe(true);
+  s().undo();
+  expect(s().world!.maps.m!.bounds.w).toBeCloseTo(mile);
 });
