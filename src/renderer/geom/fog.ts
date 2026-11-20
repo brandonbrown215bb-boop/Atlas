@@ -28,8 +28,26 @@ function unionShapes(shapes: MultiPolygon): MultiPolygon {
   return acc;
 }
 
-export function paintFog(revealed: Point[][][], points: Point[], radius: number, hide: boolean): Point[][][] {
-  if (!points.length) return revealed;
+export function paintFog(revealed: Point[][][], rawPoints: Point[], radius: number, hide: boolean): Point[][][] {
+  if (!rawPoints.length) return revealed;
+  // Drop points closer than half a radius: they add nothing visible, and near-duplicate
+  // vertices are what break polygon-clipping's sweep line on large map coordinates.
+  const points: Point[] = [rawPoints[0]!];
+  for (const p of rawPoints.slice(1)) {
+    const last = points[points.length - 1]!;
+    if (Math.hypot(p.x - last.x, p.y - last.y) >= radius / 2) points.push(p);
+  }
+  if (points.length > 1 && points[points.length - 1] !== rawPoints[rawPoints.length - 1]) points.push(rawPoints[rawPoints.length - 1]!);
+  try {
+    return paintFogShapes(revealed, points, radius, hide);
+  } catch (error) {
+    // A failed merge must not take the app down; this stroke is simply dropped.
+    console.error('Fog stroke could not be merged and was skipped.', error);
+    return revealed;
+  }
+}
+
+function paintFogShapes(revealed: Point[][][], points: Point[], radius: number, hide: boolean): Point[][][] {
   const shapes: MultiPolygon = points.map(p => [Array.from({length:24},(_,i) => {
     const a = i * Math.PI / 12; return [p.x + Math.cos(a)*radius,p.y + Math.sin(a)*radius];
   })]);

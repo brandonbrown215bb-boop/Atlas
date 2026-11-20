@@ -269,6 +269,18 @@ export function App() {
   const handleOpenWorld = async () => {
     const dir = await window.atlasApi.pickFolder('Open World Folder');
     if (!dir) return;
+    await openWorldDir(dir);
+  };
+
+  // After a crash the main process reloads this window; put the world that was open back.
+  useEffect(() => {
+    void window.atlasApi.currentWorldDir().then(dir => {
+      if (dir && !worldStore.getState().world) void openWorldDir(dir);
+    });
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  const openWorldDir = async (dir: string) => {
     await flushDirtyWorld();
     const res = await window.atlasApi.openWorld(dir);
     if (!res.ok) {

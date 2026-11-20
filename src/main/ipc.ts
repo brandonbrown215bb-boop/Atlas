@@ -3,7 +3,7 @@ import { TransferInputSchema, WorldDocumentSchema, usedAssets } from '../rendere
 import { existsSync, mkdirSync, readFileSync } from 'node:fs';
 import { readFile, stat, mkdir, writeFile, rename } from 'node:fs/promises';
 import { z } from 'zod';
-import { basename, join, resolve } from 'node:path';
+import { basename, dirname, join, resolve } from 'node:path';
 import { app, dialog, ipcMain, nativeImage, type BrowserWindow } from 'electron';
 import type { AssetsIndex, MapDoc, WorldMeta } from '../renderer/model/schema';
 import { PackLibrary } from './packs';
@@ -172,7 +172,10 @@ export function registerWorldIpc(getMainWindow: () => BrowserWindow | null): Wor
 
   ipcMain.handle('atlas:pick-folder', async (_event, title?: string) => {
     const win = getMainWindow();
+    // Start where the last world lives: Open lands on it, other pickers on the folder holding it.
+    const last = readRecentWorlds(userDataDir()).find(w => existsSync(w.path))?.path;
     const options = {
+      ...(last ? { defaultPath: title === 'Open World Folder' ? last : dirname(last) } : {}),
       title: title ?? 'Select World Folder',
       properties: ['openDirectory', 'createDirectory'] as Array<
         'openDirectory' | 'createDirectory'
@@ -194,6 +197,8 @@ export function registerWorldIpc(getMainWindow: () => BrowserWindow | null): Wor
     const recent = recordRecent(loaded, resolved);
     return { worldDir: resolved, ...loaded, recent, assetsIndex: {} };
   };
+
+  ipcMain.handle('atlas:current-world-dir', () => currentWorldDir);
 
   const doOpenWorld = (worldDir: string) => {
     const resolved = resolve(worldDir);

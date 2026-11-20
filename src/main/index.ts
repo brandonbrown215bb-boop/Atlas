@@ -1,3 +1,4 @@
+import { appendFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { app, BrowserWindow, dialog, ipcMain, Menu, screen } from 'electron';
 import { startAgentServer, type AgentServerHandle } from './agent';
@@ -205,6 +206,17 @@ function createMainWindow(): BrowserWindow {
         }
       });
     }
+  });
+
+  // A dead renderer leaves a blank white window with no way back. Log why and reload;
+  // edits autosave every two seconds, so at most the last moment of work is lost.
+  win.webContents.on('render-process-gone', (_event, details) => {
+    const line = `${new Date().toISOString()} renderer gone: ${details.reason}, exit ${details.exitCode}; ` +
+      `memory ${JSON.stringify(app.getAppMetrics().map(m => ({ type: m.type, mb: Math.round(m.memory.workingSetSize / 1024) })))}
+`;
+    console.error(line);
+    try { appendFileSync(join(app.getPath('userData'), 'renderer-crashes.log'), line); } catch { /* logging is best effort */ }
+    if (details.reason !== 'clean-exit' && !win.isDestroyed()) win.webContents.reload();
   });
 
   if (process.env['ELECTRON_RENDERER_URL']) {

@@ -1,4 +1,5 @@
 import { Container, FillPattern, Graphics, Matrix, Sprite, Text, TilingSprite, type Texture } from 'pixi.js';
+import './strokeGuard';
 import { pointInPolygon } from '../geom/hitTest';
 import type { AreaRole, Entity, FloorMaterial, MapKind, PathRole, Point } from '../model/schema';
 import {

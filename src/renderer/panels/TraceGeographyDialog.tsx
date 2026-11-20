@@ -15,6 +15,9 @@ export function TraceGeographyDialog({image,onClose}:{image:Extract<Entity,{type
   const [added,setAdded]=useState<Point[][]>([]),[draft,setDraft]=useState<Point[]>([]),[removed,setRemoved]=useState<number[]>([]);
   const [past,setPast]=useState<Uint8Array[]>([]),[future,setFuture]=useState<Uint8Array[]>([]);
   const stroke=useRef<Uint8Array|null>(null),lastPaint=useRef<Point|null>(null);
+  // One reused tint buffer: making a fresh full-size canvas per brush move ran the renderer out of memory.
+  const overlay=useRef<{canvas:HTMLCanvasElement;data:ImageData}|null>(null);
+  const [tintOpacity,setTintOpacity]=useState(35),[zoom,setZoom]=useState(1);
   const initial=useRef({mapId:worldStore.getState().activeMapId,revision:0,worldId:worldStore.getState().world?.meta.id});
   useEffect(()=>{
     dialog.current?.showModal();
@@ -42,11 +45,15 @@ export function TraceGeographyDialog({image,onClose}:{image:Extract<Entity,{type
   useEffect(()=>{
     const c=canvas.current;if(!c||!source||!photo.current)return;c.width=source.width;c.height=source.height;
     const ctx=c.getContext('2d')!;ctx.drawImage(photo.current,0,0,c.width,c.height);
-    if(result){const tint=ctx.createImageData(c.width,c.height);for(let i=0;i<result.mask.length;i++){tint.data[i*4]=result.mask[i]?32:70;tint.data[i*4+1]=result.mask[i]?125:170;tint.data[i*4+2]=result.mask[i]?245:75;tint.data[i*4+3]=85;}const overlay=document.createElement('canvas');overlay.width=c.width;overlay.height=c.height;overlay.getContext('2d')!.putImageData(tint,0,0);ctx.drawImage(overlay,0,0);
+    if(result){
+      if(!overlay.current||overlay.current.canvas.width!==c.width||overlay.current.canvas.height!==c.height){const oc=document.createElement('canvas');oc.width=c.width;oc.height=c.height;overlay.current={canvas:oc,data:new ImageData(c.width,c.height)};}
+      const {canvas:oc,data:tint}=overlay.current,alpha=Math.round(tintOpacity*2.55);
+      for(let i=0;i<result.mask.length;i++){tint.data[i*4]=result.mask[i]?32:70;tint.data[i*4+1]=result.mask[i]?125:170;tint.data[i*4+2]=result.mask[i]?245:75;tint.data[i*4+3]=alpha;}
+      oc.getContext('2d')!.putImageData(tint,0,0);ctx.drawImage(oc,0,0);
       const line=(points:Point[],color:string)=>{if(!points.length)return;ctx.beginPath();ctx.moveTo(points[0]!.x,points[0]!.y);points.slice(1).forEach(p=>ctx.lineTo(p.x,p.y));ctx.strokeStyle=color;ctx.lineWidth=2;ctx.stroke();};
       result.rivers.forEach((r,i)=>{if(!removed.includes(i))line(r.points,'#14ffff');});added.forEach(r=>line(r,'#14ffff'));line(draft,'#fbbf24');
     }
-  },[source,result,added,draft,removed]);
+  },[source,result,added,draft,removed,tintOpacity]);
   const point=(e:React.PointerEvent<HTMLCanvasElement>)=>{const b=e.currentTarget.getBoundingClientRect();return{x:(e.clientX-b.left)/b.width*e.currentTarget.width,y:(e.clientY-b.top)/b.height*e.currentTarget.height};};
   const paint=(p:Point)=>{
     if(!result)return;const next=new Uint8Array(stroke.current??result.mask),from=lastPaint.current??p;
@@ -84,11 +91,15 @@ export function TraceGeographyDialog({image,onClose}:{image:Extract<Entity,{type
       <label>Brush size <input aria-label="Trace brush size" type="number" min="1" max="100" value={radius} onChange={e=>setRadius(Number(e.target.value))}/></label>
       <button disabled={!past.length||busy} onClick={()=>undo()}>Undo correction</button><button disabled={!future.length||busy} onClick={()=>undo(true)}>Redo correction</button>
       <button disabled={draft.length<2} onClick={finishRiver}>Finish river</button>
+      <label>Tint <input aria-label="Trace tint opacity" type="range" min="0" max="80" value={tintOpacity} onChange={e=>setTintOpacity(Number(e.target.value))}/></label>
+      <label>Zoom <select aria-label="Trace preview zoom" value={zoom} onChange={e=>setZoom(Number(e.target.value))}><option value={1}>Fit</option><option value={2}>2×</option><option value={3}>3×</option><option value={4}>4×</option></select></label>
     </div>
-    <canvas ref={canvas} data-testid="trace-preview" style={{display:'block',maxWidth:'100%',maxHeight:'65vh',margin:'10px auto',touchAction:'none',cursor:'crosshair'}}
+    <div style={{maxHeight:'65vh',overflow:'auto',margin:'10px 0'}}>
+    <canvas ref={canvas} data-testid="trace-preview" style={zoom===1?{display:'block',maxWidth:'100%',maxHeight:'65vh',margin:'0 auto',touchAction:'none',cursor:'crosshair'}:{display:'block',height:`${65*zoom}vh`,width:'auto',margin:'0 auto',touchAction:'none',cursor:'crosshair'}}
       onPointerDown={e=>{if(!result||busy)return;const p=point(e);if(mode==='sample'&&source){const i=(Math.min(source.height-1,Math.max(0,Math.floor(p.y)))*source.width+Math.min(source.width-1,Math.max(0,Math.floor(p.x))))*4;setWaterColor(Array.from(source.pixels.slice(i,i+3)));return;}if(mode==='river'){setDraft([...draft,p]);return;}if(mode==='remove'){let best=-1,d=15;result.rivers.forEach((r,i)=>r.points.slice(1).forEach((b,j)=>{const n=distanceToSegment(p,r.points[j]!,b);if(n<d){best=i;d=n;}}));if(best>=0)setRemoved([...removed,best]);return;}setPast([...past,result.mask]);setFuture([]);e.currentTarget.setPointerCapture(e.pointerId);paint(p);}}
       onPointerMove={e=>{if(e.buttons===1&&e.currentTarget.hasPointerCapture(e.pointerId))paint(point(e));}}
       onPointerUp={e=>{if(e.currentTarget.hasPointerCapture(e.pointerId)){e.currentTarget.releasePointerCapture(e.pointerId);analyze(stroke.current??undefined);stroke.current=null;lastPaint.current=null;}}}/>
+    </div>
     {result&&<p>{result.land.length} land regions · {result.lakes.length} lakes · {result.rivers.length-removed.length+added.length} river paths · {(result.waterFraction*100).toFixed(1)}% water</p>}
     {result?.warnings?.map(message=><p key={message} role="status">{message}</p>)}
     {busy&&<p role="status">Analyzing geography…</p>}{error&&<p role="alert">{error}</p>}

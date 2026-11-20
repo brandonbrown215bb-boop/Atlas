@@ -84,6 +84,8 @@ export interface AtlasApi {
   pickFolder: (title?: string) => Promise<string | null>;
   createWorld: (worldDir: string, name: string) => Promise<WorldActionResult>;
   openWorld: (worldDir: string) => Promise<OpenWorldResult>;
+  /** The world this app session had open, if the window was reloaded after a crash. */
+  currentWorldDir: () => Promise<string | null>;
   saveDirtyWorld: (
     worldDir: string,
     payload: { meta?: WorldMeta; maps?: Record<string, MapDoc> },
@@ -172,6 +174,7 @@ const api: AtlasApi = {
   createWorld: (worldDir: string, name: string) =>
     ipcRenderer.invoke('atlas:world-create', worldDir, name),
   openWorld: (worldDir: string) => ipcRenderer.invoke('atlas:world-open', worldDir),
+  currentWorldDir: () => ipcRenderer.invoke('atlas:current-world-dir'),
   saveDirtyWorld: (worldDir, payload) =>
     ipcRenderer.invoke('atlas:world-save-dirty', worldDir, payload),
   backupWorld: (worldDir: string) => ipcRenderer.invoke('atlas:world-backup', worldDir),
