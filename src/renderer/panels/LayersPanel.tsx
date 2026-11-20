@@ -7,6 +7,7 @@ import { worldStore } from '../model/store';
 export function LayersPanel({ panelId = 'layers' }: { panelId?: string }) {
   const world = useStore(worldStore, (s) => s.world);
   const activeMapId = useStore(worldStore, (s) => s.activeMapId);
+  const layerOpacity = useStore(viewStore, (s) => s.layerOpacity);
   const map = activeMapId && world ? world.maps[activeMapId] : undefined;
 
   const [newLayerName, setNewLayerName] = useState('');
@@ -181,6 +182,17 @@ export function LayersPanel({ panelId = 'layers' }: { panelId?: string }) {
                   </span>
                 )}
 
+                <input
+                  type="range"
+                  min={0.1}
+                  max={1}
+                  step={0.05}
+                  value={layerOpacity[layer.id] ?? 1}
+                  aria-label={`${layer.name} opacity`}
+                  title={`See-through (editor only): ${Math.round((layerOpacity[layer.id] ?? 1) * 100)}%`}
+                  onChange={(e) => viewStore.getState().setLayerOpacity(layer.id, Number(e.target.value))}
+                  style={{ width: 56, flexShrink: 0 }}
+                />
                 <button
                   type="button"
                   data-testid={`layer-visible-${layer.id}`}

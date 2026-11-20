@@ -61,6 +61,9 @@ export interface ViewStoreState {
   biomeErase: boolean;
   geoBrushRadius: number;
   zoomThrough: boolean;
+  /** Draw child maps inside their parent (e.g. a region's detail on the world map). */
+  showChildMaps: boolean;
+  setShowChildMaps: (show: boolean) => void;
   editParts: boolean;
   fitRequest: { panelId: string; bounds?: { x: number; y: number; w: number; h: number }; nonce: number } | null;
   draftUndo: boolean;
@@ -118,6 +121,9 @@ export interface ViewStoreState {
   roofShapePref: RoofShape;
   lightingMode: 'ambient' | 'lights';
   showUndercity: boolean;
+  /** Editor-only see-through per layer id (0.1–1), remembered on this computer. */
+  layerOpacity: Record<string, number>;
+  setLayerOpacity: (layerId: string, opacity: number) => void;
   measureTerrainWeighted: boolean;
   measureSeason: TravelSeason;
   showHorizonRing: boolean;
@@ -177,11 +183,12 @@ export interface ViewStoreState {
   setMeasureMarkers: (show: boolean) => void;
 }
 
-export const viewStore = createStore<ViewStoreState>((set) => ({
+export const viewStore = createStore<ViewStoreState>((set, get) => ({
   interactionMessage: '',
   diagnosticEntityIds: [],
   biomeName: 'forest', biomeRadius: 1000, biomeErase: false, geoBrushRadius: 1000,
   zoomThrough: true,
+  showChildMaps: (() => { try { return localStorage.getItem('atlas.showChildMaps') !== 'false'; } catch { return true; } })(),
   editParts: false,
   fitRequest: null,
   draftUndo: false,
@@ -236,6 +243,7 @@ export const viewStore = createStore<ViewStoreState>((set) => ({
   roofShapePref: 'gable',
   lightingMode: 'ambient',
   showUndercity: false,
+  layerOpacity: (() => { try { return JSON.parse(localStorage.getItem('atlas.layerOpacity') ?? '{}') as Record<string, number>; } catch { return {}; } })(),
   measureTerrainWeighted: true,
   measureSeason: 'summer',
   showHorizonRing: false,
@@ -374,6 +382,17 @@ export const viewStore = createStore<ViewStoreState>((set) => ({
 
   setShowUndercity(showUndercity) {
     set({ showUndercity });
+  },
+
+  setShowChildMaps(showChildMaps) {
+    set({ showChildMaps });
+    try { localStorage.setItem('atlas.showChildMaps', String(showChildMaps)); } catch { /* per-computer nicety only */ }
+  },
+
+  setLayerOpacity(layerId, opacity) {
+    const layerOpacity = { ...get().layerOpacity, [layerId]: opacity };
+    set({ layerOpacity });
+    try { localStorage.setItem('atlas.layerOpacity', JSON.stringify(layerOpacity)); } catch { /* per-computer nicety only */ }
   },
 
   setMeasureTerrainWeighted(measureTerrainWeighted) {

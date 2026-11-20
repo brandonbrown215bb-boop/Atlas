@@ -236,14 +236,26 @@ export function buildEntityDisplay(
         // Coastal shallow-water glow & crisp cartographic wave contour rings for world/region landmasses only
         const isWorldCoast = isLand && (options.mapKind === 'world' || options.mapKind === 'region');
         if (isWorldCoast) {
-          drawPolygonPath(gfx, outer, origin.x, origin.y);
-          gfx.stroke({ width: strokeUnit * 44, color: 0x5c8b91, alpha: 0.24, join: 'round' });
-          drawPolygonPath(gfx, outer, origin.x, origin.y);
-          gfx.stroke({ width: strokeUnit * 26, color: 0x82b2b3, alpha: 0.34, join: 'round' });
-          drawPolygonPath(gfx, outer, origin.x, origin.y);
-          gfx.stroke({ width: strokeUnit * 12, color: 0xb7d8ce, alpha: 0.48, join: 'round' });
-          drawPolygonPath(gfx, outer, origin.x, origin.y);
-          gfx.stroke({ width: strokeUnit * 4.2, color: 0xe6f1e3, alpha: 0.68, join: 'round' });
+          // Drawn in screen-pixel units (coords × zoom, then scaled back) so Pixi's round joins
+          // stay a handful of segments instead of thousands (see strokeGuard), and smooth.
+          // The halo also shrinks on landmasses that are small on screen, so a little island
+          // at full-map view is a dot with a rim, not a 40 px bullseye.
+          const k = Math.max(1e-8, options.zoom);
+          const xs = outer.map(p => p.x), ys = outer.map(p => p.y);
+          const screenSize = Math.min(Math.max(...xs) - Math.min(...xs), Math.max(...ys) - Math.min(...ys)) * k;
+          const fit = Math.max(0.15, Math.min(1, screenSize / 90));
+          const glow = new Graphics();
+          glow.eventMode = 'none';
+          glow.scale.set(1 / k);
+          const ring = () => {
+            outer.forEach((p, i) => i ? glow.lineTo((p.x - origin.x) * k, (p.y - origin.y) * k) : glow.moveTo((p.x - origin.x) * k, (p.y - origin.y) * k));
+            glow.closePath();
+          };
+          for (const [w, color, alpha] of [[37, 0x5c8b91, 0.24], [22, 0x82b2b3, 0.34], [10, 0xb7d8ce, 0.48], [3.6, 0xe6f1e3, 0.68]] as const) {
+            ring();
+            glow.stroke({ width: Math.max(1, w * fit), color, alpha, join: 'round' });
+          }
+          container.addChild(glow);
         }
 
         const roofHidden =

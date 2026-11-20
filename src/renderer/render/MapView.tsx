@@ -100,6 +100,8 @@ export function MapView(props: MapViewProps) {
   const roofMode = useStore(viewStore, s => s.roofMode);
   const lightingMode = useStore(viewStore, s => s.lightingMode);
   const showUndercity = useStore(viewStore, s => s.showUndercity);
+  const layerOpacity = useStore(viewStore, s => s.layerOpacity);
+  const showChildMaps = useStore(viewStore, s => s.showChildMaps);
   const showHorizonRing = useStore(viewStore, s => s.showHorizonRing);
   const blueprintMode = useStore(viewStore, s => s.blueprintMode);
   const world = useStore(worldStore, (s) => s.world);
@@ -457,6 +459,7 @@ export function MapView(props: MapViewProps) {
           layerContainers.set(layer.id, lc);
         }
         lc.visible = layer.visible;
+        lc.alpha = viewStore.getState().layerOpacity[layer.id] ?? 1;
         entitiesRoot.addChild(lc);
       }
 
@@ -617,7 +620,7 @@ export function MapView(props: MapViewProps) {
         .removeChildren()
         .forEach((c) => c.destroy({ children: true }));
       const currentWorld = worldRef.current;
-      if (currentWorld) {
+      if (currentWorld && viewStore.getState().showChildMaps) {
         const viewW = Math.max(1, host.clientWidth);
         const viewH = Math.max(1, host.clientHeight);
         for (const childMap of Object.values(currentWorld.maps)) {
@@ -1247,6 +1250,8 @@ export function MapView(props: MapViewProps) {
     roofMode,
     lightingMode,
     showUndercity,
+    layerOpacity,
+    showChildMaps,
     showHorizonRing,
     blueprintMode,
   ]);

@@ -51,6 +51,7 @@ export function App() {
   const isDirty = dirtyWorld || Object.keys(dirtyMapIds).length > 0;
   const activeTool = useStore(viewStore, (s) => s.activeTool);
   const zoomThrough = useStore(viewStore, (s) => s.zoomThrough);
+  const showChildMaps = useStore(viewStore, (s) => s.showChildMaps);
 
   const hudPanels = useStore(hudStore, (s) => s.panels);
   const dragOverMain = useStore(hudStore, (s) => s.dragOverMain);
@@ -411,6 +412,14 @@ export function App() {
                 onChange={(e) => viewStore.setState({ zoomThrough: e.target.checked })}
               />
               <span>Zoom-through</span>
+            </label>
+            <label style={{ display: 'inline-flex', alignItems: 'center', gap: 3 }} title="Draw region, town and site maps inside this map">
+              <input
+                type="checkbox"
+                checked={showChildMaps}
+                onChange={(e) => viewStore.getState().setShowChildMaps(e.target.checked)}
+              />
+              <span>Child maps</span>
             </label>
             {parentChanged && (
               <button

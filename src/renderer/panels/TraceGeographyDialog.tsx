@@ -41,7 +41,10 @@ export function TraceGeographyDialog({image,onClose}:{image:Extract<Entity,{type
     worker.onerror=e=>{setBusy(false);setError(e.message);worker.terminate();};
     worker.postMessage({...source,sensitivity,waterColor,mask});
   };
-  useEffect(()=>{if(source){setPast([]);setFuture([]);setRemoved([]);analyze();}},[source,sensitivity,waterColor]);
+  // Re-detecting from colour replaces the whole mask; keep the old one on the undo stack so a
+  // bumped slider after careful hand-painting is one Undo correction away, not lost.
+  const resultRef=useRef<TraceResult|null>(null);resultRef.current=result;
+  useEffect(()=>{if(source){const prior=resultRef.current?.mask;setPast(prior?p=>[...p,prior]:[]);setFuture([]);setRemoved([]);analyze();}},[source,sensitivity,waterColor]);
   useEffect(()=>{
     const c=canvas.current;if(!c||!source||!photo.current)return;c.width=source.width;c.height=source.height;
     const ctx=c.getContext('2d')!;ctx.drawImage(photo.current,0,0,c.width,c.height);
