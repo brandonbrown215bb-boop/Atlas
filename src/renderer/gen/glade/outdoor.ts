@@ -3,6 +3,7 @@ import { bboxFromPoints, distanceToSegment, getEntityBounds, pointInPolygon } fr
 import { smoothChaikin, simplifyRDP } from '../../geom/simplify';
 import { PointSchema, type Entity, type Point } from '../../model/schema';
 import { themeAssets } from '../../model/themes';
+import { propArt, surfaceTexture } from '../art';
 import { registerGenerator, type GeneratorInput } from '../framework';
 import { mulberry32 } from '../rng';
 
@@ -460,7 +461,7 @@ export function generateOutdoor(input: GeneratorInput<OutdoorParams>): Entity[] 
         : undefined;
       bridges.push({ ...base, id: `bridge-${bridges.length}`, type: 'prop', name: 'Stream bridge', x: (a.x + b.x) / 2, y: (a.y + b.y) / 2,
         w: length + g * .8, h: Math.min(width * 1.4, width + bend * 1.4), rotation: Math.atan2(b.y - a.y, b.x - a.x), scale: 1, flipX: false,
-        ...(crossingBuiltin ? { builtin: crossingBuiltin } : { assetId: asset }) });
+        ...(crossingBuiltin ? { builtin: crossingBuiltin } : { assetId: asset, builtin: 'bridge' }) });
       wet = [];
     };
     for (let i = 1; i < trail.length; i++) {
@@ -503,7 +504,8 @@ export function generateOutdoor(input: GeneratorInput<OutdoorParams>): Entity[] 
     if ((nearWater && random() < Math.min(0.45, 0.22 * params.density)) || (!nearWater && random() < Math.min(0.12, 0.05 * params.density))) {
       const rockSz = g * (0.55 + random() * 0.45);
       rocks.push({ ...base, id: `rock-${rocks.length}`, type: 'prop', name: 'Mossy boulder', ...p, w: rockSz, h: rockSz,
-        rotation: random() * Math.PI * 2, scale: 1, flipX: random() < .5, builtin: 'rock', tacticalTag: 'cover' });
+        rotation: random() * Math.PI * 2, scale: 1, flipX: random() < .5,
+        ...propArt(input, ['rock'], `rock-${rocks.length}`, 'rock'), tacticalTag: 'cover' });
       continue;
     }
 
@@ -513,7 +515,7 @@ export function generateOutdoor(input: GeneratorInput<OutdoorParams>): Entity[] 
     if (random() > Math.min(.95, params.density * prob)) continue;
     const assets = themeAssets(input.theme, 'tree'), asset = assets[Math.floor(random() * assets.length)]!;
     trees.push({ ...base, id: `tree-${trees.length}`, type: 'prop', name: 'Tree', ...p, w: size, h: size, rotation: random() * Math.PI * 2, scale: 1, flipX: random() < .5,
-      ...(asset.startsWith('builtin:') ? { builtin: asset.slice(8) } : { assetId: asset }) });
+      ...(asset.startsWith('builtin:') ? { builtin: asset.slice(8) } : { assetId: asset, builtin: 'tree' }) });
     // Add an occasional smaller sapling beside dense grove trees for natural thickets.
     if (!band && grove > (0.72 - groveTightness * 0.14) && random() < (0.28 + groveTightness * 0.25)) {
       const ang = random() * Math.PI * 2, reach = g * (0.78 - groveTightness * 0.22);
@@ -524,7 +526,7 @@ export function generateOutdoor(input: GeneratorInput<OutdoorParams>): Entity[] 
         && (!stream.length || lineDistance(sp, stream) >= streamWidth / 2 + subR)
         && (!pond || (!pointInPolygon(sp, pond) && ringDistance(sp, pond) >= subR))) {
         trees.push({ ...base, id: `tree-${trees.length}`, type: 'prop', name: 'Tree', ...sp, w: subSz, h: subSz, rotation: random() * Math.PI * 2, scale: 1, flipX: random() < .5,
-          ...(asset.startsWith('builtin:') ? { builtin: asset.slice(8) } : { assetId: asset }) });
+          ...(asset.startsWith('builtin:') ? { builtin: asset.slice(8) } : { assetId: asset, builtin: 'tree' }) });
       }
     }
   }
@@ -554,7 +556,7 @@ export function generateOutdoor(input: GeneratorInput<OutdoorParams>): Entity[] 
         if (trees.some(tProp => distance(p, tProp) < g * 1.15)) continue;
         const assets = themeAssets(input.theme, 'tree'), asset = assets[Math.floor(random() * assets.length)]!;
         trees.push({ ...base, id: `edge-tree-${trees.length}`, type: 'prop', name: 'Tree', ...p, w: sz, h: sz, rotation: random() * Math.PI * 2, scale: 1, flipX: random() < .5,
-          ...(asset.startsWith('builtin:') ? { builtin: asset.slice(8) } : { assetId: asset }) });
+          ...(asset.startsWith('builtin:') ? { builtin: asset.slice(8) } : { assetId: asset, builtin: 'tree' }) });
       }
     }
     for (const c of clearings) {
@@ -564,7 +566,7 @@ export function generateOutdoor(input: GeneratorInput<OutdoorParams>): Entity[] 
         const tp = { x: c.center.x + Math.cos(ang) * c.radius * 0.72, y: c.center.y + Math.sin(ang) * c.radius * 0.72 };
         if (fits(tp, g * 0.35) && trails.every(tr => lineDistance(tp, tr.points) > trailRadius + g * 0.3)) {
           const tSz = g * (0.45 + random() * 0.25);
-          rocks.push({ ...base, id: `tuft-${rocks.length}`, type: 'prop', name: 'Grass tuft', ...tp, w: tSz, h: tSz, rotation: (random() - 0.5) * 0.3, scale: 1, flipX: random() < 0.5, builtin: 'tuft' });
+          rocks.push({ ...base, id: `tuft-${rocks.length}`, type: 'prop', name: 'Grass tuft', ...tp, w: tSz, h: tSz, rotation: (random() - 0.5) * 0.3, scale: 1, flipX: random() < 0.5, ...propArt(input, ['tuft'], `tuft-${rocks.length}`, 'tuft') });
         }
       }
     }
@@ -578,10 +580,10 @@ export function generateOutdoor(input: GeneratorInput<OutdoorParams>): Entity[] 
       const lp = { x: c0.center.x + Math.cos(ang) * (c0.radius * 0.56), y: c0.center.y + Math.sin(ang) * (c0.radius * 0.56) };
       const sz = g * 0.9;
       if (fits(lp, sz) && trails.every(t => lineDistance(lp, t.points) > trailRadius + sz)) {
-        rocks.push({ ...base, id: `landmark-0`, type: 'prop', name: 'Waystone', ...lp, w: sz, h: sz, rotation: ang, scale: 1, flipX: false, builtin: 'altar' });
+        rocks.push({ ...base, id: 'landmark-0', type: 'prop', name: 'Waystone', ...lp, w: sz, h: sz, rotation: ang, scale: 1, flipX: false, ...propArt(input, ['waystone'], 'landmark-0', 'altar') });
         const firePt = { x: c0.center.x - Math.cos(ang) * (c0.radius * 0.42), y: c0.center.y - Math.sin(ang) * (c0.radius * 0.42) };
         if (fits(firePt, g * 0.45) && trails.every(t => lineDistance(firePt, t.points) > trailRadius * 0.7 + g * 0.25)) {
-          rocks.push({ ...base, id: 'landmark-0-fire', type: 'prop', name: 'Campfire', ...firePt, w: g * 0.65, h: g * 0.65, rotation: 0, scale: 1, flipX: false, builtin: 'campfire' });
+          rocks.push({ ...base, id: 'landmark-0-fire', type: 'prop', name: 'Campfire', ...firePt, w: g * 0.65, h: g * 0.65, rotation: 0, scale: 1, flipX: false, ...propArt(input, ['campfire'], 'landmark-0-fire', 'campfire') });
           lights.push({ ...base, id: 'landmark-0-light', type: 'light', ...firePt, radius: g * 3.2, color: '#ff9e44' });
         }
         break;
@@ -594,9 +596,9 @@ export function generateOutdoor(input: GeneratorInput<OutdoorParams>): Entity[] 
         const lp = { x: c1.center.x + Math.cos(ang) * (c1.radius * 0.56), y: c1.center.y + Math.sin(ang) * (c1.radius * 0.56) };
         const sz = g * 0.8;
         if (fits(lp, sz) && trails.every(t => lineDistance(lp, t.points) > trailRadius + sz)) {
-          rocks.push({ ...base, id: `landmark-1-rock`, type: 'prop', name: 'Outcrop boulder', ...lp, w: sz, h: sz, rotation: ang, scale: 1, flipX: false, builtin: 'rock', tacticalTag: 'cover' });
-          rocks.push({ ...base, id: `landmark-1-crate`, type: 'prop', name: 'Camp crate', x: lp.x + g * 0.6, y: lp.y + g * 0.25, w: g * 0.5, h: g * 0.5, rotation: ang + 0.4, scale: 1, flipX: false, builtin: 'crate', tacticalTag: 'cover' });
-          rocks.push({ ...base, id: `landmark-1-barrel`, type: 'prop', name: 'Supply barrel', x: lp.x - g * 0.55, y: lp.y + g * 0.35, w: g * 0.45, h: g * 0.45, rotation: ang, scale: 1, flipX: false, builtin: 'barrel', tacticalTag: 'cover' });
+          rocks.push({ ...base, id: 'landmark-1-rock', type: 'prop', name: 'Outcrop boulder', ...lp, w: sz, h: sz, rotation: ang, scale: 1, flipX: false, ...propArt(input, ['rock'], 'landmark-1-rock', 'rock'), tacticalTag: 'cover' });
+          rocks.push({ ...base, id: 'landmark-1-crate', type: 'prop', name: 'Camp crate', x: lp.x + g * 0.6, y: lp.y + g * 0.25, w: g * 0.5, h: g * 0.5, rotation: ang + 0.4, scale: 1, flipX: false, ...propArt(input, ['crate'], 'landmark-1-crate', 'crate'), tacticalTag: 'cover' });
+          rocks.push({ ...base, id: 'landmark-1-barrel', type: 'prop', name: 'Supply barrel', x: lp.x - g * 0.55, y: lp.y + g * 0.35, w: g * 0.45, h: g * 0.45, rotation: ang, scale: 1, flipX: false, ...propArt(input, ['barrel'], 'landmark-1-barrel', 'barrel'), tacticalTag: 'cover' });
           break;
         }
       }
@@ -610,7 +612,62 @@ export function generateOutdoor(input: GeneratorInput<OutdoorParams>): Entity[] 
         && trails.every(tr => lineDistance(bp, tr.points) >= trailRadius + bSz * 0.6)
         && (!stream.length || lineDistance(bp, stream) >= streamWidth / 2 + bSz * 0.6)
         && (!pond || (!pointInPolygon(bp, pond) && ringDistance(bp, pond) >= bSz * 0.5))) {
-        rocks.push({ ...base, id: `bush-${rocks.length}`, type: 'prop', name: 'Undergrowth', ...bp, w: bSz, h: bSz, rotation: random() * Math.PI * 2, scale: 1, flipX: false, builtin: 'bush', tacticalTag: 'concealment' });
+        rocks.push({ ...base, id: `bush-${rocks.length}`, type: 'prop', name: 'Undergrowth', ...bp, w: bSz, h: bSz, rotation: random() * Math.PI * 2, scale: 1, flipX: false, ...propArt(input, ['bush'], `bush-${rocks.length}`, 'bush'), tacticalTag: 'concealment' });
+      }
+    }
+    // Dormans' "Theory of the Place": transform the deepest clearing into a visually contrasted bounded
+    // focal Place + inner Vault, with Clearing 1 as the scouting Antechamber and a loop trail as a Secondary Entrance.
+    if (clearings.length >= 3) {
+      const focal = clearings[clearings.length - 1]!;
+      const ante = clearings[0]!;
+      const approachAng = Math.atan2(ante.center.y - focal.center.y, ante.center.x - focal.center.x);
+      // Stone sanctuary apron inside the focal clearing
+      const apronR = focal.radius * 0.62;
+      const apronRing = Array.from({ length: 10 }, (_, k) => {
+        const a = (k / 10) * Math.PI * 2;
+        return { x: focal.center.x + Math.cos(a) * apronR, y: focal.center.y + Math.sin(a) * apronR };
+      });
+      if (apronRing.every((p) => fits(p, g * 0.2))) {
+        layout.push({
+          ...base, id: 'place-focal-apron', type: 'area', role: 'floor', floorMaterial: 'stone',
+          name: 'Sanctuary Paving', fill: '#8e8779', rings: [apronRing],
+        });
+      }
+      // Two curved ruined stone wall arcs bounding The Place while leaving Main Entrance & rear Secondary Entrance gaps clear
+      for (const [arcIdx, offset] of ([0.45, -1.9] as const).entries()) {
+        const startA = approachAng + offset;
+        const pts = Array.from({ length: 4 }, (_, k) => {
+          const a = startA + (k / 3) * 1.15;
+          return { x: focal.center.x + Math.cos(a) * focal.radius * 0.84, y: focal.center.y + Math.sin(a) * focal.radius * 0.84 };
+        });
+        if (pts.every((p) => fits(p, g * 0.3) && trails.every((tr) => lineDistance(p, tr.points) > trailRadius + g * 0.35))) {
+          layout.push({
+            ...base, id: `place-ring-wall-${arcIdx}`, type: 'wall', name: 'Focal Enclosure Wall',
+            points: pts, blocksMove: true, blocksSight: true,
+          });
+        }
+      }
+      // Inner Vault focal prop (chest/altar) inside The Place
+      const vaultPt = {
+        x: focal.center.x - Math.cos(approachAng) * focal.radius * 0.22,
+        y: focal.center.y - Math.sin(approachAng) * focal.radius * 0.22,
+      };
+      if (fits(vaultPt, g * 0.65) && trails.every((tr) => lineDistance(vaultPt, tr.points) > trailRadius * 0.6)) {
+        rocks.push({
+          ...base, id: 'place-vault-feature', type: 'prop', name: 'Inner Vault Reliquary',
+          x: vaultPt.x, y: vaultPt.y, w: g * 0.95, h: g * 0.72, rotation: approachAng + Math.PI / 2,
+          scale: 1, flipX: false, tacticalTag: 'feature',
+          ...propArt(input, ['strongbox', 'altar'], 'place-vault-feature', 'strongbox'),
+        });
+      }
+      // Mark the last loop trail touching The Place as a stealth Secondary Entrance (game trail)
+      const trailEntities = layout.filter((e): e is Extract<Entity, { type: 'path' }> => e.type === 'path' && e.role === 'trail');
+      const secondaryTrail = [...trailEntities].reverse().find((tr) =>
+        distance(tr.points[0]!, focal.center) < focal.radius * 1.2 || distance(tr.points.at(-1)!, focal.center) < focal.radius * 1.2,
+      );
+      if (secondaryTrail && trailEntities.length > clearings.length) {
+        secondaryTrail.routeTier = 'gameTrail';
+        secondaryTrail.name = 'Hidden Back Trail';
       }
     }
     if (params.preset === 'roadside') {
@@ -625,7 +682,7 @@ export function generateOutdoor(input: GeneratorInput<OutdoorParams>): Entity[] 
             const hSz = g * (0.75 + random() * 0.25);
             if (fits(hp, hSz * 0.5) && trails.every(tr => lineDistance(hp, tr.points) >= trailRadius + hSz * 0.45)
               && (!stream.length || lineDistance(hp, stream) >= streamWidth / 2 + hSz * 0.5)) {
-              rocks.push({ ...base, id: `hedge-${rocks.length}`, type: 'prop', name: 'Hedgerow', ...hp, w: hSz, h: hSz, rotation: Math.atan2(b.y - a.y, b.x - a.x), scale: 1, flipX: false, builtin: 'bush', tacticalTag: 'concealment' });
+              rocks.push({ ...base, id: `hedge-${rocks.length}`, type: 'prop', name: 'Hedgerow', ...hp, w: hSz, h: hSz, rotation: Math.atan2(b.y - a.y, b.x - a.x), scale: 1, flipX: false, ...propArt(input, ['hedge', 'bush'], `hedge-${rocks.length}`, 'bush'), tacticalTag: 'concealment' });
             }
           }
         }
@@ -730,31 +787,37 @@ export function generateOutdoor(input: GeneratorInput<OutdoorParams>): Entity[] 
       }
     }
 
-    // Place 1-2 elevated rock/earth tactical plateau ridges cleanly clear of paths and clearings.
+    // Place 1-2 elevated rock/earth tactical plateau ridges: first ridge intentionally hugs a clearing or trail
+    // as a climbable overlook/ambush cliff (staying strictly outside walkable ground), second sits deeper in woods.
     const ridgeOptions = all.filter((c) =>
-      fits(c, g * 2.2)
-      && clearings.every((cl) => distance(c, cl.center) > cl.radius + g * 2.6)
-      && trails.every((tr) => lineDistance(c, tr.points) > trailRadius + g * 2.3)
-      && (!stream.length || lineDistance(c, stream) > streamWidth / 2 + g * 2.3)
-      && (!pond || (!pointInPolygon(c, pond) && ringDistance(c, pond) > g * 2.4)),
+      fits(c, g * 1.8)
+      && clearings.every((cl) => distance(c, cl.center) > cl.radius + g * 1.15)
+      && trails.every((tr) => lineDistance(c, tr.points) > trailRadius + g * 1.15)
+      && (!stream.length || lineDistance(c, stream) > streamWidth / 2 + g * 1.8)
+      && (!pond || (!pointInPolygon(c, pond) && ringDistance(c, pond) > g * 1.8)),
+    );
+    const overlookOptions = ridgeOptions.filter((c) =>
+      clearings.some((cl) => distance(c, cl.center) <= cl.radius + g * 3.4)
+      || trails.some((tr) => lineDistance(c, tr.points) <= trailRadius + g * 2.8),
     );
     const chosenCenters: Point[] = [];
-    for (let rAttempt = 0; rAttempt < 24 && ridgeAreas.length < 2 && ridgeOptions.length > 0; rAttempt++) {
-      const center = ridgeOptions[Math.floor(random() * ridgeOptions.length)]!;
+    for (let rAttempt = 0; rAttempt < 32 && ridgeAreas.length < 2 && ridgeOptions.length > 0; rAttempt++) {
+      const pool = ridgeAreas.length === 0 && overlookOptions.length > 0 ? overlookOptions : ridgeOptions;
+      const center = pool[Math.floor(random() * pool.length)]!;
       if (chosenCenters.some((p) => distance(p, center) < g * 8)) continue;
-      const rx = g * (1.4 + random() * 0.8), ry = g * (0.9 + random() * 0.5), ang = random() * Math.PI;
+      const rx = g * (1.3 + random() * 0.75), ry = g * (0.85 + random() * 0.45), ang = random() * Math.PI;
       const cos = Math.cos(ang), sin = Math.sin(ang);
       const rawRing = Array.from({ length: 12 }, (_, i) => {
         const a = (i / 12) * Math.PI * 2;
-        const wob = 0.8 + random() * 0.35;
+        const wob = 0.82 + random() * 0.3;
         const lx = Math.cos(a) * rx * wob, ly = Math.sin(a) * ry * wob;
         return { x: center.x + cos * lx - sin * ly, y: center.y + sin * lx + cos * ly };
       });
       const valid = rawRing.every((p) =>
         fits(p, g * 0.35)
-        && clearings.every((cl) => distance(p, cl.center) > cl.radius + g * 0.5)
-        && trails.every((tr) => lineDistance(p, tr.points) > trailRadius + g * 0.5)
-        && (!stream.length || lineDistance(p, stream) > streamWidth / 2 + g * 0.5),
+        && clearings.every((cl) => distance(p, cl.center) > cl.radius + g * 0.45)
+        && trails.every((tr) => lineDistance(p, tr.points) > trailRadius + g * 0.45)
+        && (!stream.length || lineDistance(p, stream) > streamWidth / 2 + g * 0.45),
       );
       if (!valid) continue;
       chosenCenters.push(center);
@@ -763,14 +826,61 @@ export function generateOutdoor(input: GeneratorInput<OutdoorParams>): Entity[] 
         id: `ridge-${ridgeAreas.length}`,
         type: 'area',
         role: 'plateau',
-        name: 'Rocky Ridge',
+        name: ridgeAreas.length === 0 ? 'Overlook Cliff Ridge' : 'Rocky Ridge',
         rings: [smoothChaikin(rawRing, 1, true)],
         fill: '#6f7c52',
         elevation: 2,
       });
     }
   }
-  return [...canopyAreas, ...ridgeAreas, ...layout, ...rocks, ...trees, ...lights, ...clearings.map((c, i): Entity => ({ ...base, id: `label-${i}`, type: 'label', name: `Clearing ${i + 1}`, text: String(i + 1), x: c.center.x, y: c.center.y, size: 18 }))];
+  const sitePlaces: Entity[] = [];
+  if (clearings.length >= 3 && params.density > 0) {
+    const focalIdx = clearings.length - 1;
+    const secondary = layout.find((e): e is Extract<Entity, { type: 'path' }> => e.type === 'path' && e.name === 'Hidden Back Trail');
+    sitePlaces.push(
+      {
+        ...base, id: 'place-outdoor-antechamber', type: 'place', name: 'Antechamber Clearing (Area 1)', category: 'landmark',
+        discoveryTier: 'landmark', siteStatus: 'active',
+        notes: 'Landmark: Weathered waystone and cold firepit framing the main trail deeper into the woods.',
+        gmNotes: 'Scouting threshold before the main site; tracks and distant smoke telegraph what waits at the focal clearing.',
+        clueNext: `Main path leads toward the focal enclosure at Clearing ${focalIdx + 1}.`,
+        entityIds: ['clearing-0'],
+      },
+      {
+        ...base, id: 'place-outdoor-focal', type: 'place', name: `The Place: Focal Enclosure (Area ${focalIdx + 1})`, category: 'ruin',
+        discoveryTier: 'landmark', siteStatus: 'active',
+        notes: 'Landmark: Broken stone ring-walls and flagstones stand out sharply from the surrounding woods.',
+        gmNotes: 'Main Entrance faces the trail and is watched. Inner Vault holds the prize; flanking via the back trail or cliff ridge avoids a frontal fight.',
+        entityIds: [`clearing-${focalIdx}`, ...(layout.some((e) => e.id === 'place-focal-apron') ? ['place-focal-apron'] : []), ...(rocks.some((e) => e.id === 'place-vault-feature') ? ['place-vault-feature'] : [])],
+      },
+    );
+    if (secondary) {
+      sitePlaces.push({
+        ...base, id: 'place-outdoor-secondary', type: 'place', name: 'Secondary Entrance (Back Trail)', category: 'secret',
+        discoveryTier: 'secret', siteStatus: 'active', gmOnly: true,
+        notes: 'Overgrown game trail threading through dense undergrowth behind the focal walls.',
+        gmNotes: 'Hidden bypass: spending time scouting the outer woods reveals this rear approach behind the focal enclosure.',
+        entityIds: [secondary.id],
+      });
+    }
+  }
+  const clearing = surfaceTexture(input, ['clearingTexture']);
+  const pondTile = surfaceTexture(input, ['pondTexture']);
+  const masonry = surfaceTexture(input, ['ruinWallTexture', 'wallTexture'], g * 0.34);
+  for (const entity of layout) {
+    if (entity.type === 'area') {
+      const tile = entity.role === 'water' ? pondTile : clearing;
+      if (tile) entity.texture = tile;
+    }
+    if (entity.type === 'wall' && masonry) entity.texture = masonry;
+    if (entity.type === 'path') {
+      const roles = entity.role === 'river' ? ['streamTexture'] :
+        entity.role === 'road' ? ['roadTexture', 'pathTexture'] : ['trailTexture', 'pathTexture'];
+      const tile = surfaceTexture(input, roles, entity.width);
+      if (tile) entity.texture = tile;
+    }
+  }
+  return [...canopyAreas, ...ridgeAreas, ...layout, ...rocks, ...trees, ...lights, ...sitePlaces, ...clearings.map((c, i): Entity => ({ ...base, id: `label-${i}`, type: 'label', name: `Clearing ${i + 1}`, text: String(i + 1), x: c.center.x, y: c.center.y, size: 18 }))];
 }
 
 registerGenerator({ type: 'glade', title: 'Outdoor woodland', params: OutdoorParamsSchema, generate: generateOutdoor });

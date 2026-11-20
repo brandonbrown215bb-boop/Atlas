@@ -47,6 +47,14 @@ const itemDimensions = (role: string, g: number): { w: number; h: number } => {
   return { w: g * 0.68, h: g * 0.68 };
 };
 
+const coverGeometry = (role: string): { tacticalTag: 'cover'; coverHeight: 'low' | 'tall'; coverFacing: 'directional' | 'freestanding' } | Record<string, never> => {
+  if (role === 'rug') return {};
+  if (role === 'pillar') return { tacticalTag: 'cover', coverHeight: 'tall', coverFacing: 'freestanding' };
+  if (role === 'altar') return { tacticalTag: 'cover', coverHeight: 'low', coverFacing: 'freestanding' };
+  if (role === 'hearth') return { tacticalTag: 'cover', coverHeight: 'tall', coverFacing: 'directional' };
+  return { tacticalTag: 'cover', coverHeight: 'low', coverFacing: 'directional' };
+};
+
 /** Small props occupy a square; the circumscribed circle is used for conservative clearance. */
 export function dressDungeon(input: GeneratorInput<DungeonParams>, layout: Entity[]): Entity[] {
   const {grid:g,params,region}=input;
@@ -220,7 +228,15 @@ export function dressDungeon(input: GeneratorInput<DungeonParams>, layout: Entit
     const roomTables: Point[] = [];
     const supplyAnchors: Point[] = [];
     let placedAltar: Point | null = null;
-    for(const item of furniture[purpose]) {
+    let roomCoverCount = 0;
+    // "Less cover is better" (Level Design Book): cap room cover density so flanking lanes stay open & legible.
+    const maxRoomCover = params.mode === 'dungeon' ? Math.max(4, Math.floor(candidates.length * 0.24 * Math.max(1, params.density))) : Infinity;
+    const roomItems = [...furniture[purpose]];
+    // Large dungeon arenas without freestanding cover get 1-2 central pillars for 360-degree flanking & sightline breaks.
+    if (params.mode === 'dungeon' && candidates.length >= 18 && !roomItems.some((it) => it.role === 'pillar' || it.role === 'altar')) {
+      roomItems.push({ role: 'pillar', wall: false, count: 2 });
+    }
+    for(const item of roomItems) {
       const dims = itemDimensions(item.role, g);
       const itemRadius = Math.hypot(dims.w, dims.h) / 2;
       const isTable = item.role === 'table';
@@ -268,6 +284,7 @@ export function dressDungeon(input: GeneratorInput<DungeonParams>, layout: Entit
       const remaining = [...sorted];
       let added=0;
       while (added < count && remaining.length > 0) {
+        if (!isUnique && item.role !== 'rug' && roomCoverCount >= maxRoomCover) break;
         if (isClusteredSupply && supplyAnchors.length > 0) {
           remaining.sort((a, b) => {
             const da = Math.min(...supplyAnchors.map(s => Math.hypot(a.x - s.x, a.y - s.y))) + wallDistance(a) * 0.6;
@@ -277,6 +294,8 @@ export function dressDungeon(input: GeneratorInput<DungeonParams>, layout: Entit
         }
         const p = remaining.shift()!;
         if(!fitsItem(p, itemRadius)) continue;
+        // Doorway foothold: keep tall cover slightly further back from thresholds so entering players read the room vista
+        if (item.role === 'pillar' && roomDoors.some(d => distanceToSegment(p, d.a, d.b) < g * 1.45 + itemRadius)) continue;
         const minSpacing = isTable ? g * 2.4 : itemRadius * 1.85 + g * 0.1;
         if(placed.some(e=>e.type==='prop' && (e.name?.endsWith(': table') || isTable ? Math.hypot(p.x-e.x,p.y-e.y) < minSpacing : Math.hypot(p.x-e.x,p.y-e.y) < itemRadius + Math.hypot(e.w ?? g * 0.7, e.h ?? g * 0.7) / 2 + g * 0.08))) continue;
         const assets=themeAssets(input.theme,item.role), asset=assets[Math.floor(random()*assets.length)]!;
@@ -294,12 +313,13 @@ export function dressDungeon(input: GeneratorInput<DungeonParams>, layout: Entit
         if (isTable) roomTables.push(p);
         if (item.role === 'altar') placedAltar = p;
         if (isClusteredSupply) supplyAnchors.push(p);
-        const coverTag = item.role !== 'rug' ? ({ tacticalTag: 'cover' as const }) : {};
+        const coverMeta = coverGeometry(item.role);
+        if ('tacticalTag' in coverMeta) roomCoverCount++;
         placed.push({id:`dressing-${roomIndex}-${placed.length}`,type:'prop',origin:'generated',layerId:'generated',rev:0,
           name:`${purpose}: ${item.role}`, x:p.x,y:p.y,w:dims.w,h:dims.h,scale:1,flipX:false,
           rotation:rot,
-          ...coverTag,
-          ...(asset.startsWith('builtin:')?{builtin:asset.slice(8)}:{assetId:asset})});
+          ...coverMeta,
+          ...(asset.startsWith('builtin:')?{builtin:asset.slice(8)}:{assetId:asset,builtin:item.role})});
         added++;
       }
     }

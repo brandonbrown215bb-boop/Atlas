@@ -197,7 +197,17 @@ it('gives a town one square, wards, a graveyard crypt and distinct notables that
   for (const p of establishments) { expect(p.notes).toMatch(/Run by/); expect(p.gmNotes).toMatch(/Secret: .*Job: /); }
   const audit = settlementServiceAudit({ entities: Object.fromEntries(town.map(e => [e.id, e])) } as unknown as MapDoc);
   expect(audit.missing).toEqual([]);
-  expect(generateCity(mile('town'))).toEqual(town);
+  const themed = generateCity({ ...mile('town'), theme: { roof: ['shingles'], innRoof: ['inn'], marketStall: ['stall'] } });
+  expect(themed.some(e => e.type === 'area' && e.texture?.assetId === 'shingles')).toBe(true);
+  expect(themed.some(e => e.type === 'area' && e.texture?.assetId === 'inn' && e.texture.fitToArea)).toBe(true);
+  const stalls = themed.filter(e => e.name === 'Market Stall');
+  expect(stalls.length).toBeGreaterThan(0);
+  expect(stalls.every(e => e.type === 'prop' && e.assetId === 'stall')).toBe(true);
+  expect(themed.map(e => {
+    if (e.type === 'area') { const { texture, ...area } = e; return area; }
+    if (e.type === 'prop') { const { assetId, ...prop } = e; return prop; }
+    return e;
+  })).toEqual(town);
 });
 
 it('builds on the world town it was developed from: its scale, rumours, trouble and roads', () => {
@@ -216,4 +226,17 @@ it('builds on the world town it was developed from: its scale, rumours, trouble 
   const places = town.filter((e): e is Extract<Entity, { type: 'place' }> => e.type === 'place');
   expect(places.some(p => p.rumours?.some(r => r.includes('Blackgut Pit')))).toBe(true);
   expect(places.find(p => p.id === 'place-trouble')?.gmNotes).toMatch(/reeve has gone missing/);
+});
+
+it('wires competing urban factions across town landmarks and establishments', () => {
+  const town = generateCity(mile('town'));
+  const places = town.filter((e): e is Extract<Entity, { type: 'place' }> => e.type === 'place');
+  const allLinks = places.flatMap((p) => p.factionLinks ?? []);
+  expect(allLinks.some((l) => l.startsWith('Town Watch'))).toBe(true);
+  expect(allLinks.some((l) => l.startsWith('Merchant Guild'))).toBe(true);
+  expect(allLinks.some((l) => l.startsWith('Temple Chapter'))).toBe(true);
+  expect(allLinks.some((l) => l.startsWith("Thieves' Guild"))).toBe(true);
+  const townPlace = places.find((p) => p.id === 'place-town');
+  expect(townPlace?.factionLinks?.length).toBeGreaterThanOrEqual(3);
+  expect(townPlace?.gmNotes).toContain('Urban Factions:');
 });

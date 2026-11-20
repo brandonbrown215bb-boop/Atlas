@@ -11,7 +11,8 @@ import {
   pushHistory,
   type HistoryState,
 } from './history';
-import type { MapDoc, WorldMeta } from './schema';
+import type { AssetsIndex, MapDoc, WorldMeta } from './schema';
+import { viewStore } from './viewStore';
 
 enablePatches();
 
@@ -61,7 +62,7 @@ function collectTouchedFromPatches(patches: readonly Patch[]): {
   };
 }
 
-export function createWorldStore() {
+export function createWorldStore(getAssets: () => AssetsIndex = () => ({})) {
   return createStore<WorldStoreState>((set, get) => ({
     operationInProgress: false,
     world: null,
@@ -114,11 +115,12 @@ export function createWorldStore() {
       }
 
       const results: unknown[] = [];
+      const assets = getAssets();
       const [nextWorld, patches, inversePatches] = produceWithPatches(
         state.world,
         (draft) => {
           for (const call of calls) {
-            results.push(executeCommandOnDraft(draft, call.name, call.input));
+            results.push(executeCommandOnDraft(draft, call.name, call.input, assets));
           }
         },
       );
@@ -225,4 +227,4 @@ export function createWorldStore() {
   }));
 }
 
-export const worldStore = createWorldStore();
+export const worldStore = createWorldStore(() => viewStore.getState().assetsIndex);

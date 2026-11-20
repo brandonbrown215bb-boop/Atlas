@@ -3,7 +3,7 @@ import { restoreMissingLayers } from './migrate';
 import { affineFromRings, inheritTerrain, transformChildren } from '../geom/groupTransform';
 import { defaultBounds } from './mapDefaults';
 import { planSync } from './sync';
-import { getGenerator, regionConstraints, runGenerator } from '../gen/framework';
+import { getGenerator, isDressingProp, regionConstraints, runGenerator } from '../gen/framework';
 import '../gen/dungeon/layout';
 import '../gen/glade/outdoor';
 import '../gen/world/world';
@@ -36,6 +36,7 @@ import {
   MapKindSchema,
   PointSchema,
   ClimateSchema,
+  type AssetsIndex,
   type Entity,
   type Layer,
   type MapDoc,
@@ -52,7 +53,7 @@ export interface CommandDef<TInput = unknown, TResult = unknown> {
   name: string;
   description: string;
   input: z.ZodType<TInput>;
-  run: (draft: WorldDocument, input: TInput) => TResult;
+  run: (draft: WorldDocument, input: TInput, assets: AssetsIndex) => TResult;
 }
 
 const registry = new Map<string, CommandDef<any, any>>();
@@ -84,13 +85,14 @@ export function executeCommandOnDraft(
   draft: WorldDocument,
   name: string,
   rawInput: unknown,
+  assets: AssetsIndex = {},
 ): unknown {
   const cmd = registry.get(name);
   if (!cmd) {
     throw new Error(`Unknown command: ${name}`);
   }
   const parsed = cmd.input.parse(rawInput);
-  return cmd.run(draft, parsed);
+  return cmd.run(draft, parsed, assets);
 }
 
 function getMapOrThrow(draft: WorldDocument, mapId: string): MapDoc {
@@ -117,7 +119,7 @@ registerCommand({
     seed: z.number().int(), params: z.record(z.string(), z.unknown()).default({}), regionEntityId: z.string().min(1).optional(),
     entireMap: z.boolean().default(false), useBoundaryAsExtent: z.boolean().default(false),
     layerId: z.string().min(1), themeName: z.string().min(1).default('default') }),
-  run(draft, input) {
+  run(draft, input, assets) {
     const map = getMapOrThrow(draft, input.mapId);
     const genId = input.genId ?? crypto.randomUUID();
     if (map.generators[genId]) throw new Error('Use generator.reroll for an existing run.');
@@ -142,7 +144,7 @@ registerCommand({
       const x = Math.min(...p.map(q=>q.x)), y = Math.min(...p.map(q=>q.y));
       map.bounds = { x, y, w: Math.max(...p.map(q=>q.x))-x, h: Math.max(...p.map(q=>q.y))-y };
     }
-    const ids = runGenerator(map, { ...input, regionEntityId, genId, theme: draft.meta.themes[input.themeName] ?? {}, climate: climateContext(draft, map),
+    const ids = runGenerator(map, { ...input, regionEntityId, genId, theme: draft.meta.themes[input.themeName] ?? {}, assets, climate: climateContext(draft, map),
       takenNames: input.type === 'world' || input.type === 'dungeon' ? namesInUse(draft, map.id, genId) : undefined });
     return { genId, ids };
   },
@@ -152,7 +154,7 @@ registerCommand({
   description: 'Reroll untouched generated content, or dressing only, preserving all manual edits. Supply the new seed.',
   input: z.object({ mapId: z.string().min(1), genId: z.string().min(1), seed: z.number().int(),
     params: z.record(z.string(), z.unknown()).optional(), themeName:z.string().min(1).optional(), dressingOnly: z.boolean().default(false), entireMap: z.boolean().default(false) }),
-  run(draft, input) {
+  run(draft, input, assets) {
     const map = getMapOrThrow(draft, input.mapId), record = map.generators[input.genId];
     if (!record) throw new Error('Generator run not found.');
     let regionEntityId = record.regionEntityId;
@@ -163,7 +165,7 @@ registerCommand({
     }
     const themeName = input.themeName ?? record.themeName ?? 'default';
     const ids = runGenerator(map, { ...record, ...input, regionEntityId, params: input.params ?? record.params,
-      layerId: record.layerId ?? map.layers[0]!.id, themeName, theme: draft.meta.themes[themeName] ?? {}, climate: climateContext(draft, map),
+      layerId: record.layerId ?? map.layers[0]!.id, themeName, theme: draft.meta.themes[themeName] ?? {}, assets, climate: climateContext(draft, map),
       takenNames: record.type === 'world' || record.type === 'dungeon' ? namesInUse(draft, map.id, input.genId) : undefined });
     return { genId: input.genId, ids };
   },
@@ -261,7 +263,7 @@ registerCommand({
     if(footprint?.type!=='area') throw new Error('Generator footprint is missing.');
     const layer=map.layers.find(l=>l.id===(record.layerId??map.layers[0]?.id));
     if(!layer?.visible||layer.locked) throw new Error('Choose a visible, unlocked layer.');
-    const scoped=Object.values(map.entities).filter(e=>e.genId===input.genId&&e.origin==='generated'&&e.type==='prop'&&pointInPolygon(e,area.rings));
+    const scoped=Object.values(map.entities).filter(e=>e.genId===input.genId&&e.origin==='generated'&&isDressingProp(e)&&pointInPolygon(e,area.rings));
     if(scoped.some(e=>map.layers.find(l=>l.id===e.layerId)?.locked)) throw new Error('Unlock the dressing layers first.');
     const removed=input.action==='more'?[]:input.action==='thin'?scoped.filter((_,i)=>i%2===0):scoped;
     const removeIds=new Set(removed.map(e=>e.id));
@@ -271,7 +273,7 @@ registerCommand({
     const output=input.action==='thin'?[]:definition.dress({seed,params,region:footprint.rings,
       constraints:[...regionConstraints(map,footprint.rings,footprint.id),...Object.values(map.entities).filter(e=>e.type==='prop'&&e.origin==='generated'&&!removeIds.has(e.id))],
       theme:draft.meta.themes[themeName]??{},grid:map.grid.size},
-      Object.values(map.entities).filter(e=>e.genId===input.genId&&e.type!=='prop'))
+      Object.values(map.entities).filter(e=>e.genId===input.genId&&!isDressingProp(e)))
       .filter(e=>e.type==='prop'&&pointInPolygon(e,area.rings));
     const purposeChanged = Object.values(map.entities).some(e => e.type === 'area' && e.roomPurpose !== roomPurposes.get(e.id));
     if(!removed.length&&!output.length&&!purposeChanged) return {ids:[],removed:[]};
@@ -298,7 +300,7 @@ registerCommand({
     childMapId:MapIdSchema.optional(),name:z.string().trim().min(1).optional(),seed:z.number().int(),
     params:z.record(z.string(),z.unknown()).default({}),themeName:z.string().min(1).default('default'),
     expectedParentRevision:z.number().int().nonnegative().optional()}),
-  run(draft,input) {
+  run(draft,input,assets) {
     const parent=getMapOrThrow(draft,input.parentMapId), building=parent.entities[input.buildingId];
     if(input.expectedParentRevision!==undefined && parent.revision!==input.expectedParentRevision) throw new Error('The building map changed. Preview the interior again.');
     if(building?.type!=='area'||building.role!=='building') throw new Error('Choose a building footprint.');
@@ -313,7 +315,7 @@ registerCommand({
     const id=input.childMapId??crypto.randomUUID();
     if(draft.maps[id]) throw new Error('Interior map id already exists.');
     const child=previewInterior(parent,{...input,childMapId:id,name:input.name??`${place?.name??building.name??'Building'} Interior`,
-      theme:draft.meta.themes[input.themeName]??{}});
+      theme:draft.meta.themes[input.themeName]??{},assets});
     draft.maps[id]=child;
     draft.meta.maps.push({id,name:child.name,kind:'interior',parentId:parent.id});
     parent.revision++;
@@ -884,6 +886,7 @@ const ThemeSetRoleInputSchema = z.object({
   role: z.string().min(1),
   assetIds: z.array(z.string().min(1)).default([]),
   packAssetIds: z.array(z.string().min(1)).optional(),
+  onlyIfEmpty: z.boolean().optional(),
 });
 
 registerCommand({
@@ -893,7 +896,7 @@ registerCommand({
   run(draft, input) {
     if (input.packAssetIds?.length) throw new Error('Copy pack assets into the world before assigning the role.');
     const theme = (draft.meta.themes[input.themeName] ??= {});
-    theme[input.role] = [...new Set(input.assetIds)];
+    if (!input.onlyIfEmpty || !theme[input.role]?.length) theme[input.role] = [...new Set(input.assetIds)];
     return { themeName: input.themeName, role: input.role };
   },
 });

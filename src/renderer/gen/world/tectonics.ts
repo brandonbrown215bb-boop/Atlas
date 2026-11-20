@@ -40,6 +40,7 @@ export function tectonicField(
   let base: number[] = owner.map(i => (plates[i]!.oceanic ? 0.24 : 0.56));
   let uplift = points.map(() => 0);
   let rift = points.map(() => 0);
+  const spineCells = new Set<number>();
   const boundaries: Array<{ a: number; b: number; kind: 'collision' | 'subduction' | 'spreading' | 'transform' }> = [];
 
   for (let i = 0; i < points.length; i++) {
@@ -68,8 +69,9 @@ export function tectonicField(
       if (closing > 0.18) {
         const strength = Math.min(1.1, closing / 1.45);
         if (!a.oceanic && !b.oceanic) {
-          // Continental collision: broad, tall fold mountain belt.
-          uplift[i] = Math.max(uplift[i]!, strength * 1.0);
+          // Continental collision: broad, continuous fold mountain belt with coherent spine.
+          uplift[i] = Math.max(uplift[i]!, strength * (count > 3 ? 1.03 : 1.0));
+          if (count > 3) spineCells.add(i);
         } else if (a.oceanic && !b.oceanic) {
           // Subducting oceanic slab forms a deep trench on the oceanic side.
           rift[i] = Math.max(rift[i]!, 0.45 + strength * 0.45);
@@ -81,7 +83,10 @@ export function tectonicField(
             if (owner[k] !== owner[i]) continue;
             const [kx, ky] = points[k]!;
             const inward = ((kx - ix) * -nx + (ky - iy) * -ny) / (Math.hypot(kx - ix, ky - iy) || 1);
-            if (inward > 0.25) uplift[k] = Math.max(uplift[k]!, arcVal);
+            if (inward > 0.25) {
+              uplift[k] = Math.max(uplift[k]!, arcVal);
+              if (count > 3) spineCells.add(k);
+            }
           }
         } else {
           // Oceanic-oceanic convergence: one side trenches, the overriding side forms a volcanic island arc.
@@ -115,7 +120,10 @@ export function tectonicField(
   uplift = [...ridgeSeeds];
 
   for (let pass = 0; pass < 14; pass++) {
-    uplift = uplift.map((v, i) => Math.max(ridgeSeeds[i]!, ...neighbors[i]!.map(j => uplift[j]! * decay[i]!)));
+    uplift = uplift.map((v, i) => Math.max(
+      ridgeSeeds[i]!,
+      ...neighbors[i]!.map(j => uplift[j]! * (spineCells.has(i) && spineCells.has(j) ? Math.min(0.90, decay[i]! + 0.08) : decay[i]!)),
+    ));
     rift = rift.map((v, i) => Math.max(riftSeeds[i]!, ...neighbors[i]!.map(j => rift[j]! * 0.7)));
     if (pass < 6) {
       base = base.map((v, i) => (v * 2 + neighbors[i]!.reduce((sum, j) => sum + base[j]!, 0)) / (2 + neighbors[i]!.length));

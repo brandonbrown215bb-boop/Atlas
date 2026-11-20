@@ -7,6 +7,7 @@ import { basename, join, resolve } from 'node:path';
 import { app, dialog, ipcMain, nativeImage, type BrowserWindow } from 'electron';
 import type { AssetsIndex, MapDoc, WorldMeta } from '../renderer/model/schema';
 import { PackLibrary } from './packs';
+import { findLibraryArt } from './libraryArt';
 import type { AssetQuery } from '../renderer/model/packs';
 import type { AssetTagOverride } from '../renderer/model/assetTags';
 import { extractDungeondraft } from './dungeondraft';
@@ -68,6 +69,7 @@ export function registerWorldIpc(getMainWindow: () => BrowserWindow | null): Wor
     } finally { importingPack = false; }
   });
   ipcMain.handle('atlas:asset-search', async (_event, query: AssetQuery) => { await libraryReady; return library.search(query); });
+  ipcMain.handle('atlas:library-art', async () => { await libraryReady; return findLibraryArt(library.packs); });
   ipcMain.handle('atlas:asset-set-tags', async (_event, id: string, tags: AssetTagOverride) => {
     await libraryReady;
     return library.setAssetTags(id, tags);

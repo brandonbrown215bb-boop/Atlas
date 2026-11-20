@@ -13,12 +13,17 @@ const ROUTE_TIER_SPEED_FACTOR: Record<string, number> = {
   sewer: 0.6,
 };
 
+export type TravelSeason = 'summer' | 'spring' | 'autumn' | 'winter';
+
 export interface RouteTerrainSample {
   factor: number;
   weightedSecondsMultiplier: number;
   terrainLabel: string;
   lostChance: string;
   roadShare: number;
+  unbridgedCrossings: number;
+  riverFlow: 'downstream' | 'upstream' | null;
+  season: TravelSeason;
   domainBreakdown: {
     road: number;
     woods: number;
@@ -28,27 +33,66 @@ export interface RouteTerrainSample {
   };
 }
 
+function segmentIntersection(a: Point, b: Point, c: Point, d: Point): Point | null {
+  const rx = b.x - a.x, ry = b.y - a.y;
+  const sx = d.x - c.x, sy = d.y - c.y;
+  const denom = rx * sy - ry * sx;
+  if (Math.abs(denom) < 1e-9) return null;
+  const qpx = c.x - a.x, qpy = c.y - a.y;
+  const t = (qpx * sy - qpy * sx) / denom;
+  const u = (qpx * ry - qpy * rx) / denom;
+  if (t >= 0 && t <= 1 && u >= 0 && u <= 1) return { x: a.x + rx * t, y: a.y + ry * t };
+  return null;
+}
 
-/** Samples route terrain, path tiers, and terrain cells to derive speed factor and OSE getting-lost odds. */
+const SEASON_SPEED: Record<TravelSeason, number> = {
+  summer: 1,
+  spring: 0.9,
+  autumn: 0.95,
+  winter: 0.55,
+};
+
+const SEASON_LOST_PENALTY: Record<TravelSeason, number> = {
+  summer: 0,
+  spring: 0,
+  autumn: 1,
+  winter: 1,
+};
+
+/** Samples route terrain, path tiers, unbridged river crossings, river flow, and seasonal travel modifiers. */
 export function sampleRouteTerrain(
   points: readonly Point[],
   map?: Pick<MapDoc, 'entities' | 'terrain'>,
+  season: TravelSeason = 'summer',
 ): RouteTerrainSample {
   if (points.length < 2 || !map) {
+    const sf = SEASON_SPEED[season];
+    const baseLost = Math.min(5, 1 + SEASON_LOST_PENALTY[season]);
     return {
-      factor: 1,
-      weightedSecondsMultiplier: 1,
+      factor: sf,
+      weightedSecondsMultiplier: 1 / sf,
       terrainLabel: 'Open plains',
-      lostChance: '1-in-6',
+      lostChance: `${baseLost}-in-6`,
       roadShare: 0,
+      unbridgedCrossings: 0,
+      riverFlow: null,
+      season,
       domainBreakdown: { road: 0, woods: 0, rough: 0, water: 0, plains: 1 },
     };
   }
   const entities = Object.values(map.entities);
   const roads = entities.filter((e): e is Extract<typeof entities[number], { type: 'path' }> =>
     (e.type === 'path' && (e.role === 'road' || e.role === 'trail') && e.routeTier !== 'sewer' && e.points.length >= 2));
+  const rivers = entities.filter((e): e is Extract<typeof entities[number], { type: 'path' }> =>
+    e.type === 'path' && e.role === 'river' && e.points.length >= 2);
+  const bridges = entities.filter((e): e is Extract<typeof entities[number], { type: 'prop' }> =>
+    e.type === 'prop' && (e.builtin === 'bridge' || /bridge|ford|ferry/i.test(e.name ?? '')));
   const areas = entities.filter((e): e is Extract<typeof entities[number], { type: 'area' }> =>
-    e.type === 'area' && (e.role.startsWith('biome:') || e.role === 'plateau' || e.role === 'water'));
+    e.type === 'area'
+    && e.role !== 'biome:frontier'
+    && e.role !== 'biome:faction'
+    && e.role !== 'biome:rumor'
+    && (e.role.startsWith('biome:') || e.role === 'plateau' || e.role === 'water'));
   const terrainCells = Object.values(map.terrain ?? {}).flatMap((t) => t.cells);
 
   const samplePts: Point[] = [];
@@ -56,12 +100,16 @@ export function sampleRouteTerrain(
   let totalLen = 0;
   for (let i = 1; i < points.length; i++) totalLen += Math.hypot(points[i]!.x - points[i - 1]!.x, points[i]!.y - points[i - 1]!.y);
   if (totalLen <= 0) {
+    const sf = SEASON_SPEED[season];
     return {
-      factor: 1,
-      weightedSecondsMultiplier: 1,
+      factor: sf,
+      weightedSecondsMultiplier: 1 / sf,
       terrainLabel: 'Open plains',
-      lostChance: '1-in-6',
+      lostChance: `${Math.min(5, 1 + SEASON_LOST_PENALTY[season])}-in-6`,
       roadShare: 0,
+      unbridgedCrossings: 0,
+      riverFlow: null,
+      season,
       domainBreakdown: { road: 0, woods: 0, rough: 0, water: 0, plains: 1 },
     };
   }
@@ -157,20 +205,80 @@ export function sampleRouteTerrain(
     factorSum += 1.0;
   }
 
+  // Detect unbridged river crossings (Alexandrian x0.75 watch friction per crossing, harsher in spring floods)
+  // and downstream/upstream river travel when route runs along a waterway.
+  const crossingPts: Point[] = [];
+  let riverAlongHits = 0;
+  let flowDotSum = 0;
+  for (const pt of samplePts) {
+    for (const rv of rivers) {
+      const reach = Math.max(15, rv.width * 1.6);
+      for (let i = 1; i < rv.points.length; i++) {
+        if (distanceToSegment(pt, rv.points[i - 1]!, rv.points[i]!) <= reach) {
+          riverAlongHits++;
+          break;
+        }
+      }
+    }
+  }
+  for (let i = 1; i < points.length; i++) {
+    const a = points[i - 1]!, b = points[i]!;
+    const rdx = b.x - a.x, rdy = b.y - a.y;
+    const rLen = Math.hypot(rdx, rdy) || 1;
+    for (const rv of rivers) {
+      for (let j = 1; j < rv.points.length; j++) {
+        const c = rv.points[j - 1]!, d = rv.points[j]!;
+        const hit = segmentIntersection(a, b, c, d);
+        if (hit) {
+          const bridgeReach = Math.max(40, rv.width * 3.5);
+          const nearBridge = bridges.some((br) => Math.hypot(br.x - hit.x, br.y - hit.y) <= Math.max(bridgeReach, (br.w ?? 0) * 1.2));
+          const alreadyCounted = crossingPts.some((p) => Math.hypot(p.x - hit.x, p.y - hit.y) < Math.max(25, rv.width * 2));
+          if (!nearBridge && !alreadyCounted) crossingPts.push(hit);
+        }
+        const mid = { x: (a.x + b.x) / 2, y: (a.y + b.y) / 2 };
+        if (distanceToSegment(mid, c, d) <= Math.max(20, rv.width * 2)) {
+          const vx = d.x - c.x, vy = d.y - c.y;
+          const vLen = Math.hypot(vx, vy) || 1;
+          flowDotSum += (rdx / rLen) * (vx / vLen) + (rdy / rLen) * (vy / vLen);
+        }
+      }
+    }
+  }
+
   const total = Math.max(1, samplePts.length);
-  const factor = Math.max(0.25, factorSum / total);
+  const alongRiver = riverAlongHits > total * 0.55;
+  const unbridgedCrossings = alongRiver ? 0 : crossingPts.length;
+  const riverFlow: 'downstream' | 'upstream' | null =
+    alongRiver && Math.abs(flowDotSum) > 0.15 ? (flowDotSum > 0 ? 'downstream' : 'upstream') : null;
+
+  let rawFactor = factorSum / total;
+  if (riverFlow === 'downstream') rawFactor *= 1.35;
+  else if (riverFlow === 'upstream') rawFactor *= 0.65;
+  if (unbridgedCrossings > 0) {
+    const perCrossing = season === 'spring' ? 0.65 : 0.75;
+    rawFactor *= Math.pow(perCrossing, Math.min(4, unbridgedCrossings));
+  }
+  rawFactor *= SEASON_SPEED[season];
+
+  const factor = Math.max(0.2, rawFactor);
   const roadShare = roadHits / total;
   let terrainLabel = 'Open plains';
-  if (waterHits > total * 0.45) terrainLabel = 'Sea / waterway';
+  if (riverFlow) terrainLabel = riverFlow === 'downstream' ? 'River (downstream)' : 'River (upstream)';
+  else if (waterHits > total * 0.45) terrainLabel = 'Sea / waterway';
   else if (roadShare >= 0.5) terrainLabel = factor >= 1.2 ? 'Highway' : factor < 0.85 ? 'Track / trail' : 'Road';
   else if (roughHits >= woodsHits && roughHits > total * 0.25) terrainLabel = 'Mountains / rough';
   else if (woodsHits > total * 0.25) terrainLabel = 'Woods / hills';
 
+  const baseLostNum =
+    roadShare >= 0.7 || alongRiver ? 0
+      : factor >= 0.9 ? 1
+        : factor >= 0.62 ? 2
+          : 3;
+  const lostNum = baseLostNum === 0 ? 0 : Math.min(5, baseLostNum + SEASON_LOST_PENALTY[season]);
   const lostChance =
-    roadShare >= 0.7 ? '0-in-6 (marked route)'
-      : factor >= 0.9 ? '1-in-6'
-        : factor >= 0.62 ? '2-in-6'
-          : '3-in-6';
+    lostNum === 0
+      ? (alongRiver ? '0-in-6 (following river)' : '0-in-6 (marked route)')
+      : `${lostNum}-in-6`;
 
   return {
     factor,
@@ -178,6 +286,9 @@ export function sampleRouteTerrain(
     terrainLabel,
     lostChance,
     roadShare,
+    unbridgedCrossings,
+    riverFlow,
+    season,
     domainBreakdown: {
       road: roadHits / total,
       woods: woodsHits / total,

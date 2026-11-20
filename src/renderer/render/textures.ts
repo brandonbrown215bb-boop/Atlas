@@ -69,7 +69,8 @@ export function loadAssetTexture(
     return pending;
   }
 
-  const promise = Promise.resolve(unloading.get(url)).then(() => Assets.load<Texture>(url))
+  const promise = Promise.resolve(unloading.get(url))
+    .then(() => Assets.load<Texture>({ src: url, data: { autoGenerateMipmaps: true } }))
     .then((tex) => {
       textureCache.set(url, tex);
       failedAt.delete(url);

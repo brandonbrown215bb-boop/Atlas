@@ -1,6 +1,7 @@
 import { bboxFromPoints, distanceToSegment, getEntityBounds } from '../../geom/hitTest';
 import type { Entity, MapDoc, Point } from '../../model/schema';
 import { themeAssets } from '../../model/themes';
+import { propArt } from '../art';
 import type { GeneratorInput } from '../framework';
 import { mulberry32 } from '../rng';
 import type { buildClimate } from './climate';
@@ -155,7 +156,7 @@ export function decorateWorld(terrain: Terrain, climate: ClimateValues, input: G
       scale: 1,
       rotation: 0,
       flipX: random() < 0.5,
-      ...(asset.startsWith('builtin:') ? { builtin: asset.slice(8) } : { assetId: asset }),
+      ...(asset.startsWith('builtin:') ? { builtin: asset.slice(8) } : { assetId: asset, builtin: role }),
       ...(suggestion ? { suggestedSettlement: true, gmOnly: true } : {}),
     };
   };
@@ -377,14 +378,121 @@ export function decorateWorld(terrain: Terrain, climate: ClimateValues, input: G
     ...[...settlementProps, ...majorSites].map((s) => propIconBox(s, terrain.size)),
   ];
 
-  // Remoteness from settlements and roads drives both site placement and danger.
+  // Travel-cost danger bands: multi-source Dijkstra from settlements across the terrain graph.
+  // Roads run fast (0.45x), hills/forest/marsh drag (1.45x), steep mountains drag heavily (3.2x),
+  // and unbridged river crossings add a fording delay.
   const roadPts = [...existingRoads, ...result].flatMap(e => (e.type === 'path' && e.role === 'trail' ? e.points : []));
+  const riverSegs = rivers.flatMap((e) =>
+    e.type === 'path' ? e.points.slice(1).map((b, i) => ({ a: e.points[i]!, b })) : [],
+  );
   const nearest = (p: Point, pts: Point[]) => pts.reduce((m, q) => Math.min(m, Math.hypot(p.x - q.x, p.y - q.y)), Infinity);
+  const segsCross = (p1: Point, p2: Point, p3: Point, p4: Point): boolean => {
+    const d1 = (p4.x - p3.x) * (p1.y - p3.y) - (p4.y - p3.y) * (p1.x - p3.x);
+    const d2 = (p4.x - p3.x) * (p2.y - p3.y) - (p4.y - p3.y) * (p2.x - p3.x);
+    const d3 = (p2.x - p1.x) * (p3.y - p1.y) - (p2.y - p1.y) * (p3.x - p1.x);
+    const d4 = (p2.x - p1.x) * (p4.y - p1.y) - (p2.y - p1.y) * (p4.x - p1.x);
+    return ((d1 > 0 && d2 < 0) || (d1 < 0 && d2 > 0)) && ((d3 > 0 && d4 < 0) || (d3 < 0 && d4 > 0));
+  };
+  const onRoadCell = new Uint8Array(terrain.cells.length);
+  const roadSnap = terrain.size * 0.02;
+  if (roadPts.length) {
+    for (let i = 0; i < terrain.cells.length; i++) {
+      const c = terrain.cells[i]!;
+      if (!c.land) continue;
+      for (const rp of roadPts) {
+        if (Math.abs(c.point.x - rp.x) < roadSnap && Math.abs(c.point.y - rp.y) < roadSnap && Math.hypot(c.point.x - rp.x, c.point.y - rp.y) < roadSnap) {
+          onRoadCell[i] = 1;
+          break;
+        }
+      }
+    }
+  }
+  const travelCost = new Float64Array(terrain.cells.length).fill(Infinity);
+  if (settlementProps.length) {
+    // Simple binary min-heap for fast multi-source Dijkstra over land cells.
+    const heap: Array<{ i: number; d: number }> = [];
+    const push = (i: number, d: number) => {
+      heap.push({ i, d });
+      let k = heap.length - 1;
+      while (k > 0) {
+        const p = (k - 1) >> 1;
+        if (heap[p]!.d <= heap[k]!.d) break;
+        [heap[p], heap[k]] = [heap[k]!, heap[p]!];
+        k = p;
+      }
+    };
+    const pop = () => {
+      const top = heap[0]!;
+      const last = heap.pop()!;
+      if (heap.length) {
+        heap[0] = last;
+        let k = 0;
+        for (;;) {
+          let s = k;
+          const l = k * 2 + 1, r = k * 2 + 2;
+          if (l < heap.length && heap[l]!.d < heap[s]!.d) s = l;
+          if (r < heap.length && heap[r]!.d < heap[s]!.d) s = r;
+          if (s === k) break;
+          [heap[k], heap[s]] = [heap[s]!, heap[k]!];
+          k = s;
+        }
+      }
+      return top;
+    };
+    for (const s of settlementProps) {
+      const idx = nearestLandIdx(s);
+      if (idx >= 0 && travelCost[idx]! > 0) {
+        travelCost[idx] = 0;
+        push(idx, 0);
+      }
+    }
+    while (heap.length) {
+      const cur = pop();
+      if (cur.d > travelCost[cur.i]!) continue;
+      const cell = terrain.cells[cur.i]!;
+      for (const nb of cell.neighbors) {
+        const nCell = terrain.cells[nb]!;
+        if (!nCell.land) continue;
+        const step = Math.hypot(nCell.point.x - cell.point.x, nCell.point.y - cell.point.y) / terrain.size;
+        const roadEdge = onRoadCell[cur.i] === 1 && onRoadCell[nb] === 1;
+        const height = Math.max(0, nCell.elevation - input.params.seaLevel);
+        const bName = climate[nb]!.rule.name.toLowerCase();
+        const terrainMult = roadEdge
+          ? 0.45
+          : height > 0.24
+            ? 3.2
+            : height > 0.12 || /forest|marsh|swamp|rainforest/.test(bName)
+              ? 1.45
+              : 1.0;
+        let riverPenalty = 0;
+        if (!roadEdge && riverSegs.length) {
+          for (const rs of riverSegs) {
+            if (segsCross(cell.point, nCell.point, rs.a, rs.b)) {
+              riverPenalty = 0.04;
+              break;
+            }
+          }
+        }
+        const nextD = cur.d + step * terrainMult + riverPenalty;
+        if (nextD < travelCost[nb]!) {
+          travelCost[nb] = nextD;
+          push(nb, nextD);
+        }
+      }
+    }
+  }
   const bandOf = (p: Point): Band => {
     if (!settlementProps.length) return 1;
     // A settlement is judged by its nearest neighbour, so isolated villages read as frontier.
-    const d = nearest(p, settlementProps.filter(s => s !== p)) / terrain.size;
-    return d < 0.07 ? 0 : d < 0.16 ? 1 : 2;
+    if (settlementProps.some(s => s === p)) {
+      const others = settlementProps.filter(s => s !== p);
+      if (!others.length) return 2;
+      const d = nearest(p, others) / terrain.size;
+      return d < 0.07 ? 0 : d < 0.16 ? 1 : 2;
+    }
+    const idx = nearestLandIdx(p);
+    const cost = idx >= 0 && Number.isFinite(travelCost[idx]!) ? travelCost[idx]! : nearest(p, settlementProps) / terrain.size;
+    return cost < 0.09 ? 0 : cost < 0.20 ? 1 : 2;
   };
   const dangerBandFor = (p: Point) => BAND_NAMES[bandOf(p)];
 
@@ -446,7 +554,7 @@ export function decorateWorld(terrain: Terrain, climate: ClimateValues, input: G
         rev: 0,
         name: namer.site(spec.role),
         symbolKind: spec.role,
-        builtin: spec.role,
+        ...propArt(input, [spec.role], `${spec.role}-${placed}`, spec.role),
         x: cand.c.point.x,
         y: cand.c.point.y,
         w: size,
@@ -598,9 +706,6 @@ export function decorateWorld(terrain: Terrain, climate: ClimateValues, input: G
   const mainHub = settlementProps[0];
 
   // Road-river crossing bridges & situational coastal lighthouse hooks (respecting manual constraints)
-  const riverSegs = rivers.flatMap((e) =>
-    e.type === 'path' ? e.points.slice(1).map((b, i) => ({ a: e.points[i]!, b })) : [],
-  );
   const tradePaths = result.filter((e): e is Extract<Entity, { type: 'path' }> => e.type === 'path' && e.id.startsWith('king-road-'));
   const manualSegs = input.constraints.flatMap((e) =>
     e.type === 'path' || e.type === 'wall'
@@ -640,7 +745,7 @@ export function decorateWorld(terrain: Terrain, climate: ClimateValues, input: G
           origin: 'generated',
           rev: 0,
           name: bridgeName,
-          builtin: 'bridge',
+          ...propArt(input, ['atlasBridge'], fordId, 'bridge'),
           x: hit.x,
           y: hit.y,
           w: sz * 1.35,
@@ -682,7 +787,7 @@ export function decorateWorld(terrain: Terrain, climate: ClimateValues, input: G
         rev: 0,
         name: beaconName,
         symbolKind: 'sacred',
-        builtin: 'sacred',
+        ...propArt(input, ['lighthouse', 'sacred'], 'lighthouse-0', 'sacred'),
         x: cliffCape.c.point.x,
         y: cliffCape.c.point.y,
         w: lSize,
@@ -708,29 +813,235 @@ export function decorateWorld(terrain: Terrain, climate: ClimateValues, input: G
     }
   }
 
-  // Soft GM frontier sphere-of-influence outline around primary capital
-  if (mainHub && settlementProps.length >= 3 && !bounds.length) {
-    const rSphere = terrain.size * 0.14;
-    const spherePts: Point[] = Array.from({ length: 18 }, (_, k) => {
-      const a = (k / 18) * Math.PI * 2;
-      const wob = rSphere * (0.86 + Math.sin(a * 3 + input.seed) * 0.12);
+  // 1) Named Sub-Regions: flood-fill contiguous land biome clusters into up to 5 regions,
+  // each with its own Regional Heart site and 6-entry encounter table (5 native + 1 neighbor spillover).
+  const biomeFamilyOf = (i: number): string => {
+    const c = terrain.cells[i]!;
+    if (c.elevation - input.params.seaLevel > 0.24) return 'mountain';
+    const b = climate[i]!.rule.name.toLowerCase();
+    if (b.includes('rainforest')) return 'rainforest';
+    if (b.includes('marsh') || b.includes('swamp') || b.includes('bog')) return 'marsh';
+    if (b.includes('forest') || b.includes('wood')) return 'forest';
+    if (b.includes('desert') || b.includes('arid')) return 'desert';
+    if (b.includes('snow')) return 'snow';
+    if (b.includes('tundra')) return 'tundra';
+    return 'grassland';
+  };
+  const cellRegionIdx = new Int32Array(terrain.cells.length).fill(-1);
+  interface SubRegion {
+    id: number;
+    name: string;
+    biome: string;
+    neighborBiome: string;
+    cells: number[];
+    center: Point;
+    encounterTable: string[];
+    heartName?: string;
+  }
+  const rawClusters: Array<{ biome: string; cells: number[]; neighborCounts: Map<string, number> }> = [];
+  const visitedRegion = new Uint8Array(terrain.cells.length);
+  for (let i = 0; i < terrain.cells.length; i++) {
+    if (!terrain.cells[i]!.land || visitedRegion[i]) continue;
+    const fam = biomeFamilyOf(i);
+    const stack = [i];
+    visitedRegion[i] = 1;
+    const cells: number[] = [];
+    const neighborCounts = new Map<string, number>();
+    while (stack.length) {
+      const cur = stack.pop()!;
+      cells.push(cur);
+      for (const nb of terrain.cells[cur]!.neighbors) {
+        if (!terrain.cells[nb]!.land) continue;
+        const nbFam = biomeFamilyOf(nb);
+        if (nbFam === fam) {
+          if (!visitedRegion[nb]) { visitedRegion[nb] = 1; stack.push(nb); }
+        } else {
+          neighborCounts.set(nbFam, (neighborCounts.get(nbFam) ?? 0) + 1);
+        }
+      }
+    }
+    rawClusters.push({ biome: fam, cells, neighborCounts });
+  }
+  const minRegionCells = Math.max(8, Math.floor(landOnly.length * 0.04));
+  const subRegions: SubRegion[] = rawClusters
+    .filter((cl) => cl.cells.length >= minRegionCells)
+    .sort((a, b) => b.cells.length - a.cells.length)
+    .slice(0, 5)
+    .map((cl, idx) => {
+      const cx = cl.cells.reduce((s, ci) => s + terrain.cells[ci]!.point.x, 0) / cl.cells.length;
+      const cy = cl.cells.reduce((s, ci) => s + terrain.cells[ci]!.point.y, 0) / cl.cells.length;
+      const bestCell = cl.cells.reduce((best, ci) => {
+        const bp = terrain.cells[best]!.point, cp = terrain.cells[ci]!.point;
+        return Math.hypot(cp.x - cx, cp.y - cy) < Math.hypot(bp.x - cx, bp.y - cy) ? ci : best;
+      }, cl.cells[0]!);
+      for (const ci of cl.cells) cellRegionIdx[ci] = idx;
+      const neighborBiome = [...cl.neighborCounts.entries()].sort((a, b) => b[1] - a[1])[0]?.[0]
+        ?? (cl.biome === 'grassland' ? 'forest' : 'grassland');
       return {
-        x: Math.max(framePad, Math.min(terrain.size - framePad, mainHub.x + Math.cos(a) * wob)),
-        y: Math.max(framePad, Math.min(terrain.size - framePad, mainHub.y + Math.sin(a) * wob)),
+        id: idx,
+        name: namer.region(cl.biome),
+        biome: cl.biome,
+        neighborBiome,
+        cells: cl.cells,
+        center: terrain.cells[bestCell]!.point,
+        encounterTable: hooks.regionalEncounters(cl.biome, neighborBiome),
       };
     });
-    result.push({
-      id: 'frontier-realm-0',
-      type: 'area',
-      role: 'biome:frontier',
-      name: `${mainHub.name ?? 'Capital'} Sphere`,
+  const regionAt = (p: Point): SubRegion | undefined => {
+    const idx = nearestLandIdx(p);
+    if (idx < 0) return undefined;
+    const rIdx = cellRegionIdx[idx]!;
+    if (rIdx >= 0) return subRegions[rIdx];
+    // Fall back to nearest named sub-region center if on a tiny coastal sliver.
+    return subRegions.reduce<SubRegion | undefined>((best, r) =>
+      !best || Math.hypot(r.center.x - p.x, r.center.y - p.y) < Math.hypot(best.center.x - p.x, best.center.y - p.y) ? r : best,
+      undefined,
+    );
+  };
+
+  // 2) 3–5 Overlapping Competing Regional Factions (biome:faction, gmOnly: true) replacing single capital sphere.
+  const FACTION_TINTS = ['#8b3a3a', '#355c7d', '#4a6b48', '#7d5a35', '#6b456e'];
+  interface FactionTerritory {
+    id: string;
+    name: string;
+    anchor: Point;
+    radius: number;
+    fill: string;
+    rings: Point[][];
+  }
+  const factions: FactionTerritory[] = [];
+  if (settlementProps.length >= 2 && !bounds.length) {
+    const anchorsForFactions: Point[] = [];
+    for (const s of settlementProps) {
+      if (anchorsForFactions.length >= 3) break;
+      if (anchorsForFactions.every((a) => Math.hypot(a.x - s.x, a.y - s.y) > terrain.size * 0.14)) {
+        anchorsForFactions.push({ x: s.x, y: s.y });
+      }
+    }
+    const frontierSeeds = placedPois
+      .filter((p) => p.role === 'stronghold' || p.role === 'ruin' || p.role === 'sacred')
+      .map((p) => ({ x: p.prop.x, y: p.prop.y }));
+    for (const fs of frontierSeeds) {
+      if (anchorsForFactions.length >= 5) break;
+      if (anchorsForFactions.every((a) => Math.hypot(a.x - fs.x, a.y - fs.y) > terrain.size * 0.12)) {
+        anchorsForFactions.push(fs);
+      }
+    }
+    // Guarantee at least 3 factions when enough settlements/POIs exist.
+    for (const s of [...settlementProps, ...placedPois.map((p) => p.prop)]) {
+      if (anchorsForFactions.length >= 3) break;
+      if (anchorsForFactions.every((a) => Math.hypot(a.x - s.x, a.y - s.y) > terrain.size * 0.06)) {
+        anchorsForFactions.push({ x: s.x, y: s.y });
+      }
+    }
+    anchorsForFactions.slice(0, 5).forEach((anchor, fIdx) => {
+      const fName = namer.faction();
+      const fill = FACTION_TINTS[fIdx % FACTION_TINTS.length]!;
+      const radius = terrain.size * (0.15 + (fIdx % 3) * 0.025);
+      const pts: Point[] = Array.from({ length: 18 }, (_, k) => {
+        const a = (k / 18) * Math.PI * 2;
+        const wob = radius * (0.86 + Math.sin(a * 3 + input.seed + fIdx * 1.9) * 0.12);
+        return {
+          x: Math.max(framePad, Math.min(terrain.size - framePad, anchor.x + Math.cos(a) * wob)),
+          y: Math.max(framePad, Math.min(terrain.size - framePad, anchor.y + Math.sin(a) * wob)),
+        };
+      });
+      const id = `faction-territory-${fIdx}`;
+      const ft: FactionTerritory = { id, name: fName, anchor, radius, fill, rings: [pts] };
+      factions.push(ft);
+      result.push({
+        id,
+        type: 'area',
+        role: 'biome:faction',
+        name: fName,
+        fill,
+        layerId: 'base',
+        origin: 'generated',
+        rev: 0,
+        gmOnly: true,
+        rings: [pts],
+      });
+    });
+  }
+  const factionsCovering = (p: Point): string[] => {
+    const hits = factions.filter((f) => contains(f.rings, p) || Math.hypot(p.x - f.anchor.x, p.y - f.anchor.y) <= f.radius * 0.85);
+    if (!hits.length) return [];
+    const contested = hits.length >= 2;
+    return hits.map((f) => {
+      const role = Math.hypot(p.x - f.anchor.x, p.y - f.anchor.y) < terrain.size * 0.03
+        ? 'Seat of Power'
+        : contested
+          ? 'Contested Border'
+          : 'Claimed Territory';
+      return `${f.name} (${role})`;
+    });
+  };
+
+  // 3) 1–2 Fantastical Geographic Anomalies (landmarks visible from leagues away; defy mundane geography)
+  const anomalyEntries: Array<{ prop: Extract<Entity, { type: 'prop' }>; region?: SubRegion }> = [];
+  const anomalyTarget = isRegion ? 1 : 2;
+  const anomalyCandidates = [...landOnly]
+    .map(({ c, i }) => ({
+      c,
+      weight: (0.4 + Math.abs(c.elevation - input.params.seaLevel - 0.15) * 2 + climate[i]!.moisture * 0.4) * (0.5 + remote(c.point) * 0.7) * (0.6 + random() * 0.8),
+    }))
+    .sort((a, b) => b.weight - a.weight);
+  for (const cand of anomalyCandidates) {
+    if (anomalyEntries.length >= anomalyTarget) break;
+    const size = terrain.size * (isRegion ? 0.02 : 0.013);
+    const { x, y } = cand.c.point, edge = terrain.size * 0.06;
+    if (x < edge || y < edge || x > terrain.size - edge || y > terrain.size - edge) continue;
+    if (!safe(cand.c.point, size * 0.9, size * 1.4)) continue;
+    if ([...result, ...constraintProps].some(e => e.type === 'prop' && POI_SYMBOL_KINDS.has(e.symbolKind ?? '') && Math.hypot(cand.c.point.x - e.x, cand.c.point.y - e.y) < minPoiGap)) continue;
+    const aId = `anomaly-${anomalyEntries.length}`;
+    const aName = namer.anomaly();
+    const aProp: Extract<Entity, { type: 'prop' }> = {
+      id: aId,
+      type: 'prop',
       layerId: 'base',
       origin: 'generated',
       rev: 0,
-      gmOnly: true,
-      rings: [spherePts],
-    });
+      name: aName,
+      symbolKind: 'sacred',
+      ...propArt(input, ['sacred'], aId, 'sacred'),
+      x,
+      y,
+      w: size,
+      h: size,
+      scale: 1,
+      rotation: 0,
+      flipX: false,
+    };
+    result.push(aProp);
+    landmarkIconBoxes.push(propIconBox(aProp, terrain.size));
+    anomalyEntries.push({ prop: aProp, region: regionAt(cand.c.point) });
   }
+
+  // Designate a Regional Heart site inside each named sub-region.
+  const heartPropIds = new Set<string>();
+  for (const reg of subRegions) {
+    const inside = [
+      ...anomalyEntries.filter((a) => a.region === reg).map((a) => ({ id: a.prop.id, name: a.prop.name!, prio: 4 })),
+      ...placedPois
+        .filter((p) => regionAt(p.prop) === reg)
+        .map((p) => ({
+          id: p.prop.id,
+          name: p.prop.name!,
+          prio: p.role === 'sacred' ? 3 : p.role === 'ruin' ? 2 : p.role === 'stronghold' ? 2 : 1,
+        })),
+    ].sort((a, b) => b.prio - a.prio);
+    if (inside[0]) {
+      reg.heartName = inside[0].name;
+      heartPropIds.add(inside[0].id);
+    }
+  }
+
+  // Identify 1 sealed endgame foreshadowing ruin near the primary starter hub (Ring-Map design).
+  const endgamePropId = mainHub && settlementProps.length >= 3
+    ? placedPois
+        .filter((p) => p.role === 'ruin' || p.role === 'lair')
+        .sort((a, b) => Math.hypot(a.prop.x - mainHub.x, a.prop.y - mainHub.y) - Math.hypot(b.prop.x - mainHub.x, b.prop.y - mainHub.y))[0]?.prop.id
+    : undefined;
 
   // Existing major sites get no new marker, but clues and rumours lead to them.
   const leadSites = [...placedPois, ...majorSites.map(prop => ({ prop, category: '', gmOnly: true, role: prop.symbolKind as SiteKind }))];
@@ -766,6 +1077,16 @@ export function decorateWorld(terrain: Terrain, climate: ClimateValues, input: G
     const anchor = idx < anchors.length, rank = anchors.length ? idx - anchors.length + 5 : idx;
     const lbl = anchor ? null : placeLabel(`label-settlement-${idx}`, s.name ?? 'Settlement', s.x, s.y, rank < 2 ? 20 : rank < 5 ? 16 : 13, Boolean(s.gmOnly), s);
     if (lbl) entityIds.push(lbl.id);
+    const fLinks = factionsCovering(s);
+    const reg = regionAt(s);
+    const hubTierNote = settlementProps.length >= 3
+      ? (idx === 0
+          ? 'Ring-Map Tier: Starter Hub (safe resupply, low-level leads nearby).'
+          : idx < 3
+            ? 'Ring-Map Tier: Mid-Tier Hub (borderland staging & faction politics).'
+            : 'Ring-Map Tier: Frontier Outpost (scarce gear, deep-wilderness staging).')
+      : '';
+    const rivalryNote = fLinks.length >= 2 ? ` Contested: ${fLinks[0]!.replace(/ \(.+\)$/, '')} ${hooks.factionRivalry()}.` : '';
     result.push({
       id: `place-settlement-${idx}`,
       type: 'place',
@@ -775,13 +1096,35 @@ export function decorateWorld(terrain: Terrain, climate: ClimateValues, input: G
       gmOnly: Boolean(s.gmOnly),
       name: s.name ?? 'Settlement',
       category: 'Settlement',
+      discoveryTier: 'landmark',
+      siteStatus: 'active',
+      ...(reg ? { regionName: reg.name } : {}),
+      ...(fLinks.length ? { factionLinks: fLinks } : {}),
       notes: hooks.settlement(anchor ? 'Town' : rank < 2 ? 'City' : rank < 5 ? 'Town' : rank < 8 ? 'Village' : 'Hamlet', bandOf(s)),
-      gmNotes: '',
+      gmNotes: `${hubTierNote}${rivalryNote}`.trim(),
       rumours: rumoursAbout[idx]!.map(site => hooks.rumour(site.role, site.prop.name!, s, site.prop)),
       entityIds,
     });
   });
 
+  // Roads running off the map edge say where they lead, so the world feels bigger than the sheet.
+  const box = bboxFromPoints(terrain.region[0]!)!, near = terrain.size * 0.01, here = new Set(anchors.map(a => a.name));
+  const exits = new Set<string>();
+  for (const road of existingRoads) {
+    const ends = road.name?.match(/^(.+)–(.+) Road$/)?.slice(1) ?? [];
+    const dest = ends.find(n => !here.has(n));
+    if (!dest || exits.has(dest)) continue;
+    for (const p of [road.points[0]!, road.points.at(-1)!]) {
+      if (p.x - box.minX > near && box.maxX - p.x > near && p.y - box.minY > near && box.maxY - p.y > near) continue;
+      // Step inward along the road so the label clears the frame.
+      const toCentre = Math.hypot((box.minX + box.maxX) / 2 - p.x, (box.minY + box.maxY) / 2 - p.y) || 1;
+      const inset = terrain.size * 0.07;
+      const at = { x: p.x + ((box.minX + box.maxX) / 2 - p.x) / toCentre * inset, y: p.y + ((box.minY + box.maxY) / 2 - p.y) / toCentre * inset };
+      if (placeLabel(`label-exit-${exits.size}`, `to ${dest}`, at.x, at.y, 11)) { exits.add(dest); break; }
+    }
+  }
+
+  let rumorRingCount = 0;
   placedPois.forEach((entry, idx) => {
     const { prop } = entry;
     const entityIds = [prop.id];
@@ -790,6 +1133,49 @@ export function decorateWorld(terrain: Terrain, climate: ClimateValues, input: G
     const nearestTown = byDistance(prop)[0];
     const hook = hooks.site(entry.role, bandOf(prop));
     const next = clueNext.get(prop.id);
+    const onRoad = nearest(prop, roadPts) < terrain.size * 0.025;
+    const onRiver = riverSegs.some((s) => distanceToSegment(prop, s.a, s.b) < riverDist * 1.1);
+    const routeTag = [onRoad ? '(on road)' : '', onRiver ? '(on river)' : ''].filter(Boolean).join(' ');
+    const discoveryTier: 'landmark' | 'hidden' | 'secret' =
+      entry.gmOnly ? (random() < 4 / 6 ? 'hidden' : 'secret') : 'landmark';
+    const reg = regionAt(prop);
+    const fLinks = factionsCovering(prop);
+    const isHeart = heartPropIds.has(prop.id);
+    const isEndgame = prop.id === endgamePropId;
+    const extraGm = [
+      nearestTown ? `Nearest supply point: ${settlementProps[nearestTown.i]!.name}.` : '',
+      fLinks.length >= 2 ? `Contested border: ${fLinks[0]!.replace(/ \(.+\)$/, '')} ${hooks.factionRivalry()}.` : '',
+      isEndgame && mainHub ? `Endgame Foreshadowing: Sealed high-threat vault visible early from ${mainHub.name}; requires keys or allies from deeper sites to break.` : '',
+    ].filter(Boolean).join(' ');
+
+    // Player-visible dashed Rumored Area ring offset around hidden/secret frontier sites (up to 4).
+    if (entry.gmOnly && rumorRingCount < 4) {
+      const rRing = terrain.size * (0.048 + random() * 0.02);
+      const offAng = random() * Math.PI * 2;
+      const offDist = rRing * (0.3 + random() * 0.35);
+      const cx = Math.max(framePad + rRing * 0.5, Math.min(terrain.size - framePad - rRing * 0.5, prop.x + Math.cos(offAng) * offDist));
+      const cy = Math.max(framePad + rRing * 0.5, Math.min(terrain.size - framePad - rRing * 0.5, prop.y + Math.sin(offAng) * offDist));
+      const ringPts: Point[] = Array.from({ length: 16 }, (_, k) => {
+        const a = (k / 16) * Math.PI * 2;
+        const wob = rRing * (0.9 + Math.sin(a * 3 + input.seed + rumorRingCount) * 0.08);
+        return {
+          x: Math.max(framePad, Math.min(terrain.size - framePad, cx + Math.cos(a) * wob)),
+          y: Math.max(framePad, Math.min(terrain.size - framePad, cy + Math.sin(a) * wob)),
+        };
+      });
+      result.push({
+        id: `rumor-ring-${rumorRingCount++}`,
+        type: 'area',
+        role: 'biome:rumor',
+        name: `Rumored Area: ${prop.name ?? entry.category}`,
+        layerId: 'base',
+        origin: 'generated',
+        rev: 0,
+        gmOnly: false,
+        rings: [ringPts],
+      });
+    }
+
     result.push({
       id: `place-${entry.role}-${idx}`,
       type: 'place',
@@ -799,10 +1185,42 @@ export function decorateWorld(terrain: Terrain, climate: ClimateValues, input: G
       gmOnly: entry.gmOnly,
       name: prop.name ?? entry.category,
       category: entry.category,
-      notes: `${dangerBandFor(prop)} · ${SITE_SUMMARY[entry.role]}`,
-      gmNotes: `${hook.gmNotes}${nearestTown ? ` Nearest supply point: ${settlementProps[nearestTown.i]!.name}.` : ''}`,
+      discoveryTier,
+      siteStatus: 'active',
+      ...(reg ? { regionName: reg.name } : {}),
+      ...(fLinks.length ? { factionLinks: fLinks } : {}),
+      notes: `${dangerBandFor(prop)} · ${SITE_SUMMARY[entry.role]}${routeTag ? ` ${routeTag}` : ''}${isHeart && reg ? ` · Regional Heart of ${reg.name}` : ''}`,
+      gmNotes: `${hook.gmNotes}${extraGm ? ` ${extraGm}` : ''}`,
       stockingRole: hook.stockingRole,
       ...(next ? { clueNext: `A clue here points toward ${next.prop.name}, ${distance(prop, next.prop)} away.` } : {}),
+      entityIds,
+    });
+  });
+
+  // Place records & labels for fantastical geographic anomalies.
+  anomalyEntries.forEach(({ prop, region }, idx) => {
+    const entityIds = [prop.id];
+    const lbl = placeLabel(`label-anomaly-${idx}`, prop.name ?? 'Geographic Anomaly', prop.x, prop.y, 15, false, prop);
+    if (lbl) entityIds.push(lbl.id);
+    const hook = hooks.site('sacred', bandOf(prop));
+    const fLinks = factionsCovering(prop);
+    const isHeart = heartPropIds.has(prop.id);
+    result.push({
+      id: `place-anomaly-${idx}`,
+      type: 'place',
+      layerId: 'base',
+      origin: 'generated',
+      rev: 0,
+      gmOnly: false,
+      name: prop.name ?? 'Geographic Anomaly',
+      category: 'Landmark',
+      discoveryTier: 'landmark',
+      siteStatus: 'active',
+      ...(region ? { regionName: region.name } : {}),
+      ...(fLinks.length ? { factionLinks: fLinks } : {}),
+      notes: `${dangerBandFor(prop)} · Iconic fantastical landmark visible from leagues away.${isHeart && region ? ` · Regional Heart of ${region.name}` : ''}`,
+      gmNotes: hook.gmNotes,
+      stockingRole: hook.stockingRole,
       entityIds,
     });
   });
@@ -869,22 +1287,26 @@ export function decorateWorld(terrain: Terrain, climate: ClimateValues, input: G
       if (placeLabel(`label-river-${k}`, name, mid.x, mid.y, 12) && rivers.includes(river)) river.name = name;
     });
 
-  // Roads running off the map edge say where they lead, so the world feels bigger than the sheet.
-  const box = bboxFromPoints(terrain.region[0]!)!, near = terrain.size * 0.01, here = new Set(anchors.map(a => a.name));
-  const exits = new Set<string>();
-  for (const road of existingRoads) {
-    const ends = road.name?.match(/^(.+)–(.+) Road$/)?.slice(1) ?? [];
-    const dest = ends.find(n => !here.has(n));
-    if (!dest || exits.has(dest)) continue;
-    for (const p of [road.points[0]!, road.points.at(-1)!]) {
-      if (p.x - box.minX > near && box.maxX - p.x > near && p.y - box.minY > near && box.maxY - p.y > near) continue;
-      // Step inward along the road so the label clears the frame.
-      const toCentre = Math.hypot((box.minX + box.maxX) / 2 - p.x, (box.minY + box.maxY) / 2 - p.y) || 1;
-      const inset = terrain.size * 0.07;
-      const at = { x: p.x + ((box.minX + box.maxX) / 2 - p.x) / toCentre * inset, y: p.y + ((box.minY + box.maxY) / 2 - p.y) / toCentre * inset };
-      if (placeLabel(`label-exit-${exits.size}`, `to ${dest}`, at.x, at.y, 11)) { exits.add(dest); break; }
-    }
-  }
+  // Emit named sub-region italic labels & Region Place records with 6-entry spillover encounter tables.
+  subRegions.forEach((reg, idx) => {
+    const lbl = placeLabel(`label-subregion-${idx}`, reg.name, reg.center.x, reg.center.y, 15, false);
+    result.push({
+      id: `place-subregion-${idx}`,
+      type: 'place',
+      layerId: 'base',
+      origin: 'generated',
+      rev: 0,
+      gmOnly: false,
+      name: reg.name,
+      category: 'Region',
+      discoveryTier: 'landmark',
+      regionName: reg.name,
+      notes: `Named ${reg.biome} region bordering ${reg.neighborBiome} terrain.${reg.heartName ? ` Regional Heart: ${reg.heartName}.` : ''}`,
+      gmNotes: `Regional 1d6 encounter table blends 5 ${reg.biome} entries with 1 ${reg.neighborBiome} border spillover.`,
+      encounterTable: reg.encounterTable,
+      entityIds: lbl ? [lbl.id] : [],
+    });
+  });
 
   // Sea label goes on the open-water cell farthest (in hops) from any coast, clear of the compass.
   const sea = (i: number) => !terrain.cells[i]!.land && !terrain.cells[i]!.lake;

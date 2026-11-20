@@ -159,4 +159,12 @@ describe('outdoor woodland generator', () => {
     const ruins = generateOutdoor(makeInput(3, { preset: 'ruins', water: false }));
     expect(ruins.some(e => e.type === 'wall' && e.name === 'Ruined wall')).toBe(true);
   });
+  it('structures clearings with Theory of the Place (Antechamber, Focal Enclosure, Secondary Entrance, and Overlook Ridge)', () => {
+    const out = generateOutdoor(makeInput(2, { clearings: 5, water: true, density: 1 }));
+    const places = out.filter((e): e is Extract<Entity, { type: 'place' }> => e.type === 'place');
+    expect(places.some((p) => p.id === 'place-outdoor-antechamber' && p.discoveryTier === 'landmark')).toBe(true);
+    expect(places.some((p) => p.id === 'place-outdoor-focal' && p.name.includes('The Place'))).toBe(true);
+    expect(out.some((e) => e.type === 'area' && e.id === 'place-focal-apron' && e.floorMaterial === 'stone')).toBe(true);
+    expect(out.some((e) => e.type === 'area' && e.role === 'plateau' && e.name === 'Overlook Cliff Ridge')).toBe(true);
+  });
 });

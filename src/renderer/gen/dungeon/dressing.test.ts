@@ -43,6 +43,31 @@ describe('dungeon dressing',()=>{
     expect(output.some(e=>e.name==='bedroom: bed')).toBe(true);
     expect(props(output).every(e=>Math.abs(e.x-5)>3||Math.abs(e.y-5)>3)).toBe(true);
   });
+  it('keeps a generated landmark and its room-key link when furniture is rearranged or thinned', () => {
+    const store = createWorldStore();
+    const footprint = [[{ x: 0, y: 0 }, { x: 152.4, y: 0 }, { x: 152.4, y: 152.4 }, { x: 0, y: 152.4 }]];
+    const map = MapDocSchema.parse({
+      id: 'm', name: 'Saltworks', kind: 'site', bounds: { x: 0, y: 0, w: 152.4, h: 152.4 },
+      grid: { size: 1.524, visible: true }, layers: [{ id: 'base', name: 'Base', visible: true, locked: false, gmOnly: false }],
+      entities: { region: { id: 'region', type: 'area', role: 'land', rings: footprint, origin: 'manual', layerId: 'base', rev: 0 } },
+      generators: {}, revision: 0, deleted: {}, fog: { enabled: false, revealed: [] },
+    });
+    const state = () => store.getState();
+    state().loadWorld({ id: 'w', formatVersion: 1, name: 'World', maps: [{ id: 'm', name: 'Saltworks', kind: 'site' }],
+      themes: { default: { pumpWheel: ['pump-art'], bridge: ['builtin:bridge'] } } }, { m: map });
+    state().execute('generator.run', { mapId: 'm', genId: 'g', type: 'dungeon', seed: 7, params: { mode: 'dungeon' }, regionEntityId: 'region', layerId: 'base' });
+    const entities = () => state().world!.maps.m!.entities;
+    const pump = Object.values(entities()).find(e => e.name === 'Bronze Pump')!;
+    expect(pump).toMatchObject({ type: 'prop', assetId: 'pump-art', builtin: 'pumpWheel', tacticalTag: 'feature' });
+    expect(Object.values(entities()).find(e => e.name === 'Plank Walk')).toMatchObject({ type: 'prop', builtin: 'bridge' });
+    const key = Object.values(entities()).find(e => e.type === 'place' && e.entityIds.includes(pump.id))!;
+    state().execute('generator.reroll', { mapId: 'm', genId: 'g', seed: 8, dressingOnly: true });
+    expect(entities()[pump.id]).toEqual(pump);
+    expect(entities()[key.id]).toEqual(key);
+    state().execute('generator.dressArea', { mapId: 'm', genId: 'g', areaEntityId: 'region', action: 'thin' });
+    expect(entities()[pump.id]).toEqual(pump);
+    expect(entities()[key.id]).toEqual(key);
+  });
   it('rerolls only dressing, preserves edits exactly, and scopes thin/add/reroll with one-step undo',()=>{
     const map=MapDocSchema.parse({id:'m',name:'Interior',kind:'interior',bounds:{x:0,y:0,w:30,h:24},grid:{size:1.524,visible:true},
       layers:[{id:'base',name:'Base',visible:true,locked:false,gmOnly:false}],
@@ -83,5 +108,21 @@ describe('dungeon dressing',()=>{
     const copyStore=createWorldStore();copyStore.getState().loadWorld(copied.target.meta,copied.target.maps);
     const genId=Object.keys(copied.target.maps[copied.mapId]!.generators)[0]!;
     expect(()=>copyStore.getState().execute('generator.reroll',{mapId:copied.mapId,genId,seed:10,dressingOnly:true})).not.toThrow();
+  });
+
+  it('tags tactical cover props with coverHeight and coverFacing and injects freestanding pillars in large dungeon rooms', () => {
+    const out = generateDungeon({
+      seed: 17,
+      params: DungeonParamsSchema.parse({ mode: 'dungeon', rooms: 8, purpose: 'crypt', density: 1 }),
+      region: [[{ x: 0, y: 0 }, { x: 48, y: 0 }, { x: 48, y: 38 }, { x: 0, y: 38 }]],
+      constraints: [],
+      theme: {},
+      grid: 1.524,
+    });
+    const coverProps = props(out).filter((p) => p.tacticalTag === 'cover');
+    expect(coverProps.length).toBeGreaterThan(0);
+    expect(coverProps.every((p) => p.coverHeight === 'low' || p.coverHeight === 'tall')).toBe(true);
+    expect(coverProps.every((p) => p.coverFacing === 'directional' || p.coverFacing === 'freestanding')).toBe(true);
+    expect(coverProps.some((p) => p.coverHeight === 'tall' && p.coverFacing === 'freestanding')).toBe(true);
   });
 });

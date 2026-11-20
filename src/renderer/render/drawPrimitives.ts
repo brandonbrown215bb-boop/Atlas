@@ -350,7 +350,19 @@ export function drawDoorStyled(
     .lineTo(dx + nx * w * 0.65, dy + ny * w * 0.65)
     .stroke({ width: Math.max(0.16, w * 0.42), color: 0x2b2016 });
 
-  if (entity.open && entity.kind !== 'secret') {
+  if (entity.material === 'iron' && entity.kind !== 'secret') {
+    gfx.moveTo(0, 0).lineTo(dx, dy).stroke({
+      width: w * (entity.open ? .44 : .75), color: selected ? 0xfbbf24 : 0x495253,
+      alpha: entity.open ? .55 : 1,
+    });
+    if (!entity.open) {
+      for (const t of [.12, .27, .42, .58, .73, .88]) {
+        gfx.moveTo(dx * t - nx * w * .6, dy * t - ny * w * .6)
+          .lineTo(dx * t + nx * w * .6, dy * t + ny * w * .6)
+          .stroke({ width: Math.min(len * .07, w * .3), color: selected ? 0xfbbf24 : 0x252d2d });
+      }
+    }
+  } else if (entity.open && entity.kind !== 'secret') {
     // Open battlemap door: worn stone threshold strip + folded plank leaf tucked beside hinge jamb (no blueprint swing arc)
     gfx
       .moveTo(0, 0)
@@ -401,6 +413,30 @@ export function drawDoorStyled(
       .circle(dx / 2, dy / 2, Math.max(0.18, strokeUnit * 2.2))
       .fill({ color: 0xe6c15c })
       .stroke({ width: Math.max(0.06, strokeUnit * 0.7), color: 0x2b2016 });
+  }
+
+  if (entity.oneWay && !entity.open && entity.kind !== 'secret') {
+    const dir = entity.oneWay === 'ab' ? 1 : -1;
+    const mx = dx / 2;
+    const my = dy / 2;
+    const barOff = w * 0.85 * -dir;
+    const ux = dx / len;
+    const uy = dy / len;
+    const halfBar = Math.min(len * 0.34, w * 1.45);
+    // Timber drop-bar on the pushable/barred side
+    gfx
+      .moveTo(mx + nx * barOff - ux * halfBar, my + ny * barOff - uy * halfBar)
+      .lineTo(mx + nx * barOff + ux * halfBar, my + ny * barOff + uy * halfBar)
+      .stroke({ width: Math.max(0.14, w * 0.42), color: selected ? 0xfbbf24 : 0xd97706, cap: 'round' });
+    // Small chevron pointing in the openable travel direction
+    const tip = w * 1.15 * dir;
+    const base = w * 0.35 * dir;
+    const wing = Math.max(0.16, w * 0.55);
+    gfx
+      .moveTo(mx + nx * base - ux * wing, my + ny * base - uy * wing)
+      .lineTo(mx + nx * tip, my + ny * tip)
+      .lineTo(mx + nx * base + ux * wing, my + ny * base + uy * wing)
+      .stroke({ width: Math.max(0.1, w * 0.28), color: selected ? 0xfbbf24 : 0x2b2016, cap: 'round', join: 'round' });
   }
 
   if (entity.kind === 'secret') {

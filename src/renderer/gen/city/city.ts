@@ -7,6 +7,7 @@ import { bboxFromPoints, boxesIntersect, distanceToSegment, getEntityBounds, poi
 import { fromPolygons, rectRing, toPolygons } from '../../geom/fog';
 import { clipOutside } from '../../geom/clipOutside';
 import { registerGenerator, type GeneratorInput } from '../framework';
+import { propArt, roofTexture, surfaceTexture } from '../art';
 import { mulberry32 } from '../rng';
 import { makeNamer, type WardKind } from '../world/names';
 import { BAND_NAMES, makeHooks, parseSettlement, type Band, type Establishment, type SiteKind } from '../world/hooks';
@@ -106,7 +107,7 @@ const CORE_RADIUS: Record<Scale, number> = { hamlet: 45, village: 110, town: 260
 const PLAZA_RADIUS: Record<Scale, number> = { hamlet: 14, village: 22, town: 30, city: 40 };
 /** How far houses keep straggling along the roads beyond the core. */
 const RIBBON_REACH: Record<Scale, number> = { hamlet: 60, village: 150, town: 300, city: 450 };
-const BUILDING_CAP: Record<Scale, number> = { hamlet: 8, village: 120, town: 3000, city: 8000 };
+const BUILDING_CAP: Record<Scale, number> ={ hamlet: 8, village: 120, town: 3000, city: 8000 };
 const SCALE_DENSITY: Record<Scale, number> = { hamlet: .55, village: .8, town: 1, city: 1 };
 const WARD_PROFILES: Record<WardKind, DistrictProfile> = {
   market: { density: .85, wealth: .55, activity: .95, access: 'open' },
@@ -545,7 +546,9 @@ export function generateCity(input: GeneratorInput<CityParams>): Entity[] {
       for (let v = 5; v < depth - 2 && stones < 40; v += 5) for (let s = -half + 3; s < half - 2 && stones < 40; s += 4) {
         const p = { x: edge.mid.x + u.x * s + n.x * v + (random() - .5), y: edge.mid.y + u.y * s + n.y * v + (random() - .5) };
         if (!pointInPolygon(p, yard) || Math.hypot(p.x - c.x, p.y - c.y) < 9 || random() < .3) continue;
-        output.push({ ...base, id: `headstone-${stones++}`, type: 'prop', name: 'Headstone', x: p.x, y: p.y, w: 1.1, h: .7, scale: 1, rotation: Math.atan2(u.y, u.x), flipX: false, builtin: 'rock' });
+        const id = `headstone-${stones++}`;
+        output.push({ ...base, id, type: 'prop', name: 'Headstone', x: p.x, y: p.y, w: 1.1, h: .7, scale: 1, rotation: Math.atan2(u.y, u.x), flipX: false,
+          ...propArt(input, ['headstone'], id, 'rock') });
       }
       const hook = hooks.site('ruin', band);
       cityPlaces.push({ ...base, id: 'place-graveyard', type: 'place', name, category: 'sacred', notes: 'Headstones, a lychgate and an old family crypt whose stairs go deeper than any family needs.',
@@ -643,7 +646,8 @@ export function generateCity(input: GeneratorInput<CityParams>): Entity[] {
           if (pointInPolygon(entryPt, polygon)) {
             output.push({
               ...base, id: 'temple-altar-steps', type: 'prop', name: 'Temple Forecourt Basin',
-              x: entryPt.x, y: entryPt.y, w: 4.5, h: 4.5, scale: 1, rotation: 0, flipX: false, builtin: 'altar',
+              x: entryPt.x, y: entryPt.y, w: 4.5, h: 4.5, scale: 1, rotation: 0, flipX: false,
+              ...propArt(input, ['shrineAltar', 'altar'], 'temple-altar-steps', 'altar'),
             });
           }
         }
@@ -679,7 +683,7 @@ export function generateCity(input: GeneratorInput<CityParams>): Entity[] {
           output.push({
             ...base, id: `city-tree-${index}-${addedTrees++}`, type: 'prop', name: fringe ? 'Orchard tree' : 'Park tree',
             x: tp.x, y: tp.y, w: sz, h: sz, scale: 1, rotation: random() * Math.PI * 2, flipX: random() < 0.5,
-            builtin: 'tree',
+            ...propArt(input, ['tree'], `garden-tree-${output.length}`, 'tree'),
           });
         }
       }
@@ -725,15 +729,14 @@ export function generateCity(input: GeneratorInput<CityParams>): Entity[] {
         if (!rings) continue;
         const height=plateaus.find(p=>pointInPolygon(rings![0]![0]!,p.rings))?.elevation;
         const colors=local.wealth>.65?['#a4543c','#616c73','#b59153','#8d4937','#7d5a42']:['#924c38','#785942','#a8864e','#5b656c','#875641'];
-        const roofs=input.theme[local.wealth>.65?'roofWealthy':'roof'] ?? input.theme.roof ?? [];
-        const roof=roofs.length?roofs[Math.floor(random()*roofs.length)]:undefined;
         const ward = fringe ? undefined : wardAt(lotPoint)?.kind;
         const bId = buildingCount++;
+        const roof = roofTexture(input, local.wealth > .65 ? ['roofWealthy', 'roof'] : ['roof'], `building-${bId}`);
         const entity: Area = {...base,id:`building-${bId}`,type:'area',role:'building',
           name: ward ? WARD_HOUSE[ward] : fringe || scale === 'hamlet' || scale === 'village' ? 'Cottage' : local.wealth > .65 ? 'Townhouse' : 'House',rings,
           fill:colors[Math.floor(random()*colors.length)]!,...(height===undefined?{}:{elevation:height}),
           ...(bId % 3 === 0 ? { roofShape: 'hip' as const } : {}),
-          ...(roof&&!roof.startsWith('builtin:')?{texture:{assetId:roof,metersPerPixel:1,fitToArea:true}}:{})};
+          ...(roof ? { texture: roof } : {})};
         output.push(entity);
         lots.push({ entity, c: { x: (rings[0]![0]!.x + rings[0]![2]!.x) / 2, y: (rings[0]![0]!.y + rings[0]![2]!.y) / 2 }, ward, fringe });
         if (buildingCount>=BUILDING_CAP[scale]) break;
@@ -757,15 +760,18 @@ export function generateCity(input: GeneratorInput<CityParams>): Entity[] {
     const well = spots[0];
     if (well) {
       plazaIds.push('plaza-centrepiece');
-      output.push({ ...base, id: 'plaza-centrepiece', type: 'prop', name: isGreen ? 'Village Well' : 'Market Cross', x: well.x, y: well.y, w: isGreen ? 4 : 7, h: isGreen ? 4 : 7, scale: 1, rotation: 0, flipX: false, builtin: 'altar' });
+      output.push({ ...base, id: 'plaza-centrepiece', type: 'prop', name: isGreen ? 'Village Well' : 'Market Cross', x: well.x, y: well.y, w: isGreen ? 4 : 7, h: isGreen ? 4 : 7, scale: 1, rotation: 0, flipX: false,
+        ...propArt(input, [isGreen ? 'well' : 'marketCross'], 'plaza-centrepiece', 'altar') });
       if (isGreen) {
         const oak = spots.find(p => Math.hypot(p.x - well.x, p.y - well.y) > 8);
-        if (oak) output.push({ ...base, id: 'plaza-oak', type: 'prop', name: 'Old Oak', x: oak.x, y: oak.y, w: 11, h: 11, scale: 1, rotation: random() * 6, flipX: false, builtin: 'tree' });
+        if (oak) output.push({ ...base, id: 'plaza-oak', type: 'prop', name: 'Old Oak', x: oak.x, y: oak.y, w: 11, h: 11, scale: 1, rotation: random() * 6, flipX: false,
+          ...propArt(input, ['tree'], 'plaza-oak', 'tree') });
       } else {
         for (const [si, ang] of [0.4, 1.9, 3.5, 5.1].entries()) {
           const sp = { x: well.x + Math.cos(ang) * 11, y: well.y + Math.sin(ang) * 11 };
           if (plazaParts.some(r => pointInPolygon(sp, r)) && constraintRoadDistance(sp) > 2.5) output.push({
-            ...base, id: `city-stall-${si}`, type: 'prop', name: 'Market Stall', x: sp.x, y: sp.y, w: 3.5, h: 3.5, scale: 1, rotation: ang, flipX: false, builtin: si % 2 === 0 ? 'table' : 'crate',
+            ...base, id: `city-stall-${si}`, type: 'prop', name: 'Market Stall', x: sp.x, y: sp.y, w: 3.5, h: 3.5, scale: 1, rotation: ang, flipX: false,
+            ...propArt(input, ['marketStall'], `city-stall-${si}`, si % 2 === 0 ? 'table' : 'crate'),
           });
         }
       }
@@ -870,7 +876,10 @@ export function generateCity(input: GeneratorInput<CityParams>): Entity[] {
     output.push({ ...base, id: `farm-${farms.length}`, type: 'area', role: 'building', name: namer.farm(), rings: house, fill: '#8d5a40', roofShape: 'gable' });
     if (fits(barn, field.poly)) {
       occupied.push({ rings: barn, box: bboxFromPoints(barn[0]!)! });
-      output.push({ ...base, id: `barn-${farms.length}`, type: 'area', role: 'building', name: 'Barn', rings: barn, fill: '#7a5a3c', roofShape: 'gable' });
+      const id = `barn-${farms.length}`;
+      const texture = roofTexture(input, ['barnRoof'], id);
+      output.push({ ...base, id, type: 'area', role: 'building', name: 'Barn', rings: barn, fill: '#7a5a3c', roofShape: 'gable',
+        ...(texture ? { texture } : {}) });
     }
     farms.push(edge.mid);
   }
@@ -956,7 +965,7 @@ export function generateCity(input: GeneratorInput<CityParams>): Entity[] {
           scale: 1,
           rotation: Math.atan2(nIn.y, nIn.x),
           flipX: false,
-          builtin: 'dock',
+          ...propArt(input, ['dock'], `dock-${dockIdx}`, 'dock'),
         });
         // Quay cargo crates/barrels beside the pier
         output.push({
@@ -971,7 +980,7 @@ export function generateCity(input: GeneratorInput<CityParams>): Entity[] {
           scale: 1,
           rotation: Math.atan2(ty, tx),
           flipX: false,
-          builtin: dockIdx % 2 === 0 ? 'crate' : 'barrel',
+          ...propArt(input, [dockIdx % 2 === 0 ? 'crate' : 'barrel'], `quay-cargo-${dockIdx}`, dockIdx % 2 === 0 ? 'crate' : 'barrel'),
         });
         if (pointInPolygon({ x: m.x + nIn.x * 22 + tx * 7, y: m.y + nIn.y * 22 + ty * 7 }, wArea.rings)) {
           output.push({
@@ -986,7 +995,7 @@ export function generateCity(input: GeneratorInput<CityParams>): Entity[] {
             scale: 1,
             rotation: Math.atan2(ty, tx) + (dockIdx % 2 ? 0.14 : -0.14),
             flipX: false,
-            builtin: 'boat',
+            ...propArt(input, ['boat'], `boat-${dockIdx}`, 'boat'),
           });
         }
         if (dockIdx < 3) {
@@ -1005,7 +1014,7 @@ export function generateCity(input: GeneratorInput<CityParams>): Entity[] {
               scale: 1,
               rotation: Math.atan2(ty, tx) + (dockIdx - 1) * 0.45,
               flipX: false,
-              builtin: 'boat',
+              ...propArt(input, ['boat'], `vessel-${dockIdx}`, 'boat'),
             });
           }
         }
@@ -1113,9 +1122,10 @@ export function generateCity(input: GeneratorInput<CityParams>): Entity[] {
     if (manholeCount < 4) {
       const mp = road.points[Math.floor(road.points.length / 2)]!;
       if (pointInPolygon(mp, region) && !occupied.some((o) => pointInPolygon(mp, o.rings))) {
+        const id = `manhole-${manholeCount++}`;
         output.push({
           ...base,
-          id: `manhole-${manholeCount++}`,
+          id,
           type: 'prop',
           name: 'Sewer Grate',
           x: mp.x,
@@ -1125,7 +1135,7 @@ export function generateCity(input: GeneratorInput<CityParams>): Entity[] {
           scale: 1,
           rotation: 0,
           flipX: false,
-          builtin: 'manhole',
+          ...propArt(input, ['sewerGrate'], id, 'manhole'),
         });
         // A city's first grate is a way into the undercity.
         if (scale === 'city' && manholeCount === 1) {
@@ -1164,10 +1174,12 @@ export function generateCity(input: GeneratorInput<CityParams>): Entity[] {
           const mid = { x: (endPt.x + farBank.x) / 2, y: (endPt.y + farBank.y) / 2 };
           if (placedBridges.every((p) => Math.hypot(p.x - mid.x, p.y - mid.y) >= 24)) {
             placedBridges.push(mid);
+            const id = `city-bridge-${placedBridges.length}`;
             output.push({
-              ...base, id: `city-bridge-${placedBridges.length}`, type: 'prop', name: 'Stone River Bridge',
+              ...base, id, type: 'prop', name: 'Stone River Bridge',
               x: mid.x, y: mid.y, w: span + 3, h: Math.max(4.5, road.width * 0.9),
-              scale: 1, rotation: Math.atan2(uy, ux), flipX: false, builtin: 'bridge',
+              scale: 1, rotation: Math.atan2(uy, ux), flipX: false,
+              ...propArt(input, ['bridge'], id, 'bridge'),
             });
           }
           break;
@@ -1202,7 +1214,14 @@ export function generateCity(input: GeneratorInput<CityParams>): Entity[] {
     const name = kind === 'inn' || kind === 'tavern' ? namer.inn() : kind === 'shrine' ? `Chapel of St. ${given}`
       : kind === 'watch' || kind === 'guildhall' || kind === 'thieves' ? NOTABLE_TITLE[kind]! : `${family}'s ${NOTABLE_TITLE[kind]}`;
     // The den passes for an ordinary house on the player map; only its GM-only Place gives it away.
-    if (kind !== 'thieves') { pick.entity.name = name; pick.entity.roofShape = 'hip'; }
+    if (kind !== 'thieves') {
+      pick.entity.name = name;
+      pick.entity.roofShape = 'hip';
+      const role = kind === 'inn' || kind === 'tavern' ? 'innRoof' :
+        kind === 'mill' ? 'millRoof' : kind === 'shrine' ? 'chapelRoof' : undefined;
+      const texture = role ? roofTexture(input, [role], pick.entity.id) : undefined;
+      if (texture) pick.entity.texture = texture;
+    }
     const night = ['inn', 'tavern', 'watch', 'thieves', 'wizard'].includes(kind);
     const place: Extract<Entity, { type: 'place' }> = {
       ...base, id: `place-${pick.entity.id}`, type: 'place', name: kind === 'thieves' ? "Thieves' Den" : name,
@@ -1226,7 +1245,9 @@ export function generateCity(input: GeneratorInput<CityParams>): Entity[] {
       output.push({ ...base, id: 'oddity', type: 'prop', name, x: field.c.x, y: field.c.y, w: 12, h: 12, scale: 1, rotation: 0, flipX: false, builtin });
       if (kind === 'sacred') for (let i = 0; i < 7; i++) {
         ids.push(`oddity-stone-${i}`);
-        output.push({ ...base, id: `oddity-stone-${i}`, type: 'prop', name: 'Standing Stone', x: field.c.x + Math.cos(i * .9) * 11, y: field.c.y + Math.sin(i * .9) * 11, w: 2.5, h: 2.5, scale: 1, rotation: 0, flipX: false, builtin: 'pillar' });
+        const id = `oddity-stone-${i}`;
+        output.push({ ...base, id, type: 'prop', name: 'Standing Stone', x: field.c.x + Math.cos(i * .9) * 11, y: field.c.y + Math.sin(i * .9) * 11, w: 2.5, h: 2.5, scale: 1, rotation: 0, flipX: false,
+          ...propArt(input, ['standingStone'], id, 'pillar') });
       }
       if (kind === 'ruin') {
         ids.push('oddity-stairs');
@@ -1251,6 +1272,38 @@ export function generateCity(input: GeneratorInput<CityParams>): Entity[] {
   const clue = clueAt[Math.floor(random() * clueAt.length)];
   if (trouble && clue) cityPlaces.push({ ...base, id: 'place-trouble', type: 'place', name: 'Where the trouble starts', category: 'hook', gmOnly: true,
     notes: '', gmNotes: `Trouble: ${trouble}. Here: ${hooks.troubleClue()}.`, entityIds: [clue.entity.id], layerTier: 'focus' });
+
+  // Wire competing urban factions into PlaceEntity.factionLinks so settlements have immediate civic tension.
+  const notableByPlaceId = new Map(notables.map((n) => [n.place.id, n.kind]));
+  for (const place of cityPlaces) {
+    if (place.type !== 'place') continue;
+    const links: string[] = [];
+    const kind = notableByPlaceId.get(place.id);
+    if (place.id === 'place-keep' || kind === 'watch') {
+      links.push(`Town Watch (${place.id === 'place-keep' ? 'Garrison & Command' : 'Patrol Post'})`);
+    } else if (place.id === 'place-temple' || place.id === 'place-graveyard' || kind === 'shrine' || kind === 'healer') {
+      links.push(`Temple Chapter (${place.id === 'place-temple' ? 'High Sanctuary' : 'Ward & Charity'})`);
+    } else if (place.id === 'place-sewers' || kind === 'thieves') {
+      links.push(`Thieves' Guild (${kind === 'thieves' ? 'Safe House' : 'Smuggling Network'})`);
+      links.push('Town Watch (Rival Crackdown Target)');
+    } else if (place.id === 'place-harbor-quays' || kind === 'guildhall' || kind === 'store' || kind === 'smithy' || kind === 'stables' || kind === 'mill' || kind === 'moneylender' || kind === 'tannery') {
+      links.push(`Merchant Guild (${kind === 'guildhall' ? 'Charter Hall' : 'Taxed Trade'})`);
+      if (place.id === 'place-harbor-quays') links.push("Thieves' Guild (Night Contraband)");
+    } else if (kind === 'inn' || kind === 'tavern' || kind === 'bathhouse') {
+      links.push('Merchant Guild (Caravan Patronage)', "Thieves' Guild (Whisper Broker)");
+    } else if (kind === 'wizard' || kind === 'apothecary') {
+      links.push('Temple Chapter (Watched Closely)');
+    } else if (place.id === 'place-town') {
+      links.push(
+        'Town Watch (Gates & Curfew)',
+        'Merchant Guild (Market Tolls)',
+        'Temple Chapter (Civic Oaths)',
+        "Thieves' Guild (Back-Alley Shadow)",
+      );
+      place.gmNotes = `${place.gmNotes ? `${place.gmNotes} ` : ''}Urban Factions: Town Watch and Merchant Guild dispute gate tolls while the Thieves' Guild works the alleys under the Temple Chapter's nose.`;
+    }
+    if (links.length) place.factionLinks = links;
+  }
   cityLabels.push({ ...base, id: 'city-label-title', type: 'label', text: townName, x: hub.x, y: Math.max(rb.minY + 40, hub.y - (Number.isFinite(coreR) ? coreR : 0) - 30), size: 26 });
   for (const ward of wards.filter(w => w.kind !== 'market')) {
     const homes = lots.filter(l => l.ward === ward.kind && wardAt(l.c) === ward);
@@ -1283,6 +1336,23 @@ export function generateCity(input: GeneratorInput<CityParams>): Entity[] {
       if (Math.abs(cur.x - prev.x) < minDx && Math.abs(cur.y - prev.y) < 22) {
         cur.y += cur.y >= prev.y ? 22 : -22;
       }
+    }
+  }
+
+  const square = surfaceTexture(input, [isGreen ? 'villageGreenTexture' : 'plazaTexture']);
+  const field = surfaceTexture(input, ['fieldTexture']);
+  const paving = surfaceTexture(input, ['stoneFloorTexture', 'floorTexture']);
+  for (const entity of output) {
+    if (entity.type === 'area') {
+      const tile = entity.id.startsWith('plaza-') ? square :
+        entity.id.startsWith('field-') ? field : entity.role === 'floor' ? paving : undefined;
+      if (tile) entity.texture = tile;
+    }
+    if (entity.type === 'path' && (entity.role === 'cityWall' || (entity.role === 'road' && entity.routeTier !== 'sewer'))) {
+      const roles = entity.role === 'cityWall' ? ['cityWallTexture'] :
+        isGreen ? ['roadTexture', 'pathTexture'] : ['streetTexture', 'roadTexture', 'pathTexture'];
+      const tile = surfaceTexture(input, roles, entity.width);
+      if (tile) entity.texture = tile;
     }
   }
 

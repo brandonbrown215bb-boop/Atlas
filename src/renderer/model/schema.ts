@@ -71,7 +71,10 @@ export const ImageEntitySchema = z.object({
   rotation: z.number().finite(),
 });
 
-const TextureFillSchema = z.object({ assetId: z.string().min(1), metersPerPixel: z.number().positive().finite(), fitToArea: z.boolean().optional() });
+const TextureFillSchema = z.object({
+  assetId: z.string().min(1), metersPerPixel: z.number().positive().finite(),
+  fitToArea: z.boolean().optional(), opacity: z.number().min(0).max(1).optional(),
+});
 export const DistrictProfileSchema = z.object({
   density: z.number().min(0).max(1).default(.65),
   wealth: z.number().min(0).max(1).default(.5),
@@ -153,10 +156,13 @@ export const DoorEntitySchema = z.object({
   a: PointSchema,
   b: PointSchema,
   kind: z.enum(['door', 'secret']),
+  material: z.enum(['wood', 'iron']).optional(),
   open: z.boolean(),
   hinge: z.enum(['a', 'b']).optional(),
   swing: z.union([z.literal(1), z.literal(-1)]).optional(),
   locked: z.boolean().optional(),
+  oneWay: z.enum(['ab', 'ba']).optional(),
+  lockTag: z.string().optional(),
 });
 
 export const PropEntitySchema = z.object({
@@ -174,6 +180,8 @@ export const PropEntitySchema = z.object({
   suggestedSettlement: z.boolean().optional(),
   symbolKind: z.enum(['mountain', 'hill', 'forest', 'settlement', 'stronghold', 'ruin', 'lair', 'sacred', 'travel']).optional(),
   tacticalTag: z.enum(['cover', 'concealment', 'difficult', 'hazard', 'feature']).optional(),
+  coverHeight: z.enum(['low', 'tall']).optional(),
+  coverFacing: z.enum(['directional', 'freestanding']).optional(),
 });
 
 export const LightEntitySchema = z.object({
@@ -235,6 +243,12 @@ export const UrbancrawlLayerTierSchema = z.enum([
 ]);
 export type UrbancrawlLayerTier = z.infer<typeof UrbancrawlLayerTierSchema>;
 
+export const DiscoveryTierSchema = z.enum(['landmark', 'hidden', 'secret']);
+export type DiscoveryTier = z.infer<typeof DiscoveryTierSchema>;
+
+export const SiteStatusSchema = z.enum(['active', 'cleared', 'restocked']);
+export type SiteStatus = z.infer<typeof SiteStatusSchema>;
+
 export const PlaceEntitySchema = z.object({
   ...EntityBaseShape,
   type: z.literal('place'),
@@ -257,6 +271,10 @@ export const PlaceEntitySchema = z.object({
   clueNext: z.string().optional(),
   rumours: z.array(z.string()).optional(),
   stockingRole: z.enum(['Empty', 'Monster', 'Special', 'Trap']).optional(),
+  discoveryTier: DiscoveryTierSchema.optional(),
+  regionName: z.string().optional(),
+  siteStatus: SiteStatusSchema.optional(),
+  encounterTable: z.array(z.string()).optional(),
 });
 
 export const EntitySchema = z.discriminatedUnion('type', [

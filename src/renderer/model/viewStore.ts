@@ -11,7 +11,7 @@ import type {
   WallKind,
 } from './schema';
 import type { CameraState } from '../render/camera';
-import type { TravelSchedule } from '../geom/measure';
+import type { TravelSchedule, TravelSeason } from '../geom/measure';
 
 export type ToolId =
   | 'fog'
@@ -119,6 +119,7 @@ export interface ViewStoreState {
   lightingMode: 'ambient' | 'lights';
   showUndercity: boolean;
   measureTerrainWeighted: boolean;
+  measureSeason: TravelSeason;
   showHorizonRing: boolean;
   blueprintMode: boolean;
 
@@ -149,6 +150,7 @@ export interface ViewStoreState {
   setLightingMode: (mode: 'ambient' | 'lights') => void;
   setShowUndercity: (show: boolean) => void;
   setMeasureTerrainWeighted: (enabled: boolean) => void;
+  setMeasureSeason: (season: TravelSeason) => void;
   setShowHorizonRing: (show: boolean) => void;
   setBlueprintMode: (enabled: boolean) => void;
   setLightRadius: (radius: number) => void;
@@ -235,6 +237,7 @@ export const viewStore = createStore<ViewStoreState>((set) => ({
   lightingMode: 'ambient',
   showUndercity: false,
   measureTerrainWeighted: true,
+  measureSeason: 'summer',
   showHorizonRing: false,
   blueprintMode: false,
 
@@ -375,6 +378,10 @@ export const viewStore = createStore<ViewStoreState>((set) => ({
 
   setMeasureTerrainWeighted(measureTerrainWeighted) {
     set({ measureTerrainWeighted });
+  },
+
+  setMeasureSeason(measureSeason) {
+    set({ measureSeason });
   },
 
   setShowHorizonRing(showHorizonRing) {

@@ -1,7 +1,7 @@
 import { geographicEntities, isWorldSymbol } from '../geom/geography';
 import { z } from 'zod';
 import { bboxFromPoints, boxesIntersect, getEntityBounds } from '../geom/hitTest';
-import { EntitySchema, type Climate, type Entity, type MapDoc, type MapKind, type Point, type Theme } from '../model/schema';
+import { EntitySchema, type AssetsIndex, type Climate, type Entity, type MapDoc, type MapKind, type Point, type Theme } from '../model/schema';
 
 export interface GeneratorInput<P> {
   seed: number;
@@ -9,6 +9,7 @@ export interface GeneratorInput<P> {
   region: Point[][];
   constraints: Entity[];
   theme: Theme;
+  assets?: AssetsIndex;
   grid: number;
   mapKind?: MapKind;
   inheritedTerrain?: MapDoc['terrain'];
@@ -35,6 +36,9 @@ export function getGenerator(type: string): GeneratorDefinition {
   return generator;
 }
 
+export const isDressingProp = (e: Entity): e is Extract<Entity, { type: 'prop' }> =>
+  e.type === 'prop' && e.tacticalTag !== 'feature';
+
 export function regionConstraints(map: MapDoc, region: Point[][], excludeId: string): Entity[] {
   const points = region.flat();
   const box = bboxFromPoints(points) ?? { minX: 0, minY: 0, maxX: 0, maxY: 0 };
@@ -47,7 +51,7 @@ export function regionConstraints(map: MapDoc, region: Point[][], excludeId: str
 /** Replace only this run's untouched output. Edited output is a constraint for the next run. */
 export function runGenerator(map: MapDoc, options: {
   genId: string; type: string; seed: number; params: Record<string, unknown>;
-  regionEntityId: string; layerId: string; theme: Theme; themeName?: string; dressingOnly?: boolean;
+  regionEntityId: string; layerId: string; theme: Theme; assets?: AssetsIndex; themeName?: string; dressingOnly?: boolean;
   climate?: GeneratorInput<unknown>['climate']; takenNames?: string[];
 }): string[] {
   if (options.type === 'glade' && map.kind !== 'site') throw new Error('Outdoor generators need a site map.');
@@ -64,7 +68,7 @@ export function runGenerator(map: MapDoc, options: {
   if (!layer?.visible || layer.locked) throw new Error('Choose a visible, unlocked layer.');
   const definition = getGenerator(options.type);
   const input: GeneratorInput<unknown> = { seed: options.seed, params: definition.params.parse(options.params),
-    region: region.rings, constraints: regionConstraints(map, region.rings, region.id), theme: options.theme, grid: map.grid.size,
+    region: region.rings, constraints: regionConstraints(map, region.rings, region.id), theme: options.theme, assets: options.assets, grid: map.grid.size,
     mapKind: map.kind, inheritedTerrain: map.terrain, climate: options.climate, takenNames: options.takenNames };
   if (options.type === 'world') {
     // Places attached to existing towns and sites travel with them, so the generator can see their notes exist.
@@ -107,7 +111,7 @@ export function runGenerator(map: MapDoc, options: {
   if (options.dressingOnly && !definition.dress) throw new Error('This generator has no dressing pass.');
   const purposes=new Map(Object.values(map.entities).filter(e=>e.type==='area').map(e=>[e.id,e.type==='area'?e.roomPurpose:undefined]));
   const output = options.dressingOnly
-    ? definition.dress!(input, Object.values(map.entities).filter(e => e.genId === options.genId && e.type !== 'prop'))
+    ? definition.dress!(input, Object.values(map.entities).filter(e => e.genId === options.genId && !isDressingProp(e)))
     : definition.generate(input);
   const validated = output.map(e => EntitySchema.parse(e));
   if (validated.some(e => e.origin !== 'generated')) throw new Error('Generator returned non-generated output.');
@@ -116,7 +120,7 @@ export function runGenerator(map: MapDoc, options: {
   if(options.dressingOnly)for(const e of Object.values(map.entities))if(e.genId===options.genId&&e.type==='area'&&e.roomPurpose!==purposes.get(e.id)&&e.origin==='generated')e.rev=map.revision;
   if(region.origin==='generated') {region.origin='manual';region.rev=map.revision;}
   for (const e of previous) {
-    if (options.dressingOnly && e.type !== 'prop') continue;
+    if (options.dressingOnly && !isDressingProp(e)) continue;
     delete map.entities[e.id]; map.deleted[e.id] = map.revision;
   }
   for(const e of Object.values(map.entities)) if(e.type==='place'&&e.entityIds.some(id=>!map.entities[id])) {

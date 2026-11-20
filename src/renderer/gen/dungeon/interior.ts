@@ -1,12 +1,12 @@
 import { distanceToSegment, getEntityBounds, pointInPolygon } from '../../geom/hitTest';
-import { MapDocSchema, type Entity, type MapDoc, type Point, type Theme } from '../../model/schema';
+import { MapDocSchema, type AssetsIndex, type Entity, type MapDoc, type Point, type Theme } from '../../model/schema';
 import { runGenerator } from '../framework';
 import { DungeonParamsSchema } from './layout';
 
 /** A disposable preview. Accept calls this same pure function inside one world command. */
 export function previewInterior(parent: MapDoc, options: {
   buildingId: string; childMapId: string; name: string; seed: number;
-  params: Record<string,unknown>; theme: Theme; themeName?: string;
+  params: Record<string,unknown>; theme: Theme; assets?: AssetsIndex; themeName?: string;
 }): MapDoc {
   if(parent.kind!=='settlement') throw new Error('Choose a building on a settlement map.');
   const building=parent.entities[options.buildingId];
@@ -44,6 +44,6 @@ export function previewInterior(parent: MapDoc, options: {
     ? { ...parsedParams, purpose: inferredPurpose }
     : parsedParams;
   runGenerator(map,{genId:'interior-generator',type:'dungeon',seed:options.seed,params:effectiveParams,
-    regionEntityId:footprint.id,layerId:'layer-base',theme:options.theme,themeName:options.themeName});
+    regionEntityId:footprint.id,layerId:'layer-base',theme:options.theme,assets:options.assets,themeName:options.themeName});
   return MapDocSchema.parse(map);
 }

@@ -12,9 +12,16 @@ const GIVEN = ['Agna', 'Bertil', 'Cobb', 'Dagny', 'Edric', 'Fenna', 'Godwin', 'H
 const SURNAME_ENDS = ['by', 'wright', 'well', 'ley', 'er', 'ton', 'more', 'shaw'];
 const INN_ADJ = ['Gilded', 'Drowned', 'Crooked', 'Laughing', 'Sleeping', 'Rusty', 'Silver', 'Black', 'Wandering', 'Hanged', 'Three-Legged', 'Blind', 'Merry', 'Broken', 'Golden', 'Salted'];
 const INN_NOUN = ['Stag', 'Lantern', 'Goose', 'Kettle', 'Anchor', 'Boar', 'Crown', 'Fiddler', 'Mermaid', 'Wyvern', 'Barrel', 'Hound', 'Raven', 'Plough', 'Bell', 'Pike'];
+const FACTION_ADJ = ['Ironhand', 'Redbriar', 'Ashen', 'Saltwater', 'Gilded', 'Thornwatch', 'Blackwater', 'Silvercrest', 'Hearthstone', 'Oakhaven', 'Grimward', 'Sunspire'];
+const FACTION_NOUN = ['Barony', 'Rangers', 'Concord', 'Syndicate', 'Wardens', 'Compact', 'Guild', 'Banner', 'Covenant', 'March'];
+const ANOMALY_NAMES = [
+  'The Glass Crater', 'Sunken Spire of Vaeloth', 'Whispering Oasis', 'God-Spine Rift',
+  'The Salt Pillar', 'Starfall Basin', 'Weeping Obelisk', 'The Ember Sink',
+];
+
 export type WardKind = 'market' | 'high' | 'temple' | 'craft' | 'docks' | 'shambles';
 
-export type SiteNameKind = 'stronghold' | 'ruin' | 'lair' | 'sacred' | 'travel' | 'beacon' | 'bridge';
+export type SiteNameKind = 'stronghold' | 'ruin' | 'lair' | 'sacred' | 'travel' | 'beacon' | 'bridge' | 'waterworks';
 
 /** Seeded, non-repeating fantasy names so every world reads as its own place. */
 export function makeNamer(seed: number, taken: Iterable<string> = []) {
@@ -40,6 +47,7 @@ export function makeNamer(seed: number, taken: Iterable<string> = []) {
     travel: [() => `${common()} Inn`, () => `${common()} Crossing`, () => `${common()} Landing`, () => `${common()} Mill`],
     beacon: [() => `${common()} Light`],
     bridge: [() => `${common()} Bridge`],
+    waterworks: [() => `${common()} Waterworks`, () => `The ${old()} Cistern`, () => `${common()} Saltworks`],
   };
   const surname = () => pick(ROOTS) + pick(SURNAME_ENDS);
   const wards: Record<WardKind, Array<() => string>> = {
@@ -64,5 +72,16 @@ export function makeNamer(seed: number, taken: Iterable<string> = []) {
     sea: () => unique(() => `THE ${pick(['SEA OF', 'DEEPS OF', 'GULF OF'])} ${old().toUpperCase()}`),
     pass: () => unique(() => pick([() => `${common()} Pass`, () => `${old()} Gap`])()),
     river: () => unique(() => pick([() => `River ${old()}`, () => `The ${pick(ROOTS)}${pick(['brook', 'water', 'burn', 'rill'])}`])()),
+    region: (biome: string) => unique(() => {
+      const b = biome.toLowerCase();
+      if (b.includes('desert')) return `${old()} ${pick(['Wastes', 'Sands', 'Flats', 'Barrens'])}`;
+      if (b.includes('snow') || b.includes('tundra')) return `${common()} ${pick(['Frost', 'Tundra', 'Reach', 'Barrows'])}`;
+      if (b.includes('rainforest') || b.includes('marsh') || b.includes('swamp')) return `${common()} ${pick(['Fen', 'Mire', 'Wilds', 'Tangle'])}`;
+      if (b.includes('forest')) return `${common()} ${pick(['Wood', 'Weald', 'Thicket', 'Holt'])}`;
+      if (b.includes('mountain')) return `${old()} ${pick(['Highlands', 'Spine', 'Crags', 'Heights'])}`;
+      return `${common()} ${pick(['Downs', 'Vale', 'Marches', 'Plains'])}`;
+    }),
+    faction: () => unique(() => `The ${pick(FACTION_ADJ)} ${pick(FACTION_NOUN)}`),
+    anomaly: () => unique(() => pick(ANOMALY_NAMES)),
   };
 }

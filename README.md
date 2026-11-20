@@ -79,6 +79,8 @@ Open **Assets**, browse folders or search names/tags, and select an image. **Sta
 
 The **World theme** editor in Assets assigns the selected art to a named theme and role. Multiple assets can fill a role; removing the last assignment restores its flat placeholder. Assignments copy art into the world immediately. The source pack is not needed on another machine. Choose the theme under **Settings…** beside the map to use its furniture roles.
 
+**Fill empty roles from library** adds curated art from registered packs to the named theme. It covers room materials, town landmarks, outdoor dressing, and atlas symbols. Pick the theme in generator settings, then generate or apply it.
+
 ## Dungeon and Interior Generators
 
 Generation lives beside the map. A blank map needs no footprint or layer setup. A selected area uses its exact shape; the strip names its target. On a site, choose **Woodland** or **Dungeon**. Interior maps offer **Generate rooms**. Layout, rooms and purpose are quick choices; **Settings…** opens seed, theme, corridor width, mirroring and dressing controls in Inspector. Changing settings does not change the map until you generate or apply them. Footprints must be connected and large enough for nine grid squares; a solid manual wall needs a door before generation can connect across it.

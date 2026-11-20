@@ -475,6 +475,58 @@ export function PlacesPanel({ panelId = 'places' }: { panelId?: string }) {
                 </label>
 
                 <div style={{ fontWeight: 600, fontSize: 11, marginTop: 4, color: 'var(--atlas-text-muted)' }}>
+                  Discovery & Sandbox Status
+                </div>
+                <div style={{ display: 'flex', gap: 6 }}>
+                  <label style={{ display: 'flex', flexDirection: 'column', gap: 3, flex: 1 }}>
+                    <span style={{ color: 'var(--atlas-text-muted)' }}>Discovery Tier</span>
+                    <select
+                      data-testid="place-edit-discovery-tier"
+                      value={selectedPlace.discoveryTier ?? ''}
+                      onChange={(e) =>
+                        updatePlace(selectedPlace.id, {
+                          discoveryTier: (e.target.value || undefined) as PlaceEntity['discoveryTier'],
+                        })
+                      }
+                    >
+                      <option value="">Unassigned</option>
+                      <option value="landmark">Landmark (free)</option>
+                      <option value="hidden">Hidden (search)</option>
+                      <option value="secret">Secret (clue/roll)</option>
+                    </select>
+                  </label>
+                  <label style={{ display: 'flex', flexDirection: 'column', gap: 3, flex: 1 }}>
+                    <span style={{ color: 'var(--atlas-text-muted)' }}>Site Status</span>
+                    <select
+                      data-testid="place-edit-site-status"
+                      value={selectedPlace.siteStatus ?? 'active'}
+                      onChange={(e) =>
+                        updatePlace(selectedPlace.id, {
+                          siteStatus: e.target.value as PlaceEntity['siteStatus'],
+                        })
+                      }
+                    >
+                      <option value="active">Active</option>
+                      <option value="cleared">Cleared</option>
+                      <option value="restocked">Restocked</option>
+                    </select>
+                  </label>
+                </div>
+                {selectedPlace.regionName && (
+                  <div style={{ fontSize: 11, color: 'var(--atlas-text-muted)' }}>
+                    Region: <strong style={{ color: 'var(--atlas-text)' }}>{selectedPlace.regionName}</strong>
+                  </div>
+                )}
+                {selectedPlace.encounterTable && selectedPlace.encounterTable.length > 0 && (
+                  <div style={{ display: 'flex', flexDirection: 'column', gap: 2, fontSize: 11 }}>
+                    <span style={{ color: 'var(--atlas-text-muted)', fontWeight: 600 }}>Regional Encounters (1d{selectedPlace.encounterTable.length})</span>
+                    {selectedPlace.encounterTable.map((entry, idx) => (
+                      <div key={idx}>{idx + 1}. {entry}</div>
+                    ))}
+                  </div>
+                )}
+
+                <div style={{ fontWeight: 600, fontSize: 11, marginTop: 4, color: 'var(--atlas-text-muted)' }}>
                   Urbancrawl Metadata
                 </div>
                 <label style={{ display: 'flex', flexDirection: 'column', gap: 3 }}>

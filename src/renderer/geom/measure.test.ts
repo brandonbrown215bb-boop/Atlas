@@ -97,4 +97,53 @@ describe('route measurement', () => {
     expect(band.minMetres).toBeCloseTo(18 * METRES_PER_MILE * 0.8);
     expect(band.maxMetres).toBeCloseTo(18 * METRES_PER_MILE * 1.2);
   });
+
+  it('models unbridged river crossings, downstream/upstream river flow, and seasonal travel modifiers', () => {
+    const baseMap = MapDocSchema.parse({
+      id: 'r',
+      name: 'Riverlands',
+      kind: 'region',
+      bounds: { x: 0, y: 0, w: 50000, h: 50000 },
+      grid: { size: 100, visible: false },
+      layers: [{ id: 'l', name: 'Base', visible: true, locked: false, gmOnly: false }],
+      entities: {
+        river: { id: 'river', type: 'path', role: 'river', origin: 'manual', layerId: 'l', rev: 0, points: [{ x: 5000, y: 0 }, { x: 5000, y: 20000 }], width: 80, closed: false },
+      },
+      generators: {},
+      revision: 1,
+      deleted: {},
+      fog: { enabled: false, revealed: [] },
+    });
+    const crossRoute = [{ x: 1000, y: 10000 }, { x: 9000, y: 10000 }];
+    const unbridged = sampleRouteTerrain(crossRoute, baseMap, 'summer');
+    expect(unbridged.unbridgedCrossings).toBe(1);
+    expect(unbridged.factor).toBeLessThan(0.85);
+
+    const bridgedMap = {
+      ...baseMap,
+      entities: {
+        ...baseMap.entities,
+        bridge: { id: 'bridge', type: 'prop' as const, name: 'Stone Bridge', builtin: 'bridge', origin: 'manual' as const, layerId: 'l', rev: 0, x: 5000, y: 10000, w: 200, h: 80, rotation: 0, scale: 1, flipX: false },
+      },
+    };
+    const bridged = sampleRouteTerrain(crossRoute, bridgedMap, 'summer');
+    expect(bridged.unbridgedCrossings).toBe(0);
+    expect(bridged.factor).toBeGreaterThan(unbridged.factor);
+
+    // Downstream follows river points order (y: 2000 -> 18000); upstream goes against it (18000 -> 2000).
+    const downstream = sampleRouteTerrain([{ x: 5000, y: 2000 }, { x: 5000, y: 18000 }], baseMap, 'summer');
+    const upstream = sampleRouteTerrain([{ x: 5000, y: 18000 }, { x: 5000, y: 2000 }], baseMap, 'summer');
+    expect(downstream.factor).toBeGreaterThan(1.2);
+    expect(upstream.factor).toBeLessThan(0.8);
+    expect(downstream.lostChance).toContain('0-in-6');
+    expect(upstream.lostChance).toContain('0-in-6');
+
+    // Seasonal modifiers: winter slows travel & raises lost chance; spring floods slow unbridged crossings further.
+    const summerOpen = sampleRouteTerrain([{ x: 1000, y: 2000 }, { x: 4000, y: 2000 }], baseMap, 'summer');
+    const winterOpen = sampleRouteTerrain([{ x: 1000, y: 2000 }, { x: 4000, y: 2000 }], baseMap, 'winter');
+    const springCross = sampleRouteTerrain(crossRoute, baseMap, 'spring');
+    expect(winterOpen.factor).toBeLessThan(summerOpen.factor * 0.7);
+    expect(winterOpen.lostChance).not.toBe(summerOpen.lostChance);
+    expect(springCross.factor).toBeLessThan(unbridged.factor);
+  });
 });

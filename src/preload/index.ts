@@ -1,5 +1,5 @@
 import { contextBridge, ipcRenderer } from 'electron';
-import type { AssetsIndex, MapDoc, WorldMeta } from '../renderer/model/schema';
+import type { AssetsIndex, MapDoc, Theme, WorldMeta } from '../renderer/model/schema';
 import type { Pack, PackAsset, PackProgress, AssetQuery, AssetPage } from '../renderer/model/packs';
 import type { AssetTagOverride } from '../renderer/model/assetTags';
 
@@ -62,6 +62,7 @@ export interface AtlasApi {
   importDungeondraftPack: (source?: string) => Promise<Pack[] | null>;
   usePackAsset: (worldDir: string, id: string) => Promise<{ assetId: string; index: AssetsIndex; w: number; h: number; metersPerPixel: number }>;
   searchAssets: (query: AssetQuery) => Promise<AssetPage>;
+  libraryArt: () => Promise<Theme>;
   setAssetTags: (id: string, tags: AssetTagOverride) => Promise<PackAsset>;
   getAssetThumbnail: (id: string) => Promise<string>;
   listPacks: () => Promise<Pack[]>;
@@ -129,6 +130,7 @@ const api: AtlasApi = {
   playerFullscreen: id => ipcRenderer.invoke('atlas:player-fullscreen', id),
   importDungeondraftPack: source => ipcRenderer.invoke('atlas:pack-import', source),
   usePackAsset: (worldDir, id) => ipcRenderer.invoke('atlas:asset-use', worldDir, id),
+  libraryArt: () => ipcRenderer.invoke('atlas:library-art'),
   searchAssets: query => ipcRenderer.invoke('atlas:asset-search', query),
   setAssetTags: (id, tags) => ipcRenderer.invoke('atlas:asset-set-tags', id, tags),
   getAssetThumbnail: id => ipcRenderer.invoke('atlas:asset-thumbnail', id),

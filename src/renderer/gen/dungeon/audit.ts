@@ -18,6 +18,9 @@ export interface DungeonTopologyAudit {
   fakeForks: string[];
   stockingCounts: Record<'Empty' | 'Monster' | 'Special' | 'Trap', number>;
   threeClueCount: number;
+  oneWayValves: number;
+  windowPeeks: number;
+  factionCount: number;
   xanderingRating: 'Xandered (Loops)' | 'Single Loop' | 'Linear / Tree' | 'Too Few Rooms';
   sevenPillars: SevenPillarCheck[];
 }
@@ -248,6 +251,10 @@ export function auditDungeonTopology(map: MapDoc): DungeonTopologyAudit {
     },
   ];
 
+  const oneWayValves = doors.filter((d) => Boolean(d.oneWay)).length;
+  const windowPeeks = entities.filter((e) => e.type === 'wall' && e.wallKind === 'window').length;
+  const factionCount = new Set(places.flatMap((p) => p.factionLinks ?? [])).size;
+
   return {
     roomCount: rooms.length,
     doorCount: doors.length,
@@ -259,6 +266,9 @@ export function auditDungeonTopology(map: MapDoc): DungeonTopologyAudit {
     fakeForks,
     stockingCounts,
     threeClueCount,
+    oneWayValves,
+    windowPeeks,
+    factionCount,
     xanderingRating,
     sevenPillars,
   };

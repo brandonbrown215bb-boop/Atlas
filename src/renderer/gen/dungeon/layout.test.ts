@@ -143,5 +143,39 @@ describe('dungeon layouts', () => {
     });
     expect(gen.some((e) => e.type === 'place' && e.stockingRole !== undefined)).toBe(true);
     expect(gen.some((e) => e.type === 'portal')).toBe(true);
+
+    // Verify auditDungeonTopology reports new oneWayValves, windowPeeks, and factionCount metrics.
+    const genMap = MapDocSchema.parse({
+      id: 'gen-audit',
+      name: 'Audit Crypt',
+      kind: 'site',
+      bounds: { x: 0, y: 0, w: 60, h: 60 },
+      grid: { size: 2, visible: true },
+      layers: [{ id: 'base', name: 'Base', visible: true, locked: false, gmOnly: false }],
+      entities: Object.fromEntries(gen.map((e) => [e.id, e])),
+      generators: {},
+      revision: 1,
+      deleted: {},
+      fog: { enabled: false, revealed: [] },
+    });
+    const genAudit = auditDungeonTopology(genMap);
+    expect(genAudit.factionCount).toBeGreaterThanOrEqual(2);
+    expect(genAudit.oneWayValves).toBeGreaterThanOrEqual(0);
+    expect(genAudit.windowPeeks).toBeGreaterThanOrEqual(0);
+
+    // Window peek grates appear across seeded multi-room stone dungeons with sight unobstructed.
+    const peekWall = [11, 19, 27, 33, 45].flatMap((seed) =>
+      generateDungeon({
+        seed,
+        params: DungeonParamsSchema.parse({ mode: 'dungeon', rooms: 12, purpose: 'crypt', density: 1 }),
+        region: [[{ x: 0, y: 0 }, { x: 60, y: 0 }, { x: 60, y: 60 }, { x: 0, y: 60 }]],
+        grid: 2,
+        theme: {},
+        constraints: [],
+      }),
+    ).find((e): e is Extract<Entity, { type: 'wall' }> => e.type === 'wall' && e.wallKind === 'window');
+    expect(peekWall).toBeDefined();
+    expect(peekWall?.blocksMove).toBe(true);
+    expect(peekWall?.blocksSight).toBe(false);
   });
 });

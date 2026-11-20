@@ -1,5 +1,5 @@
 import { useStore } from 'zustand';
-import { CLOCK_TIME, formatMeasureDistance, formatTravelDuration, measureRoute, sampleRouteTerrain } from '../geom/measure';
+import { CLOCK_TIME, formatMeasureDistance, formatTravelDuration, measureRoute, sampleRouteTerrain, type TravelSeason } from '../geom/measure';
 import { worldStore } from '../model/store';
 import { viewStore } from '../model/viewStore';
 
@@ -11,6 +11,7 @@ export function MeasureBar({ panelId, worldId, mapId }: { panelId: string; world
   const schedule = useStore(viewStore, (s) => s.measureSchedule);
   const markers = useStore(viewStore, (s) => s.measureMarkers);
   const terrainWeighted = useStore(viewStore, (s) => s.measureTerrainWeighted);
+  const season = useStore(viewStore, (s) => s.measureSeason);
   const showHorizonRing = useStore(viewStore, (s) => s.showHorizonRing);
   const route = stored?.worldId === worldId && stored.mapId === mapId ? stored : null;
   const activeMap = world?.maps[mapId];
@@ -22,7 +23,7 @@ export function MeasureBar({ panelId, worldId, mapId }: { panelId: string; world
   try {
     result = measureRoute(points, validSpeed ? speedMph : undefined, CLOCK_TIME.test(departure) ? departure : undefined, schedule ?? undefined);
   } catch (e) { error = e instanceof Error ? e.message : String(e); }
-  const terrainSample = terrainWeighted && points.length >= 2 ? sampleRouteTerrain(points, activeMap) : null;
+  const terrainSample = terrainWeighted && points.length >= 2 ? sampleRouteTerrain(points, activeMap, season) : null;
   const preview = route?.hover && !route.finished;
   return (
     <div className="measure-bar" data-testid="measure-bar" data-point-count={route?.points.length ?? 0}>
@@ -39,6 +40,16 @@ export function MeasureBar({ panelId, worldId, mapId }: { panelId: string; world
         <button type="button" data-testid="measure-boat-preset" title="River / coastal barge (4 mph, 12h/day)" onClick={() => { viewStore.getState().setMeasureSpeedMph('4'); viewStore.getState().setMeasureSchedule({ startTime: schedule?.startTime || '06:00', hoursPerDay: 12 }); }}>Boat</button>
         <label><input aria-label="Show travel markers" type="checkbox" checked={markers} onChange={e => viewStore.getState().setMeasureMarkers(e.target.checked)} />Watch/camp marks</label>
         <label><input aria-label="Terrain-weighted travel" type="checkbox" checked={terrainWeighted} onChange={e => viewStore.getState().setMeasureTerrainWeighted(e.target.checked)} />Terrain-weighted</label>
+        {terrainWeighted && (
+          <label>Season{' '}
+            <select data-testid="measure-season" aria-label="Travel season" value={season} onChange={e => viewStore.getState().setMeasureSeason(e.target.value as TravelSeason)}>
+              <option value="summer">Summer</option>
+              <option value="spring">Spring (floods)</option>
+              <option value="autumn">Autumn (fog)</option>
+              <option value="winter">Winter (snow)</option>
+            </select>
+          </label>
+        )}
         <label><input aria-label="Horizon and 1-day jitter ring" type="checkbox" checked={showHorizonRing} onChange={e => viewStore.getState().setShowHorizonRing(e.target.checked)} />Horizon / ±20% ring</label>
         <button type="button" data-testid="measure-finish" disabled={!route || route.points.length < 2 || route.finished} onClick={() => route && viewStore.getState().setMeasurement(panelId, { ...route, hover: null, finished: true })}>Finish</button>
         <button type="button" data-testid="measure-clear" disabled={!route} onClick={() => viewStore.getState().setMeasurement(panelId, null)}>Clear</button>
@@ -48,8 +59,9 @@ export function MeasureBar({ panelId, worldId, mapId }: { panelId: string; world
         {preview && <span>(preview)</span>}
         {result?.durationSeconds !== null && result?.durationSeconds !== undefined && points.length >= 2 && <span data-testid="measure-duration">Travel: {formatTravelDuration(result.durationSeconds)}</span>}
         {terrainSample && result?.durationSeconds !== null && result?.durationSeconds !== undefined && points.length >= 2 && (
-          <span data-testid="measure-terrain-weighted" title={`Speed factor ${terrainSample.factor.toFixed(2)}x`}>
-            Terrain ({terrainSample.terrainLabel}): {formatTravelDuration(result.durationSeconds * terrainSample.weightedSecondsMultiplier)} · Lost check: {terrainSample.lostChance}
+          <span data-testid="measure-terrain-weighted" title={`Speed factor ${terrainSample.factor.toFixed(2)}x (${terrainSample.season})`}>
+            Terrain ({terrainSample.terrainLabel}{terrainSample.season !== 'summer' ? `, ${terrainSample.season}` : ''}): {formatTravelDuration(result.durationSeconds * terrainSample.weightedSecondsMultiplier)} · Lost check: {terrainSample.lostChance}
+            {terrainSample.unbridgedCrossings > 0 ? ` · ${terrainSample.unbridgedCrossings} unbridged river ${terrainSample.unbridgedCrossings === 1 ? 'crossing' : 'crossings'}` : ''}
             {[
               terrainSample.domainBreakdown.road > 0.05 ? `Road ${Math.round(terrainSample.domainBreakdown.road * 100)}%` : '',
               terrainSample.domainBreakdown.woods > 0.05 ? `Woods ${Math.round(terrainSample.domainBreakdown.woods * 100)}%` : '',

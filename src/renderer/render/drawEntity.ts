@@ -28,6 +28,8 @@ function areaFillColor(role: AreaRole, customFill?: string, floorMaterial?: Floo
   }
   if (role === 'biome:dense-canopy') return 0x264225;
   if (role === 'biome:frontier') return 0x993228;
+  if (role === 'biome:faction') return 0x4b5c8a;
+  if (role === 'biome:rumor') return 0x8c6239;
   return 0x7c8a5d; // biome:*
 }
 
@@ -76,7 +78,7 @@ function drawPolyline(
   }
 }
 
-function drawTexturedLine(container: Container, points: Point[], closed: boolean, width: number, mpp: number, texture: Texture, origin: Point) {
+function drawTexturedLine(container: Container, points: Point[], closed: boolean, width: number, mpp: number, texture: Texture, origin: Point, opacity = 1) {
   const line = closed ? [...points, points[0]!] : points;
   let distance = 0;
   for (let i = 1; i < line.length; i++) {
@@ -85,6 +87,7 @@ function drawTexturedLine(container: Container, points: Point[], closed: boolean
     if (length === 0) continue;
     const strip = new TilingSprite({ texture, width: length, height: width });
     strip.eventMode = 'none'; strip.anchor.set(0,0.5);
+    strip.alpha = opacity;
     strip.position.set(a.x-origin.x, a.y-origin.y); strip.rotation = Math.atan2(b.y-a.y,b.x-a.x);
     strip.tileScale.set(mpp); strip.tilePosition.set(-distance,0);
     container.addChild(strip); distance += length;
@@ -224,6 +227,9 @@ export function buildEntityDisplay(
 
         const isDenseCanopy = entity.role === 'biome:dense-canopy';
         const isFrontier = entity.role === 'biome:frontier';
+        const isFactionZone = entity.role === 'biome:faction';
+        const isRumorZone = entity.role === 'biome:rumor';
+        const isDashedOverlay = isFrontier || isFactionZone || isRumorZone;
         const isPlateau = entity.role === 'plateau';
         const isSiteRidge = isPlateau && (options.mapKind === 'site' || options.mapKind === 'interior');
         // Coastal shallow-water glow & crisp cartographic wave contour rings for world/region landmasses only
@@ -263,8 +269,19 @@ export function buildEntityDisplay(
               }
             }
           };
+          const fillCol = areaFillColor(entity.role, entity.fill ?? entity.roofColor, entity.floorMaterial);
+          const fillAlpha = isRumorZone ? 0.04 : isFactionZone ? 0.06 : isFrontier ? 0.05 : isDenseCanopy ? 0.56 : isBiome ? 0.86 : isDistrict ? 0.72 : 0.94;
           drawPolygonPath(fillGfx, outer, origin.x, origin.y);
           if (options.texture && entity.texture) {
+            const opacity = entity.texture.opacity ?? 1;
+            if (opacity < 1) {
+              const baseGfx = new Graphics();
+              baseGfx.eventMode = 'none';
+              drawPolygonPath(baseGfx, outer, origin.x, origin.y);
+              baseGfx.fill({ color: fillCol, alpha: fillAlpha });
+              cutHoles(baseGfx);
+              container.addChild(baseGfx);
+            }
             const pattern = new FillPattern({ texture: options.texture, repetition: 'repeat', textureSpace: 'global' });
             const size = entity.texture.metersPerPixel;
             if (entity.texture.fitToArea && outer.length === 4) {
@@ -272,16 +289,10 @@ export function buildEntityDisplay(
               pattern.setTransform(new Matrix((b.x-a.x)/options.texture.width,(b.y-a.y)/options.texture.width,
                 (d.x-a.x)/options.texture.height,(d.y-a.y)/options.texture.height,0,0));
             } else pattern.setTransform(new Matrix().scale(size, size));
-            fillGfx.fill({ fill: pattern });
+            fillGfx.fill({ fill: pattern, alpha: opacity });
             cutHoles(fillGfx);
             container.addChild(fillGfx);
           } else {
-            const fillCol = areaFillColor(
-              entity.role,
-              entity.fill ?? entity.roofColor,
-              entity.floorMaterial,
-            );
-            const fillAlpha = isFrontier ? 0.05 : isDenseCanopy ? 0.56 : isBiome ? 0.86 : isDistrict ? 0.72 : 0.94;
             fillGfx.fill({ color: fillCol, alpha: fillAlpha });
             cutHoles(fillGfx);
             container.addChild(fillGfx);
@@ -301,7 +312,7 @@ export function buildEntityDisplay(
               ? 'water'
               : isFloor
                 ? floorProc
-                : (!isDenseCanopy && !isFrontier && (isLand || isBiome || isDistrict))
+                : (!isDenseCanopy && !isDashedOverlay && (isLand || isBiome || isDistrict))
                   ? 'watercolor'
                   : null;
             const procTex = procKind ? getProceduralTexture(procKind) : null;
@@ -343,6 +354,12 @@ export function buildEntityDisplay(
           } else if (isFrontier) {
             drawDashedPolyline(gfx, outer, origin, strokeUnit * 8, strokeUnit * 6, true);
             gfx.stroke({ width: strokeUnit * 1.35, color: 0x8f3328, alpha: 0.42, cap: 'round' });
+          } else if (isFactionZone) {
+            drawDashedPolyline(gfx, outer, origin, strokeUnit * 10, strokeUnit * 5, true);
+            gfx.stroke({ width: strokeUnit * 1.45, color: fillCol, alpha: 0.48, cap: 'round' });
+          } else if (isRumorZone) {
+            drawDashedPolyline(gfx, outer, origin, strokeUnit * 5, strokeUnit * 5, true);
+            gfx.stroke({ width: strokeUnit * 1.15, color: 0x8c6239, alpha: 0.55, cap: 'round' });
           } else if (isDistrict) {
             drawPolygonPath(gfx, outer, origin.x, origin.y);
             gfx.stroke({ width: strokeUnit * 0.75, color: 0x5c4b37, alpha: 0.25, join: 'round' });
@@ -367,7 +384,7 @@ export function buildEntityDisplay(
           }
         }
 
-        if (isBuilding && !entity.texture) {
+        if (isBuilding && (!entity.texture || !options.texture)) {
           drawBuildingRoof(gfx, entity, outer, origin, strokeUnit, options.roofMode ?? 'detailed');
         }
       }
@@ -481,7 +498,7 @@ export function buildEntityDisplay(
         tag.eventMode = 'none';
         container.addChild(tag);
       }
-      if (options.texture && entity.texture) drawTexturedLine(container, entity.points, entity.closed, entity.width, entity.texture.metersPerPixel, options.texture, origin);
+      if (options.texture && entity.texture) drawTexturedLine(container, entity.points, entity.closed, entity.width, entity.texture.metersPerPixel, options.texture, origin, entity.texture.opacity);
       break;
     }
 
@@ -497,7 +514,7 @@ export function buildEntityDisplay(
         drawWallStyled(gfx, entity, origin, strokeUnit, options.selected, hatchMode);
         container.addChild(gfx);
       }
-      if (options.texture && entity.texture) drawTexturedLine(container, entity.points, false, Math.max(0.2, options.texture.height * entity.texture.metersPerPixel), entity.texture.metersPerPixel, options.texture, origin);
+      if (options.texture && entity.texture) drawTexturedLine(container, entity.points, false, Math.max(0.2, options.texture.height * entity.texture.metersPerPixel), entity.texture.metersPerPixel, options.texture, origin, entity.texture.opacity);
       break;
     }
 
@@ -515,8 +532,32 @@ export function buildEntityDisplay(
       container.rotation = entity.rotation;
       container.scale.set(entity.flipX ? -entity.scale : entity.scale, entity.scale);
       if (options.texture && entity.w && entity.h) {
+        if (entity.builtin === 'hearth') {
+          const glow = new Graphics().circle(0, entity.h * 0.2, entity.w).fill({ color: 0xff8c2b, alpha: 0.16 });
+          glow.eventMode = 'none';
+          container.addChild(glow);
+        }
         const sprite = new Sprite(options.texture);
-        sprite.eventMode = 'none'; sprite.anchor.set(0.5); sprite.width = entity.w; sprite.height = entity.h;
+        sprite.eventMode = 'none';
+        sprite.anchor.set(0.5);
+        const spansFootprint = entity.builtin === 'bridge' || entity.builtin === 'dock' || entity.builtin === 'boat';
+        if (entity.tacticalTag === 'feature' || spansFootprint) {
+          const { width, height } = options.texture;
+          const straight = Math.min(entity.w / width, entity.h / height);
+          const sideways = Math.min(entity.w / height, entity.h / width);
+          const turn = sideways > straight * 1.1;
+          if (turn) sprite.rotation = Math.PI / 2;
+          if (spansFootprint) {
+            // Long props use the generated direction and span, with either source image orientation.
+            sprite.width = turn ? entity.h : entity.w;
+            sprite.height = turn ? entity.w : entity.h;
+          } else sprite.scale.set(turn ? sideways : straight);
+        } else if (entity.builtin) {
+          sprite.scale.set(Math.min(entity.w / options.texture.width, entity.h / options.texture.height));
+        } else {
+          sprite.width = entity.w;
+          sprite.height = entity.h;
+        }
         container.addChild(sprite);
         if (options.selected) {
           const outline = new Graphics().rect(-entity.w / 2, -entity.h / 2, entity.w, entity.h)
@@ -606,6 +647,50 @@ export function buildEntityDisplay(
         gfx.rect(-r, -r * 0.55, r * 2, r * 1.1).fill(0xb0aa9c).stroke({ color: 0x3f3a32, width: r * 0.09 });
         gfx.rect(-r * 0.25, -r * 0.4, r * 0.5, r * 0.8).fill(0x873c46);
         for (const x of [-0.7, 0.7]) gfx.circle(x * r, -r * 0.15, r * 0.12).fill(0xf9de85);
+      } else if (builtin === 'sarcophagus') {
+        const coffin = (x: number, y: number) => gfx
+          .moveTo(x - .92 * r, y - .57 * r).lineTo(x - .56 * r, y - .88 * r)
+          .lineTo(x + .86 * r, y - .62 * r).lineTo(x + .95 * r, y + .59 * r)
+          .lineTo(x - .56 * r, y + .86 * r).lineTo(x - .92 * r, y + .53 * r).closePath();
+        coffin(.09 * r, .13 * r).fill({ color: 0x18100a, alpha: .46 });
+        coffin(0, 0).fill(0xc4b69e).stroke({ color: 0x3a2d24, width: r * .075, join: 'round' });
+        gfx.circle(-.55 * r, -.02 * r, .16 * r).fill(0x8f7f6a);
+        gfx.ellipse(.08 * r, 0, .43 * r, .30 * r).fill(0x9e8e76).stroke({ color: 0x6e5d4b, width: r * .05 });
+        gfx.moveTo(-.16 * r, -.27 * r).lineTo(.25 * r, .25 * r)
+          .moveTo(-.16 * r, .27 * r).lineTo(.25 * r, -.25 * r).stroke({ color: 0xe4d4b8, width: r * .065 });
+      } else if (builtin === 'burialBell') {
+        gfx.circle(.08 * r, .13 * r, .76 * r).fill({ color: 0x17110b, alpha: .42 });
+        gfx.circle(0, 0, .76 * r).fill(0xb38b51).stroke({ color: 0x473323, width: r * .09 });
+        gfx.circle(0, 0, .58 * r).fill(0x6d4d30).stroke({ color: 0xe4bb69, width: r * .075 });
+        gfx.circle(-.07 * r, 0, .17 * r).fill(0xd5b271);
+      } else if (builtin === 'pumpWheel' || builtin === 'winch') {
+        const body = builtin === 'pumpWheel' ? 0x43776d : 0x71533f;
+        gfx.roundRect(-.83 * r, -.69 * r, 1.8 * r, 1.55 * r, .11 * r).fill({ color: 0x18100a, alpha: .43 });
+        gfx.roundRect(-.93 * r, -.81 * r, 1.8 * r, 1.55 * r, .11 * r).fill(body)
+          .stroke({ color: 0x252a24, width: r * .09 });
+        gfx.circle(-.05 * r, -.04 * r, .55 * r).stroke({ color: 0xdec087, width: r * .13 });
+        for (let i = 0; i < 4; i++) {
+          const a = i * Math.PI / 4;
+          gfx.moveTo((-0.05 - Math.cos(a) * .52) * r, (-.04 - Math.sin(a) * .52) * r)
+            .lineTo((-0.05 + Math.cos(a) * .52) * r, (-.04 + Math.sin(a) * .52) * r)
+            .stroke({ color: 0xc39c63, width: r * .075 });
+        }
+        gfx.circle(-.05 * r, -.04 * r, .12 * r).fill(0x3a352e);
+      } else if (builtin === 'barricade') {
+        for (let i = 0; i < 4; i++) {
+          const x = (-.95 + i * .46) * r, y = (i % 2 === 0 ? -.66 : -.45) * r;
+          gfx.roundRect(x, y, .52 * r, 1.1 * r, .06 * r).fill(i % 2 === 0 ? 0x84674b : 0x6b523b)
+            .stroke({ color: 0x3d2c20, width: r * .065 });
+        }
+        gfx.roundRect(-.98 * r, -.10 * r, 1.96 * r, .33 * r, .045 * r).fill(0x9c7750)
+          .stroke({ color: 0x3d2c20, width: r * .065 });
+      } else if (builtin === 'strongbox') {
+        gfx.roundRect(-.93 * r, -.50 * r, 1.98 * r, 1.25 * r, .11 * r).fill({ color: 0x17110b, alpha: .46 });
+        gfx.roundRect(-r, -.63 * r, 2 * r, 1.25 * r, .11 * r).fill(0x795239)
+          .stroke({ color: 0x34261f, width: r * .09 });
+        for (const x of [-.72, .57]) gfx.rect(x * r, -.63 * r, .15 * r, 1.25 * r).fill(0x343d39);
+        gfx.moveTo(-.95 * r, .15 * r).lineTo(.95 * r, .15 * r).stroke({ color: 0xc39960, width: r * .08 });
+        gfx.circle(0, .17 * r, .16 * r).fill(0xd1a359);
       } else if (builtin === 'settlement') {
         gfx.ellipse(r * 0.14, r * 0.78, r * 0.85, r * 0.28).fill({ color: 0x261d14, alpha: 0.28 });
         gfx.rect(-r * 0.68, -r * 0.05, r * 1.36, r * 0.95).fill(0xe8dcc2).stroke({ color: 0x36271a, width: r * 0.07 });
@@ -797,13 +882,16 @@ export function buildEntityDisplay(
 
     case 'label': {
       container.position.set(entity.x, entity.y);
-      const fontSize = Math.max(14, entity.size);
+      const fontSize = entity.id.startsWith('gm-cue-') || entity.id.startsWith('gm-title-')
+        ? Math.max(9, entity.size)
+        : Math.max(14, entity.size);
       const labelScale = 1 / Math.max(1e-8, options.zoom * 1.35);
       const isSeaLabel = entity.id.startsWith('label-ocean') || entity.text === entity.text.toUpperCase() && entity.text.length >= 6;
-      const isRegionLabel = entity.id.startsWith('label-mountains') || entity.id.startsWith('label-forest');
+      const isRegionLabel = entity.id.startsWith('label-mountains') || entity.id.startsWith('label-forest') || entity.id.startsWith('label-subregion-');
+      const isGmCue = entity.id.startsWith('gm-cue-') || entity.id.startsWith('gm-title-');
       const haloColor = isSeaLabel ? 0xc7e0e2 : 0xf4ead2;
-      const textFill = options.selected ? 0xfbbf24 : isSeaLabel ? 0x162d3b : isRegionLabel ? 0x3a2614 : 0x261a10;
-      const fontStyle = isSeaLabel || isRegionLabel ? 'italic' : 'normal';
+      const textFill = options.selected ? 0xfbbf24 : isGmCue ? 0x5b21b6 : isSeaLabel ? 0x162d3b : isRegionLabel ? 0x3a2614 : 0x261a10;
+      const fontStyle = isSeaLabel || isRegionLabel || entity.id.startsWith('gm-cue-') ? 'italic' : 'normal';
       // Soft wide translucent halo underlay before crisp serif text
       const halo = new Text({
         text: entity.text,

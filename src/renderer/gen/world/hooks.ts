@@ -169,12 +169,12 @@ const TRAPS = [
 ];
 const SPECIALS = [
   'a talking skull that trades answers for secrets', 'a fountain whose water shows one true vision', 'a statue that turns its head to follow light',
-  'a lever that drains the nearest cistern', 'a mirror showing the room as it was long ago', 'a ghost that asks to be buried properly',
+  'a bell that rings when someone tells a lie', 'a mirror showing the room as it was long ago', 'a ghost that asks to be buried properly',
   'a map of the level scratched on a door, with one room wrong', 'an altar that blesses anyone who leaves a coin, and curses thieves',
 ];
 const EMPTY = [
-  'signs of a camp with ashes still warm', 'a dead adventurer with a half-written letter', 'rubble hides a crawl-space to the next room',
-  'old supplies, mostly spoiled; one potion survives', 'a collapsed corner with a view down into a lower level', 'nothing but echoes and a draught',
+  'signs of a camp with ashes still warm', 'a dead adventurer with a half-written letter', 'boot tracks end at a pile of rubble',
+  'old supplies, mostly spoiled; one potion survives', 'a collapsed corner filled with rubble', 'nothing but echoes and a draught',
   'a message chalked in a rival party\'s code', 'the bones of something large, picked clean',
 ];
 const TREASURE: [string[], string[], string[]] = [
@@ -183,6 +183,90 @@ const TREASURE: [string[], string[], string[]] = [
   ['a crown of the old kings', 'a coffer of gems', 'a magic blade with a name', 'a wand with three charges left'],
 ];
 const KEYS = ['an iron key on a bone ring', 'a bronze key shaped like a hand', 'a black glass key that hums', 'a heavy brass seal-key', 'a key carved from a femur', 'a silver key wrapped in a prayer strip'];
+
+export interface DungeonFactionPair {
+  entryFaction: string;
+  deepFaction: string;
+  tension: string;
+  aftermath: string;
+}
+
+const DUNGEON_FACTIONS: Record<DungeonTheme, DungeonFactionPair[]> = {
+  tomb: [
+    {
+      entryFaction: 'Desperate Grave-Robbers',
+      deepFaction: 'Bound Crypt Wardens',
+      tension: 'The robbers want the inner vault cracked open but fear the bell-wardens patrolling the deeper galleries.',
+      aftermath: 'If the wardens fall, rival looters from the nearest town move in within a week.',
+    },
+    {
+      entryFaction: 'Ashen Cult Excavators',
+      deepFaction: 'Ravenous Barrow Ghouls',
+      tension: 'The cultists hold the upper choke with torches while ghouls stalk the dark ossuaries behind the seal.',
+      aftermath: 'Breaking the cult frees the ghouls to raid nearby farmsteads unless the outer gate is collapsed.',
+    },
+  ],
+  den: [
+    {
+      entryFaction: 'Kobold Trap-Sappers',
+      deepFaction: 'Broodmother Giant Spiders',
+      tension: 'The kobolds barricade the entrance wing and lure intruders toward the deep spider galleries.',
+      aftermath: 'Clearing the spiders lets the kobolds expand to raid passing trade wagons.',
+    },
+    {
+      entryFaction: 'Goblin Scavengers',
+      deepFaction: 'Territorial Ogre & Worgs',
+      tension: 'The goblins pay tribute in stolen livestock to keep the ogre from sweeping the upper chambers.',
+      aftermath: 'Slaying the ogre fractures the goblin clan into petty road-bandits.',
+    },
+  ],
+  fortress: [
+    {
+      entryFaction: 'Mutinous Watch Deserters',
+      deepFaction: 'Loyalist Ironbound Remnant',
+      tension: 'Deserters control the gatehouse and supplies, trying to starve out the loyalists locked inside the inner wing.',
+      aftermath: 'Whichever side survives claims toll rights over the nearest road or mountain pass.',
+    },
+    {
+      entryFaction: 'Orc Outriders',
+      deepFaction: 'Bound Construct Garrison',
+      tension: 'The outriders camp in the outer barracks and fear tripping the ancient iron guardians deeper inside.',
+      aftermath: 'Disabling the constructs hands a fortified stronghold to whoever holds the gate.',
+    },
+  ],
+  temple: [
+    {
+      entryFaction: 'Wayward Pilgrim Zealots',
+      deepFaction: 'Shadow-Bound Choir',
+      tension: 'The zealots guard the upper shrine and make offerings to appease whatever whispers from the inner sanctum.',
+      aftermath: 'Silencing the inner sanctum draws official temple inspectors from the nearest city.',
+    },
+    {
+      entryFaction: 'Rival Relic Hunters',
+      deepFaction: 'Sunken-Order Acolytes',
+      tension: 'Relic hunters hold a forward camp near the entrance, probing the acolytes’ wards for a safe way past.',
+      aftermath: 'Removing the relic breaks the ward keeping nearby crypts quiet.',
+    },
+  ],
+};
+
+const BIOME_ENCOUNTERS: Record<string, string[]> = {
+  forest: ['Wary charcoal burners with news of the road', 'A pack of gaunt timber wolves shadowing travelers', 'Elven or ranger outriders demanding toll or news', 'Boars rooting around a mossy milestone', 'Bandit scouts watching from an oak ridge', 'A stray pack-mule carrying a torn saddlebag'],
+  rainforest: ['Venomous canopy vipers dropping near camp', 'Rival treasure-seekers lost in the undergrowth', 'A territorial jungle cat stalking the rear rank', 'Fever-flies rising off stagnant pools', 'Overgrown shrine-monkeys stealing shiny gear', 'Giant constrictor coiled across a fallen trunk'],
+  desert: ['Water-sellers guarding a brackish cistern', 'Sun-bleached raiders riding lean camels', 'A sudden dust-squall cutting sight to 30 ft', 'Giant scorpions emerging from shaded rock clefts', 'Pilgrims following cairns toward a hidden oasis', 'Vultures circling a half-buried caravan wreck'],
+  tundra: ['Frost-bitten fur trappers hauling sleds', 'Winter wolves testing the camp perimeter', 'A whiteout squall hiding the ridge trail', 'Herd of elk stampeding past a glacial erratic', 'Reavers raiding south along frozen streams', 'An abandoned watch-fire still smoking'],
+  snow: ['Ice-glazed crevice across the pass', 'Snow-blind courier clutching a wax-sealed tube', 'Crag yeti tracking scent from upwind', 'Avalanche rumble loosening loose scree', 'Frozen mountaineers clutching a map scrap', 'Frost-rimmed wolves circling at dusk'],
+  mountain: ['Rockslide blocking a narrow ledge path', 'Dwarven or mule-train prospectors descending', 'Griffons or wyverns wheeling above the saddle', 'Toll-bandits holding a switchback choke', 'Mountain goats revealing a narrow bypass ledge', 'A sudden freezing fog over the high pass'],
+  grassland: ['Merchant wagon with a cracked axle', 'Mounted patrol checking travel papers', 'A herd of wild horses kicking up dust', 'Wandering tinker trading rumours for salt', 'Highwaymen waiting behind a low hedge-crest', 'Refugees hurrying toward the nearest town'],
+};
+
+const FACTION_RIVALRIES = [
+  'taxes road caravans heavily, pushing smugglers onto back trails',
+  'is quietly hiring mercenaries to seize a rival bridge or pass',
+  'offers bounty coin for proof of their rival’s frontier raids',
+  'blocks supply wagons heading into contested borderlands',
+  'posts spies in taverns along the border to track rival expeditions',
+];
 
 const SETTLEMENT_RE =/^(City|Town|Village|Hamlet) known for (.+?)\. Trouble: (.+?)\./;
 
@@ -234,5 +318,34 @@ export function makeHooks(random: () => number) {
     empty: () => pick(EMPTY),
     treasure: (band: Band) => pick(TREASURE[band]),
     key: () => pick(KEYS),
+    dungeonFactions: (theme: DungeonTheme): DungeonFactionPair => {
+      const list = DUNGEON_FACTIONS[theme];
+      return list[Math.floor(random() * list.length)]!;
+    },
+    regionalEncounters: (biome: string, neighborBiome?: string): string[] => {
+      const keyOf = (b: string) => {
+        const l = b.toLowerCase();
+        if (l.includes('rainforest')) return 'rainforest';
+        if (l.includes('forest')) return 'forest';
+        if (l.includes('desert')) return 'desert';
+        if (l.includes('snow')) return 'snow';
+        if (l.includes('tundra')) return 'tundra';
+        if (l.includes('mountain')) return 'mountain';
+        return 'grassland';
+      };
+      const primary = BIOME_ENCOUNTERS[keyOf(biome)] ?? BIOME_ENCOUNTERS.grassland!;
+      const pool = [...primary];
+      for (let i = pool.length - 1; i > 0; i--) {
+        const j = Math.floor(random() * (i + 1));
+        [pool[i], pool[j]] = [pool[j]!, pool[i]!];
+      }
+      const chosen = pool.slice(0, 5);
+      const nbKey = neighborBiome ? keyOf(neighborBiome) : (keyOf(biome) === 'grassland' ? 'forest' : 'grassland');
+      const spillPool = BIOME_ENCOUNTERS[nbKey] ?? BIOME_ENCOUNTERS.grassland!;
+      const spill = spillPool[Math.floor(random() * spillPool.length)]!;
+      chosen.push(`[Border spillover — ${nbKey}] ${spill}`);
+      return chosen;
+    },
+    factionRivalry: () => pick(FACTION_RIVALRIES),
   };
 }

@@ -6,9 +6,11 @@ import { simplifyRDP } from '../../geom/simplify';
 import type { Entity, Point } from '../../model/schema';
 import { scaleEntityPatch } from '../../geom/transform';
 import { registerGenerator, type GeneratorInput } from '../framework';
+import { propArt, surfaceTexture } from '../art';
 import { mulberry32 } from '../rng';
 import { dressDungeon, ROOM_PURPOSES } from './dressing';
-import { planDungeon, PURPOSE_TITLE, stockDungeon } from './story';
+import { planDungeon, PURPOSE_TITLE, situationLandmarks, stockDungeon } from './story';
+import { dungeonSituation } from './situations';
 
 export const DungeonParamsSchema = z.object({
   mode: z.enum(['building', 'dungeon', 'chamber', 'cave']).default('building'),
@@ -33,7 +35,7 @@ function crossing(a: Point, b: Point, c: Point, d: Point): boolean {
     && Math.max(Math.min(a.y,b.y),Math.min(c.y,d.y)) <= Math.min(Math.max(a.y,b.y),Math.max(c.y,d.y)) + 1e-7;
 }
 
-export function dungeonLayout(input: GeneratorInput<DungeonParams>): Entity[] {
+export function dungeonLayout(input: GeneratorInput<DungeonParams>, situation = dungeonSituation(input)): Entity[] {
   const { region, constraints, grid: g, params } = input;
   const random = mulberry32(input.seed);
   const points = region[0]!;
@@ -43,7 +45,7 @@ export function dungeonLayout(input: GeneratorInput<DungeonParams>): Entity[] {
     const center={x:x0+width/2,y:0};
     const reflect=(e:Entity):Entity=>({...e,...scaleEntityPatch(e,center,-1,1)});
     return dungeonLayout({...input,params:{...params,mirror:false},region:region.map(r=>r.map(p=>({x:2*center.x-p.x,y:p.y}))),
-      constraints:constraints.map(reflect)}).map(reflect);
+      constraints:constraints.map(reflect)}, situation).map(reflect);
   }
   const cols = Math.ceil(width/g), rows = Math.ceil(height/g);
   if (cols*rows > 20000) throw new Error('Footprint is too large: use at most 20,000 grid squares.');
@@ -95,31 +97,33 @@ export function dungeonLayout(input: GeneratorInput<DungeonParams>): Entity[] {
 
   // The labels describe connected rooms. The corridor is room zero in dungeon mode.
   const labels = new Map<string,number>();
-  const wideCells=(c:Cell):Cell[]=>{
-    const k=params.corridorWidth, result:Cell[]=[];
+  const wideCells=(c:Cell, width = params.corridorWidth):Cell[]=>{
+    const k=width, result:Cell[]=[];
     for(let y=0;y<k;y++)for(let x=0;x<k;x++){const n=cells.get(key(c.x+x,c.y+y));if(n)result.push(n);}
     return result;
   };
-  const carveRoute=(start:Cell,target:Cell)=>{
-    const k=params.corridorWidth;
+  const carveRoute=(start:Cell,target:Cell,widthOverride?:number)=>{
+    const k=widthOverride ?? params.corridorWidth;
     const anchor=(c:Cell)=>cells.get(key(Math.min(c.x,cols-k),Math.min(c.y,rows-k)))??c;
     start=anchor(start);target=anchor(target);
     const allowedLabels=new Set([0,labels.get(start.key),labels.get(target.key)]);
     const fits=(c:Cell)=>{
-      const block=wideCells(c);if(block.length!==k*k||block.some(n=>labels.has(n.key)&&!allowedLabels.has(labels.get(n.key))))return false;
+      const block=wideCells(c,k);if(block.length!==k*k||block.some(n=>labels.has(n.key)&&!allowedLabels.has(labels.get(n.key))))return false;
       return block.every(n=>[[1,0],[0,1]].every(([dx,dy])=>{const q=cells.get(key(n.x+dx!,n.y+dy!));return !q||!block.includes(q)||neighbors(n).includes(q);}));
     };
     const queue=[start],seen=new Map<string,Cell|null>([[start.key,null]]);
     for(let i=0;i<queue.length;i++){
       const c=queue[i]!;
-      if(c.key===target.key){let at:Cell|null=c;while(at){for(const n of wideCells(at))if(!labels.has(n.key))labels.set(n.key,0);at=seen.get(at.key)!;}return;}
+      if(c.key===target.key){let at:Cell|null=c;while(at){for(const n of wideCells(at,k))if(!labels.has(n.key))labels.set(n.key,0);at=seen.get(at.key)!;}return;}
       for(const n of neighbors(c))if(!seen.has(n.key)&&fits(n)){seen.set(n.key,c);queue.push(n);}
     }
     throw new Error(`No ${k*5} ft wide corridor fits without crossing a room or wall. Reduce corridor width or use a larger footprint.`);
   };
   const ordered = [...all].sort((a,b) => a.y-b.y || (params.mirror ? b.x-a.x : a.x-b.x));
   const centers: Cell[]=[];
-  if (params.mode === 'building') {
+  if (situation) {
+    for (const [cell, label] of situation.cells) labels.set(cell, label);
+  } else if (params.mode === 'building') {
     const groups: Cell[][] = [ordered];
     while (groups.length < params.rooms) {
       groups.sort((a,b) => b.length-a.length);
@@ -192,10 +196,13 @@ export function dungeonLayout(input: GeneratorInput<DungeonParams>): Entity[] {
       for (const n of room) labels.set(n.key,centers.length);
     }
     if(!centers.length) throw new Error('No room fits. Use a larger footprint or Chamber mode.');
-    // Connect rooms in nearest-neighbor MST order so corridors stay compact and logical.
+    // Connect rooms in nearest-neighbor MST order; widen primary entry spine on larger sheets for circulation hierarchy.
     const linked = [centers[0]!];
     const unlinked = centers.slice(1);
     const connectedPairs = new Set<string>();
+    const roomAdj = new Map<string, Set<string>>(centers.map(c => [c.key, new Set()]));
+    const primaryWidth = cols >= 40 && rows >= 30 && params.corridorWidth >= 2 ? Math.min(4, params.corridorWidth + 1) : params.corridorWidth;
+    let mstIndex = 0;
     while (unlinked.length) {
       let bestU = 0, bestL = 0, bestD = Infinity;
       for (let u = 0; u < unlinked.length; u++) {
@@ -205,25 +212,51 @@ export function dungeonLayout(input: GeneratorInput<DungeonParams>): Entity[] {
         }
       }
       const next = unlinked.splice(bestU, 1)[0]!;
-      carveRoute(linked[bestL]!, next);
-      connectedPairs.add([linked[bestL]!.key, next.key].sort().join('|'));
+      const from = linked[bestL]!;
+      const spineW = mstIndex < 2 ? primaryWidth : params.corridorWidth;
+      try { carveRoute(from, next, spineW); } catch { carveRoute(from, next, params.corridorWidth); }
+      connectedPairs.add([from.key, next.key].sort().join('|'));
+      roomAdj.get(from.key)!.add(next.key);
+      roomAdj.get(next.key)!.add(from.key);
       linked.push(next);
+      mstIndex++;
     }
-    // Add up to 2 extra loop corridors between nearby unlinked rooms for tactical flanking.
+    // Brogue path-distance loop filter: prioritize shortcut corridors where current room-graph hop distance >= 3
+    // (or grid walking savings > 16 tiles) so every loop is a meaningful shortcut instead of redundant Swiss cheese.
     if (centers.length >= 4) {
-      const pairs: Array<{ a: Cell; b: Cell; d: number }> = [];
-      for (let i = 0; i < centers.length; i++) for (let j = i + 1; j < centers.length; j++) {
-        const a = centers[i]!, b = centers[j]!;
-        if (!connectedPairs.has([a.key, b.key].sort().join('|'))) {
-          pairs.push({ a, b, d: Math.hypot(a.x - b.x, a.y - b.y) });
+      const hopDistance = (srcKey: string, dstKey: string): number => {
+        const q: Array<[string, number]> = [[srcKey, 0]], seen = new Set([srcKey]);
+        for (let i = 0; i < q.length; i++) {
+          const [u, d] = q[i]!;
+          if (u === dstKey) return d;
+          for (const v of roomAdj.get(u) ?? []) if (!seen.has(v)) { seen.add(v); q.push([v, d + 1]); }
         }
-      }
-      pairs.sort((p, q) => p.d - q.d);
+        return Infinity;
+      };
       const maxCorridorLoops = Math.min(6, Math.max(2, Math.floor(centers.length / 2)));
       let loops = 0;
-      for (const { a, b } of pairs) {
-        if (loops >= maxCorridorLoops) break;
-        try { carveRoute(a, b); loops++; } catch { /* skip blocked shortcut */ }
+      const tried = new Set<string>();
+      for (let pass = 0; pass < maxCorridorLoops * 3 && loops < maxCorridorLoops; pass++) {
+        let bestPair: { a: Cell; b: Cell; score: number; pk: string } | null = null;
+        for (let i = 0; i < centers.length; i++) for (let j = i + 1; j < centers.length; j++) {
+          const a = centers[i]!, b = centers[j]!;
+          const pk = [a.key, b.key].sort().join('|');
+          if (connectedPairs.has(pk) || tried.has(pk)) continue;
+          const hops = hopDistance(a.key, b.key);
+          const dist = Math.hypot(a.x - b.x, a.y - b.y);
+          // Favor >= 3-hop shortcuts first, then shortest physical cut among them
+          const score = (hops >= 3 ? 0 : 1000) + dist - Math.min(hops, 6) * 2.5;
+          if (!bestPair || score < bestPair.score) bestPair = { a, b, score, pk };
+        }
+        if (!bestPair) break;
+        tried.add(bestPair.pk);
+        try {
+          carveRoute(bestPair.a, bestPair.b, params.corridorWidth);
+          connectedPairs.add(bestPair.pk);
+          roomAdj.get(bestPair.a.key)!.add(bestPair.b.key);
+          roomAdj.get(bestPair.b.key)!.add(bestPair.a.key);
+          loops++;
+        } catch { /* skip blocked shortcut */ }
       }
     }
     // A one-cell rock sliver between two passages reads as a drafting error; open it up.
@@ -334,7 +367,8 @@ export function dungeonLayout(input: GeneratorInput<DungeonParams>): Entity[] {
   const largestLabel = [...roomCounts.entries()].sort((a, b) => b[1] - a[1])[0]?.[0];
   const largestBoundary = largestLabel !== undefined ? boundary.filter(c => labels.get(c.key) === largestLabel) : [];
   const nearestBoundary = (c: Cell) => boundary.reduce((best, b) => Math.hypot(b.x - c.x, b.y - c.y) < Math.hypot(best.x - c.x, best.y - c.y) ? b : best);
-  const defaultEntrance = (params.mode === 'dungeon' && centers.length && boundary.length ? nearestBoundary(centers[0]!)
+  const defaultEntrance = (situation ? cells.get(key(situation.entrance.x, situation.entrance.y))
+    : params.mode === 'dungeon' && centers.length && boundary.length ? nearestBoundary(centers[0]!)
     : largestBoundary.length ? largestBoundary[Math.floor(largestBoundary.length / 2)] : boundary[Math.floor(boundary.length / 2)])!;
   const entrances = exteriorDoors.length ? exteriorDoors.map(d => {
     const p={x:(d.a.x+d.b.x)/2,y:(d.a.y+d.b.y)/2};
@@ -356,7 +390,8 @@ export function dungeonLayout(input: GeneratorInput<DungeonParams>): Entity[] {
     )[0];
     if (farEntrance && farEntrance.key !== defaultEntrance.key) entrances.push(farEntrance);
   }
-  for(let i=0;i<entrances.length;i++) {
+  // The situation already carved its full-width exterior strip.
+  for(let i=0;!situation && i<entrances.length;i++) {
     const entrance=entrances[i]!;
     if(params.mode==='dungeon'){
       const candidates=exteriorDoors.length?[entrance]:[...boundary].sort((a,b)=>Math.hypot(a.center.x-entrance.center.x,a.center.y-entrance.center.y)-Math.hypot(b.center.x-entrance.center.x,b.center.y-entrance.center.y));
@@ -442,11 +477,12 @@ export function dungeonLayout(input: GeneratorInput<DungeonParams>): Entity[] {
     for(const floor of fixedFloors) floors=clipping.difference(floors,toPolygons([floor.rings]));
     const floorMaterial = params.mode === 'cave' ? 'earth' : params.mode === 'building' ? 'wood' : 'stone';
     const floorFill =
-      params.mode === 'cave'
+      (roomNames.get(label) !== 'Corridor' ? situation?.rooms[label]?.fill : undefined) ??
+      (params.mode === 'cave'
         ? '#8f7a5e'
         : params.mode === 'building'
           ? (label % 2 ? '#8f6945' : '#9c754f')
-          : (label % 2 ? '#787368' : '#857f73');
+          : (label % 2 ? '#787368' : '#857f73'));
     for(const [i,rawRings] of fromPolygons(floors).entries()) {
       let rings = rawRings;
       if (params.mode === 'cave') {
@@ -643,7 +679,7 @@ export function dungeonLayout(input: GeneratorInput<DungeonParams>): Entity[] {
   }}
   const secretDoors = new Set<Edge>();
   // Jaquaying/Xandering loop injection for dungeon & building modes: add shortcut loops between rooms >= 3 steps apart (only hub spokes in buildings).
-  if (params.mode === 'building' || params.mode === 'dungeon') {
+  if (!situation && (params.mode === 'building' || params.mode === 'dungeon')) {
     const graphDist = (from: number, to: number): number => {
       const adj = new Map<number, number[]>();
       for (const d of doors) {
@@ -711,7 +747,48 @@ export function dungeonLayout(input: GeneratorInput<DungeonParams>): Entity[] {
     }
     else throw new Error('No clear entrance fits. Add an entrance door to the footprint.');
   }
+  // Pick 1–2 interior shared wall segments to become iron-grate / arrow-slit window peek walls
+  // (wallKind: 'window' — blocks movement, passes sight/light for spatial foreshadowing).
+  const windowEdges = new Set<Edge>();
+  if (params.mode === 'dungeon') {
+    const doorRoomPairs = new Set<string>();
+    const doorMids: Point[] = [];
+    for (const d of doors) {
+      if (d.right !== undefined) doorRoomPairs.add([d.left, d.right].sort((a, b) => a - b).join(':'));
+      doorMids.push({ x: (d.a.x + d.b.x) / 2, y: (d.a.y + d.b.y) / 2 });
+    }
+    const peekedPairs = new Set<string>();
+    // Pass 1: prefer non-door-connected interior shared walls (true spatial foreshadowing between wings).
+    for (const e of edges) {
+      if (windowEdges.size >= 2) break;
+      if (e.right === undefined || doors.has(e) || e.manual) continue;
+      const mid = { x: (e.a.x + e.b.x) / 2, y: (e.a.y + e.b.y) / 2 };
+      if (wallAt(mid)) continue;
+      const pk = [e.left, e.right].sort((a, b) => a - b).join(':');
+      if (doorRoomPairs.has(pk) || peekedPairs.has(pk)) continue;
+      if (roomNames.get(e.left) === 'Corridor' && roomNames.get(e.right) === 'Corridor') continue;
+      windowEdges.add(e);
+      peekedPairs.add(pk);
+    }
+    // Pass 2: if corridor-spaced rooms lack direct shared walls, place up to 2 corridor-to-room arrow-slit
+    // viewing grates strictly clear of doorways so players can peek into rooms from approaching halls.
+    if (windowEdges.size < 2) {
+      for (const e of edges) {
+        if (windowEdges.size >= 2) break;
+        if (e.right === undefined || doors.has(e) || e.manual) continue;
+        const mid = { x: (e.a.x + e.b.x) / 2, y: (e.a.y + e.b.y) / 2 };
+        if (wallAt(mid)) continue;
+        const pk = [e.left, e.right].sort((a, b) => a - b).join(':');
+        if (peekedPairs.has(pk)) continue;
+        if (roomNames.get(e.left) === 'Corridor' && roomNames.get(e.right) === 'Corridor') continue;
+        if (doorMids.some((dm) => Math.hypot(dm.x - mid.x, dm.y - mid.y) < g * 1.45)) continue;
+        windowEdges.add(e);
+        peekedPairs.add(pk);
+      }
+    }
+  }
   const rawWalls: Array<[Point, Point]> = [];
+  const rawWindowWalls: Array<[Point, Point]> = [];
   for(const [i,e] of edges.entries()) {
     const mid={x:(e.a.x+e.b.x)/2,y:(e.a.y+e.b.y)/2};
     if(wallAt(mid)) continue;
@@ -727,6 +804,8 @@ export function dungeonLayout(input: GeneratorInput<DungeonParams>): Entity[] {
       } else {
         output.push({ ...base, id: `door-${i}`, type: 'door', a: e.a, b: e.b, kind: secretDoors.has(e) ? 'secret' : 'door', open: false });
       }
+    } else if (windowEdges.has(e)) {
+      rawWindowWalls.push([e.a, e.b]);
     }
     else {
       const dx=e.b.x-e.a.x,dy=e.b.y-e.a.y,len2=dx*dx+dy*dy;
@@ -767,6 +846,20 @@ export function dungeonLayout(input: GeneratorInput<DungeonParams>): Entity[] {
     }
     output.push({ ...base, id: `wall-${wallIdx++}`, type: 'wall', points: [start, end], blocksMove: true, blocksSight: true });
   }
+  for (const [wi, [a, b]] of rawWindowWalls.entries()) {
+    output.push({
+      ...base,
+      id: `wall-window-${wi}`,
+      type: 'wall',
+      name: 'Iron Peek Grate',
+      wallKind: 'window',
+      points: [a, b],
+      blocksMove: true,
+      blocksSight: false,
+      blocksLight: false,
+      blocksSound: false,
+    });
+  }
   }
   // Validate the produced geometry, including actual wall and doorway openings.
   const finalWalls=[...output,...constraints].filter((e):e is Extract<Entity,{type:'wall'}>=>e.type==='wall');
@@ -788,7 +881,8 @@ export function dungeonLayout(input: GeneratorInput<DungeonParams>): Entity[] {
 }
 
 export function generateDungeon(input: GeneratorInput<DungeonParams>): Entity[] {
-  const layout = dungeonLayout(input);
+  const situation = dungeonSituation(input);
+  const layout = dungeonLayout(input, situation);
   const renderSeed = (input.seed ^ (((input.params.renderSeed ?? 0) * 2654435761) >>> 0)) >>> 0;
   const g = input.grid;
   const roomFloors = layout.filter(
@@ -796,8 +890,8 @@ export function generateDungeon(input: GeneratorInput<DungeonParams>): Entity[] 
       e.type === 'area' && e.role === 'floor' && e.name !== 'Corridor',
   );
   // Pre-build compact sunken cistern & vertical portals BEFORE dressDungeon so furniture arranges cleanly around them.
-  const preFeatures: Entity[] = [];
-  const plan = input.params.mode === 'dungeon' || input.params.mode === 'cave' ? planDungeon(input, layout) : undefined;
+  const plan = input.params.mode === 'dungeon' || input.params.mode === 'cave' ? planDungeon(input, layout, situation) : undefined;
+  const preFeatures: Entity[] = plan ? situationLandmarks(input, plan) : [];
   const stairRoom = plan?.stairsRoomId ? roomFloors.find(f => f.id === plan.stairsRoomId) : roomFloors.length >= 4 ? roomFloors[roomFloors.length - 1] : undefined;
   let cisternRoomId: string | undefined;
   let cisternCenter: Point | undefined;
@@ -837,7 +931,7 @@ export function generateDungeon(input: GeneratorInput<DungeonParams>): Entity[] 
       // A second way between levels: down a chute, hatch or pit, or a ladder back up to the surface.
       const altKinds = ['ladder', 'chute', 'hatch', 'pit'] as const;
       const keyed = plan?.rooms.length ? plan.rooms : roomFloors;
-      const altRoom = keyed.length >= 5 ? keyed.filter(f => f.id !== plan?.goalId)[Math.floor(keyed.length / 2)] : undefined;
+      const altRoom = !situation && keyed.length >= 5 ? keyed.filter(f => f.id !== plan?.goalId)[Math.floor(keyed.length / 2)] : undefined;
       const altSpot = altRoom && altRoom.id !== stairRoom?.id ? pickClearSpot(altRoom) : undefined;
       if (altSpot) {
         const altKind = altKinds[input.seed % altKinds.length]!;
@@ -856,7 +950,7 @@ export function generateDungeon(input: GeneratorInput<DungeonParams>): Entity[] 
         });
       }
       // Compact Brogue cistern basin inside large dungeons, or multi-pocket natural cavern ecology in cave mode.
-      if (!input.params.mirror && input.params.mode === 'dungeon') {
+      if (!situation && !input.params.mirror && input.params.mode === 'dungeon') {
         const cisternCand = roomFloors.find((f) => {
           const r = f.rings[0] ?? [];
           const xs = r.map((p) => p.x), ys = r.map((p) => p.y);
@@ -1000,7 +1094,8 @@ export function generateDungeon(input: GeneratorInput<DungeonParams>): Entity[] 
               preFeatures.push({
                 id: 'cave-bridge', type: 'prop', layerId: 'generated', origin: 'generated', rev: 0,
                 name: 'Cavern Footbridge', x: bm.x, y: bm.y, w: Math.max(g * 2.5, featScale * 1.45), h: Math.max(g * 1.0, featScale * 0.55), scale: 1,
-                rotation: Math.atan2(bestMid.pb.y - bestMid.pa.y, bestMid.pb.x - bestMid.pa.x) + Math.PI / 2, flipX: false, builtin: 'bridge',
+                rotation: Math.atan2(bestMid.pb.y - bestMid.pa.y, bestMid.pb.x - bestMid.pa.x) + Math.PI / 2, flipX: false,
+                ...propArt(input, ['bridge'], 'cave-bridge', 'bridge'),
               });
             }
           }
@@ -1055,10 +1150,15 @@ export function generateDungeon(input: GeneratorInput<DungeonParams>): Entity[] 
                 ]],
                 fill: '#6c685c',
               },
-              { id: 'cave-crystal-shrine', type: 'prop', layerId: 'generated', origin: 'generated', rev: 0, name: 'Sunken Shrine Altar', x: ruinSpot.x, y: ruinSpot.y, w: featScale * 0.72, h: featScale * 0.46, scale: 1, rotation: caveRng() * 0.6, flipX: false, builtin: 'altar', tacticalTag: 'cover' },
+              { id: 'cave-crystal-shrine', type: 'prop', layerId: 'generated', origin: 'generated', rev: 0, name: 'Sunken Shrine Altar', x: ruinSpot.x, y: ruinSpot.y, w: featScale * 0.72, h: featScale * 0.46, scale: 1, rotation: caveRng() * 0.6, flipX: false, ...propArt(input, ['shrineAltar', 'altar'], 'cave-shrine', 'altar'), tacticalTag: 'cover' },
               { id: 'cave-crystal-light', type: 'light', layerId: 'generated', origin: 'generated', rev: 0, x: ruinSpot.x, y: ruinSpot.y, radius: featScale * 2.8, color: '#38bdf8' },
-              { id: 'cave-ruin-pil-a', type: 'prop', layerId: 'generated', origin: 'generated', rev: 0, name: 'Ruined Pillar', x: ruinSpot.x - featScale * 0.72, y: ruinSpot.y - featScale * 0.35, w: featScale * 0.42, h: featScale * 0.42, scale: 1, rotation: 0, flipX: false, builtin: 'pillar', tacticalTag: 'cover' },
-              { id: 'cave-ruin-pil-b', type: 'prop', layerId: 'generated', origin: 'generated', rev: 0, name: 'Ruined Pillar', x: ruinSpot.x + featScale * 0.72, y: ruinSpot.y + featScale * 0.35, w: featScale * 0.42, h: featScale * 0.42, scale: 1, rotation: 0, flipX: false, builtin: 'pillar', tacticalTag: 'cover' },
+              ...[-1, 1].map((side): Entity => {
+                const id = side < 0 ? 'cave-ruin-pil-a' : 'cave-ruin-pil-b';
+                return { id, type: 'prop', layerId: 'generated', origin: 'generated', rev: 0, name: 'Ruined Pillar',
+                  x: ruinSpot.x + side * featScale * 0.72, y: ruinSpot.y + side * featScale * 0.35,
+                  w: featScale * 0.42, h: featScale * 0.42, scale: 1, rotation: 0, flipX: false,
+                  ...propArt(input, ['ruinedPillar', 'pillar'], id, 'pillar'), tacticalTag: 'cover' };
+              }),
             );
           }
           // 2c. Bioluminescent fungal grove with clustered foliage + teal cave glow
@@ -1079,7 +1179,8 @@ export function generateDungeon(input: GeneratorInput<DungeonParams>): Entity[] 
                   id: `cave-fungi-${fi}`, type: 'prop', layerId: 'generated', origin: 'generated', rev: 0,
                   name: fi % 2 === 0 ? 'Giant Glowcap Cluster' : 'Luminous Spore Moss',
                   x: fp.x, y: fp.y, w: sz, h: sz, scale: 1, rotation: caveRng() * Math.PI * 2, flipX: caveRng() < 0.5,
-                  builtin: fi % 2 === 0 ? 'bush' : 'tuft', tacticalTag: 'concealment',
+                  ...propArt(input, ['caveFungus'], `cave-fungi-${fi}`, fi % 2 === 0 ? 'bush' : 'tuft'),
+                  tacticalTag: 'concealment',
                 });
               }
             }
@@ -1090,7 +1191,7 @@ export function generateDungeon(input: GeneratorInput<DungeonParams>): Entity[] 
         if (campSpot) {
           occupiedZones.push({ x: campSpot.x, y: campSpot.y, r: featScale * 1.05 });
           preFeatures.push(
-            { id: 'cave-camp-fire', type: 'prop', layerId: 'generated', origin: 'generated', rev: 0, name: 'Campfire', x: campSpot.x, y: campSpot.y, w: featScale * 0.48, h: featScale * 0.48, scale: 1, rotation: 0, flipX: false, builtin: 'campfire' },
+            { id: 'cave-camp-fire', type: 'prop', layerId: 'generated', origin: 'generated', rev: 0, name: 'Campfire', x: campSpot.x, y: campSpot.y, w: featScale * 0.48, h: featScale * 0.48, scale: 1, rotation: 0, flipX: false, ...propArt(input, ['campfire'], 'cave-camp-fire', 'campfire') },
             { id: 'cave-camp-light', type: 'light', layerId: 'generated', origin: 'generated', rev: 0, x: campSpot.x, y: campSpot.y, radius: featScale * 2.4, color: '#ff9e44' },
           );
           for (const [ci, [ox, oy, kind]] of ([[0.62, -0.35, 'crate'], [-0.6, 0.4, 'barrel'], [0.5, 0.55, 'table'], [-0.55, -0.5, 'crate']] as const).entries()) {
@@ -1100,7 +1201,8 @@ export function generateDungeon(input: GeneratorInput<DungeonParams>): Entity[] 
                 id: `cave-camp-${ci}`, type: 'prop', layerId: 'generated', origin: 'generated', rev: 0,
                 name: kind === 'crate' ? 'Supply Crate' : kind === 'barrel' ? 'Provision Barrel' : 'Field Table',
                 x: sp.x, y: sp.y, w: featScale * (kind === 'table' ? 0.55 : 0.36), h: featScale * (kind === 'table' ? 0.35 : 0.36),
-                scale: 1, rotation: caveRng() * Math.PI, flipX: false, builtin: kind, tacticalTag: 'cover',
+                scale: 1, rotation: caveRng() * Math.PI, flipX: false,
+                ...propArt(input, [kind], `cave-camp-${ci}`, kind), tacticalTag: 'cover',
               });
             }
           }
@@ -1118,8 +1220,10 @@ export function generateDungeon(input: GeneratorInput<DungeonParams>): Entity[] 
               ? featScale * (0.34 + caveRng() * 0.25)
               : featScale * (0.35 + caveRng() * 0.3);
           occupiedZones.push({ x: pt.x, y: pt.y, r: sz * 0.65 });
+          const id = `cave-deco-${clutterCount++}`;
+          const foliage = kind === 'bush' || kind === 'tuft';
           preFeatures.push({
-            id: `cave-deco-${clutterCount++}`,
+            id,
             type: 'prop',
             layerId: 'generated',
             origin: 'generated',
@@ -1132,8 +1236,81 @@ export function generateDungeon(input: GeneratorInput<DungeonParams>): Entity[] 
             scale: 1,
             rotation: caveRng() * Math.PI * 2,
             flipX: caveRng() < 0.5,
-            builtin: kind,
-            ...(kind === 'bush' || kind === 'tuft' ? { tacticalTag: 'concealment' as const } : { tacticalTag: 'cover' as const }),
+            ...propArt(input, foliage ? ['caveFungus'] : kind === 'pillar' ? ['stalagmite', 'caveRock'] : ['caveRock', 'rock'], id, kind),
+            tacticalTag: foliage ? 'concealment' : 'cover',
+          });
+        }
+      }
+    }
+  }
+  // Brogue-style flood-fill-safe subterranean shallow-wreathed pool & ecological moss propagation in stone dungeons
+  if (input.params.mode === 'dungeon' && !situation && input.params.density > 0 && !preFeatures.some((e) => e.type === 'area' && e.role === 'water')) {
+    const ecoRng = mulberry32((renderSeed ^ 0x5c3e91a7) >>> 0);
+    const doorsAll = layout.filter((e): e is Extract<Entity, { type: 'door' }> => e.type === 'door');
+    const bigRooms = roomFloors
+      .filter((r) => r.name !== 'Room 1' && r.id !== plan?.goalId)
+      .map((r) => {
+        const b = bboxFromPoints(r.rings[0]!)!;
+        return { r, b, w: b.maxX - b.minX, h: b.maxY - b.minY };
+      })
+      .filter((x) => x.w >= input.grid * 4.5 && x.h >= input.grid * 4.5)
+      .sort((a, b) => (b.w * b.h) - (a.w * a.h));
+    const poolHost = bigRooms[0];
+    if (poolHost) {
+      const cx = (poolHost.b.minX + poolHost.b.maxX) / 2;
+      const cy = (poolHost.b.minY + poolHost.b.maxY) / 2;
+      const rx = Math.min(poolHost.w * 0.24, input.grid * 2.2);
+      const ry = Math.min(poolHost.h * 0.24, input.grid * 2.0);
+      const makePoolRing = (sx: number, sy: number) =>
+        Array.from({ length: 12 }, (_, k) => {
+          const a = (k / 12) * Math.PI * 2;
+          const wob = 0.86 + ecoRng() * 0.24;
+          return { x: cx + Math.cos(a) * sx * wob, y: cy + Math.sin(a) * sy * wob };
+        });
+      const shallowRing = makePoolRing(rx * 1.25, ry * 1.25);
+      const deepRing = makePoolRing(rx * 0.72, ry * 0.72);
+      const safe = shallowRing.every((pt) =>
+        pointInPolygon(pt, poolHost.r.rings)
+        && doorsAll.every((d) => distanceToSegment(pt, d.a, d.b) >= input.grid * 1.3),
+      );
+      if (safe) {
+        // Shallow wadeable wreath beneath deeper dark water core
+        preFeatures.push(
+          {
+            id: 'subterranean-shallow-wreath', type: 'area', role: 'water', layerId: 'generated', origin: 'generated', rev: 0,
+            name: 'Shallow Water Wreath', fill: '#5b8e99', rings: [shallowRing],
+          },
+          {
+            id: 'subterranean-deep-pool', type: 'area', role: 'water', layerId: 'generated', origin: 'generated', rev: 0,
+            name: 'Subterranean Pool', fill: '#2c5866', rings: [deepRing],
+          },
+        );
+        // Propagate 2-3 damp moss tufts safely clear of doors & door-to-door walking lines
+        const roomDoors = doorsAll.filter((d) =>
+          poolHost.r.rings.some((ring) =>
+            ring.some((a, i) => distanceToSegment({ x: (d.a.x + d.b.x) / 2, y: (d.a.y + d.b.y) / 2 }, a, ring[(i + 1) % ring.length]!) < input.grid * 0.16),
+          ),
+        );
+        let mossCount = 0;
+        for (let attempt = 0; attempt < 16 && mossCount < 3; attempt++) {
+          const ang = ecoRng() * Math.PI * 2;
+          const sz = input.grid * 0.55;
+          const rad = Math.hypot(sz, sz) / 2;
+          const mp = { x: cx + Math.cos(ang) * (rx * 1.45 + rad), y: cy + Math.sin(ang) * (ry * 1.45 + rad) };
+          if (!pointInPolygon(mp, poolHost.r.rings)) continue;
+          if (doorsAll.some((d) => distanceToSegment(mp, d.a, d.b) < input.grid + rad + 0.05)) continue;
+          let crossesLane = false;
+          for (let i = 0; i < roomDoors.length; i++) for (let j = i + 1; j < roomDoors.length; j++) {
+            const da = roomDoors[i]!, db = roomDoors[j]!;
+            const ma = { x: (da.a.x + da.b.x) / 2, y: (da.a.y + da.b.y) / 2 };
+            const mb = { x: (db.a.x + db.b.x) / 2, y: (db.a.y + db.b.y) / 2 };
+            if (distanceToSegment(mp, ma, mb) < rad + input.grid * 0.55) crossesLane = true;
+          }
+          if (crossesLane) continue;
+          preFeatures.push({
+            id: `eco-moss-${mossCount++}`, type: 'prop', layerId: 'generated', origin: 'generated', rev: 0,
+            name: 'Damp Moss', builtin: 'tuft', tacticalTag: 'concealment',
+            x: mp.x, y: mp.y, w: sz, h: sz, scale: 1, rotation: ecoRng() * Math.PI * 2, flipX: ecoRng() < 0.5,
           });
         }
       }
@@ -1147,7 +1324,7 @@ export function generateDungeon(input: GeneratorInput<DungeonParams>): Entity[] 
     return { x: ring.reduce((s, p) => s + p.x, 0) / ring.length, y: ring.reduce((s, p) => s + p.y, 0) / ring.length };
   };
   // Dungeons are keyed and stocked by the story pass; caves get its name and Place on top of the old stocking.
-  const story = plan ? stockDungeon(input, plan, labelAt) : [];
+  const story = plan ? stockDungeon(input, plan, preFeatures, labelAt) : [];
   const labels: Entity[] = [];
   const places: Extract<Entity, { type: 'place' }>[] = [];
   const secretDoors = layout.filter((e): e is Extract<Entity, { type: 'door' }> => e.type === 'door' && e.kind === 'secret');
@@ -1206,6 +1383,27 @@ export function generateDungeon(input: GeneratorInput<DungeonParams>): Entity[] 
   // A dungeon developed on surface ground (a region's desert or forest) is underground: bedrock covers that ground.
   const surface = input.mapKind === 'site' && input.constraints.some(e => e.type === 'area' && e.origin === 'inherited' && (e.role === 'land' || e.role.startsWith('biome')));
   const bedrock: Entity[] = surface ? [{ id: 'bedrock', type: 'area', role: 'land', name: 'Bedrock', fill: '#2b221a', rings: input.region, layerId: 'generated', origin: 'generated', rev: 0 }] : [];
-  return [...bedrock, ...layout, ...cisAreas, ...cisPaths, ...dressed, ...cisExtraPropsAndLights, ...cisPortals, ...places, ...labels, ...story];
+  const output = [...bedrock, ...layout, ...cisAreas, ...cisPaths, ...dressed, ...cisExtraPropsAndLights, ...cisPortals, ...places, ...labels, ...story];
+  const wallRole = input.params.mode === 'building' ? 'woodWallTexture' : input.params.mode === 'cave' ? 'caveWallTexture' : 'stoneWallTexture';
+  const wall = surfaceTexture(input, [wallRole, 'wallTexture'], input.grid * 0.26);
+  const floors = {
+    stone: surfaceTexture(input, ['stoneFloorTexture', 'floorTexture']),
+    wood: surfaceTexture(input, ['woodFloorTexture', 'floorTexture']),
+    earth: surfaceTexture(input, ['earthFloorTexture', 'floorTexture']),
+  };
+  const pool = surfaceTexture(input, ['pondTexture']);
+  for (const entity of output) {
+    if (entity.type === 'wall' && wall) entity.texture = wall;
+    if (entity.type === 'area' && entity.role === 'floor' && entity.floorMaterial) {
+      const floor = floors[entity.floorMaterial];
+      if (floor) entity.texture = { ...floor, opacity: 0.75 };
+    }
+    if (entity.type === 'area' && entity.role === 'water' && pool) entity.texture = pool;
+    if (entity.type === 'path' && entity.role === 'river') {
+      const stream = surfaceTexture(input, ['streamTexture'], entity.width);
+      if (stream) entity.texture = stream;
+    }
+  }
+  return output;
 }
 registerGenerator({type:'dungeon',title:'Dungeon / interior',params:DungeonParamsSchema,generate:generateDungeon,dress:dressDungeon});

@@ -33,4 +33,18 @@ describe('asset commands', () => {
     s.getState().execute('layer.update', { mapId: map.id, layerId: map.layers[0]!.id, patch: { locked: true } });
     expect(() => s.getState().execute('entity.setTexture', { mapId: map.id, entityIds: ['floor'], clear: true })).toThrow(/unlocked/);
   });
+  it('uses imported scale on generated floors and keeps existing theme assignments', () => {
+    const entry = { originalName: 'Flagstone', packName: 'Art', pxPerSquare: 256, width: 512, height: 512, ext: 'png' };
+    const s = createWorldStore(() => ({ flagstone: entry }));
+    const map = createDefaultMapDoc();
+    s.getState().loadWorld(createDefaultWorldMeta(), { [map.id]: map });
+    s.getState().execute('theme.setRole', { role: 'floorTexture', assetIds: ['flagstone'] });
+    s.getState().execute('theme.setRole', { role: 'floorTexture', assetIds: ['other'], onlyIfEmpty: true });
+    s.getState().execute('generator.run', { mapId: map.id, genId: 'chamber', type: 'dungeon', entireMap: true,
+      layerId: 'base', seed: 4, params: { mode: 'chamber' } });
+    const floors = Object.values(s.getState().world!.maps[map.id]!.entities)
+      .filter(e => e.type === 'area' && e.role === 'floor');
+    expect(floors.length).toBeGreaterThan(0);
+    for (const floor of floors) expect(floor).toMatchObject({ texture: { assetId: 'flagstone', metersPerPixel: 1.524 / 256 } });
+  });
 });

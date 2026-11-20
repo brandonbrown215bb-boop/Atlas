@@ -1,4 +1,5 @@
 import { worldStore } from '../model/store';
+import { viewStore } from '../model/viewStore';
 import type { WorldDocument } from '../model/commands';
 export async function prepareGeneration(commands: Array<{ name: string; input: unknown }>, signal?:AbortSignal) {
   const source = worldStore.getState().world;
@@ -12,7 +13,7 @@ export async function prepareGeneration(commands: Array<{ name: string; input: u
       signal?.addEventListener('abort',onAbort,{once:true});
       worker.onmessage = ({data}) => data.error ? reject(new Error(data.error)) : resolve(data);
       worker.onerror = event => reject(new Error(event.message || 'Generation failed.'));
-      worker.postMessage({ world: structuredClone(source), commands });
+      worker.postMessage({ world: source, assets: viewStore.getState().assetsIndex, commands });
     });
     return { source, after: result.world, results: result.results };
   } finally { if(onAbort)signal?.removeEventListener('abort',onAbort);worker.terminate(); }

@@ -236,3 +236,44 @@ it('locks names per region and adopts the world places of inherited towns and si
   }
   expect(() => validateWorld(s().world!)).not.toThrow();
 });
+
+it('emits named sub-regions with spillover encounter tables, overlapping faction territories, anomalies, and player-visible rumor rings', () => {
+  const source = { ...input(), seed: 9, params: WorldParamsSchema.parse({ cells: 2400, density: 2, settlements: 6 }) };
+  const terrain = buildTerrain(source), climate = buildClimate(terrain, source);
+  const out = decorateWorld(terrain, climate.values, source, []);
+
+  // Named sub-regions with 6-entry encounter tables (5 native + 1 border spillover).
+  const regions = out.filter((e): e is Extract<Entity, { type: 'place' }> => e.type === 'place' && e.category === 'Region');
+  expect(regions.length).toBeGreaterThanOrEqual(2);
+  for (const reg of regions) {
+    expect(reg.encounterTable).toHaveLength(6);
+    expect(reg.encounterTable![5]).toContain('[Border spillover');
+  }
+
+  // 3-5 overlapping GM-only faction territories with factionLinks stamped on places.
+  const factionAreas = out.filter((e): e is Extract<Entity, { type: 'area' }> => e.type === 'area' && e.role === 'biome:faction');
+  expect(factionAreas.length).toBeGreaterThanOrEqual(3);
+  expect(factionAreas.length).toBeLessThanOrEqual(5);
+  expect(factionAreas.every((f) => f.gmOnly === true)).toBe(true);
+  expect(out.some((e) => e.type === 'place' && (e.factionLinks?.length ?? 0) > 0)).toBe(true);
+
+  // Fantastical geographic anomalies.
+  expect(out.some((e) => e.type === 'prop' && e.id.startsWith('anomaly-'))).toBe(true);
+  expect(out.some((e) => e.type === 'place' && e.id.startsWith('place-anomaly-') && e.discoveryTier === 'landmark')).toBe(true);
+
+  // 3-tier discovery + player-visible Rumored Area rings while exact hidden ruin pins stay GM-only.
+  const rumorRings = out.filter((e): e is Extract<Entity, { type: 'area' }> => e.type === 'area' && e.role === 'biome:rumor');
+  expect(rumorRings.length).toBeGreaterThanOrEqual(1);
+  expect(rumorRings.every((r) => r.gmOnly === false)).toBe(true);
+
+  const doc = MapDocSchema.parse({
+    id: 'w-rumor', name: 'World', kind: 'world', bounds, grid: { size: 100, visible: false },
+    layers: [{ id: 'base', name: 'Base', visible: true, locked: false, gmOnly: false }],
+    entities: Object.fromEntries(out.map((e) => [e.id, e])),
+    generators: {}, revision: 1, deleted: {}, fog: { enabled: false, revealed: [] },
+  });
+  const playerVisible = playerRenderList(doc);
+  expect(playerVisible.some((e) => e.type === 'area' && e.role === 'biome:rumor')).toBe(true);
+  expect(playerVisible.some((e) => e.type === 'area' && e.role === 'biome:faction')).toBe(false);
+  expect(playerVisible.some((e) => e.type === 'prop' && e.symbolKind === 'ruin')).toBe(false);
+});
