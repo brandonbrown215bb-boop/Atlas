@@ -146,3 +146,6 @@ button:disabled {
 .context-menu > div button { text-align: left; }
 .context-menu:not([open]) > div { display: none; }
 .generation-settings .context-menu > div { position: static; box-shadow: none; max-width: 100%; }
+.player-panel { display: flex; flex-direction: column; gap: 10px; padding: 10px; font-size: 12px; }
+.player-panel fieldset { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 8px; margin: 0; padding: 8px; border: 1px solid var(--atlas-border); border-radius: 4px; }
+.player-panel legend { padding: 0 4px; color: var(--atlas-text-muted); }

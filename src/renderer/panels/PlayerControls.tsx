@@ -1,5 +1,8 @@
 import { useEffect, useRef, useState } from 'react';
 import { createRoot, type Root } from 'react-dom/client';
+import { createPortal } from 'react-dom';
+import { createStore } from 'zustand/vanilla';
+import { hudStore } from '../app/hudStore';
 import { useStore } from 'zustand';
 import { worldStore } from '../model/store';
 import { viewStore } from '../model/viewStore';
@@ -28,13 +31,20 @@ function PlayerScreen({ mapId, labels, grid, camera, owner }: { mapId: string; l
   return <><img ref={image} data-testid="player-image" style={{ width: '100vw', height: '100vh', objectFit: 'contain' }} />{error && <p style={{color:'white'}}>{error}</p>}</>;
 }
 
+// The controls render into the Player & fog panel, but this component stays mounted in the
+// top bar because it owns the player window: closing the panel must not close the TV screen.
+const playerSlot = createStore<{ el: HTMLElement | null }>(() => ({ el: null }));
+export function PlayerPanelSlot() {
+  return <div ref={el => playerSlot.setState({ el })} className="player-panel" />;
+}
+
 export function PlayerControls() {
   const world = useStore(worldStore, s => s.world);
   const activeTool = useStore(viewStore, s => s.activeTool);
   const fogRadius = useStore(viewStore, s => s.fogRadius);
   const fogMode = useStore(viewStore, s => s.fogMode);
   const activeMap = useStore(worldStore, s => s.activeMapId);
-  const [controlsOpen, setControlsOpen] = useState(false);
+  const slot = useStore(playerSlot, s => s.el);
   const [chosen, setChosen] = useState('');
   const mapId = chosen && world?.maps[chosen] ? chosen : activeMap ?? '';
   const [labels, setLabels] = useState(true);
@@ -48,8 +58,10 @@ export function PlayerControls() {
   const [epoch, setEpoch] = useState(0);
   useEffect(() => { root.current?.render(<PlayerScreen mapId={mapId} labels={labels} grid={grid} camera={camera} owner={child.current!} />); }, [mapId, labels, grid, camera, epoch, world?.meta.id]);
   useEffect(() => () => { child.current?.close(); }, []);
+  // Picking the fog brush brings up its settings.
+  useEffect(() => { if (activeTool === 'fog') hudStore.getState().openOrFocusPanel('player'); }, [activeTool]);
   const open = () => {
-    setControlsOpen(true);
+    hudStore.getState().openOrFocusPanel('player');
     if (child.current && !child.current.closed) { child.current.focus(); return; }
     const win = window.open(window.location.protocol === 'app:' ? 'app://atlas/player.html' : '/player.html', 'atlas-player');
     if (!win) { setError('Could not open player window.'); return; }
@@ -69,29 +81,26 @@ export function PlayerControls() {
     setChosen(panel?.mapId ?? activeMap ?? '');
     setCamera(panel?.camera ?? undefined);
   };
-  const showFogControls = controlsOpen || activeTool === 'fog';
   return <>
     <button type="button" onClick={open} disabled={!world} data-testid="btn-player-window">Player window</button>
-    <button type="button" disabled={!world} title="Toggle player & fog controls" aria-label="Toggle player controls" aria-expanded={controlsOpen} onClick={() => setControlsOpen(v => !v)}>{controlsOpen ? '▴' : '▾'}</button>
-    {(controlsOpen || showFogControls || Boolean(error)) && <div className="top-drawer-row">
-      {controlsOpen && <>
+    {slot && createPortal(<>
+      <fieldset><legend>Player screen</legend>
         <select aria-label="Player map" value={mapId} onChange={e => { setChosen(e.target.value); setCamera(undefined); }}>{world?.meta.maps.map(m => <option key={m.id} value={m.id}>{m.name}</option>)}</select>
         <button type="button" onClick={send} disabled={!world}>Send my view</button>
         <label><input type="checkbox" checked={labels} onChange={e => setLabels(e.target.checked)} />Player labels</label>
         <label><input type="checkbox" checked={grid} onChange={e => setGrid(e.target.checked)} />Player grid</label>
         <select aria-label="Player monitor" value={display} onChange={e => setDisplay(e.target.value)} onFocus={() => void window.atlasApi.listDisplays().then(setDisplays)}><option value="">Windowed</option>{displays.map(d => <option key={d.id} value={d.id}>{d.label}</option>)}</select>
         <button type="button" onClick={() => void window.atlasApi.playerFullscreen(display ? Number(display) : null).catch(e => setError(String(e)))}>Apply display</button>
-      </>}
-      {showFogControls && <>
+      </fieldset>
+      <fieldset><legend>Fog</legend>
         <label><input type="checkbox" checked={world?.maps[activeMap??'']?.fog.enabled ?? false} onChange={e => worldStore.getState().execute('fog.paint',{mapId:activeMap,mode:e.target.checked?'enable':'disable'})} disabled={!activeMap} />Fog on {world?.maps[activeMap??'']?.name??'edited map'}</label>
         <select aria-label="Fog brush mode" value={fogMode} onChange={e => viewStore.setState({fogMode:e.target.value as 'reveal'|'los'|'memory'|'hide'})}><option value="reveal">Reveal active</option><option value="los">Torch / Wall LOS</option><option value="memory">Memory only</option><option value="hide">Hide completely</option></select>
         <label>Brush radius (m) <input aria-label="Fog brush radius" type="number" min="0.1" value={fogRadius} style={{width:55}} onChange={e => {const n=Number(e.target.value); if(n>0 && Number.isFinite(n)) viewStore.setState({fogRadius:n});}} /></label>
         <button type="button" disabled={!activeMap} onClick={() => worldStore.getState().execute('fog.paint',{mapId:activeMap,mode:'dimActive'})}>Dim active → memory</button>
         <button type="button" disabled={!activeMap} onClick={() => worldStore.getState().execute('fog.paint',{mapId:activeMap,mode:'revealAll'})}>Reveal all</button>
         <button type="button" disabled={!activeMap} onClick={() => worldStore.getState().execute('fog.paint',{mapId:activeMap,mode:'hideAll'})}>Hide all</button>
-      </>}
+      </fieldset>
       {error && <span role="alert">{error}</span>}
-      {controlsOpen && <button type="button" aria-label="Close player controls" onClick={() => setControlsOpen(false)} style={{marginLeft:'auto'}}>×</button>}
-    </div>}
+    </>, slot)}
   </>;
 }

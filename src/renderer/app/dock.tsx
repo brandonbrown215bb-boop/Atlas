@@ -9,6 +9,8 @@ import { AssetsPanel } from '../panels/AssetsPanel';
 import { GeneratorPanel } from '../panels/GeneratorPanel';
 import { ToolsPanel } from '../panels/ToolsPanel';
 import { MapView } from '../render/MapView';
+import { TransferPanel } from '../panels/TransferPanel';
+import { PlayerPanelSlot } from '../panels/PlayerControls';
 
 export function renderPanelBody(panel: FloatingPanelState) {
   let content = null;
@@ -36,6 +38,15 @@ export function renderPanelBody(panel: FloatingPanelState) {
       break;
     case 'settings':
       content = <SettingsPanel panelId={panel.id} />;
+      break;
+    case 'transfers':
+      content = <TransferPanel />;
+      break;
+    case 'player':
+      content = <PlayerPanelSlot />;
+      break;
+    case 'newMap':
+      content = <MapsPanel panelId={panel.id} section="create" />;
       break;
     case 'map':
       content = <MapView panelId={panel.id} isPopout={panel.mode === 'popout'} />;

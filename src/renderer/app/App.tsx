@@ -15,8 +15,9 @@ import { viewStore, type ToolId } from '../model/viewStore';
 import { activatePropTool } from '../panels/ContextTools';
 import { ExportPanel } from '../panels/ExportPanel';
 import { PlayerControls } from '../panels/PlayerControls';
-import { TransferPanel } from '../panels/TransferPanel';
+import { TransferButton } from '../panels/TransferPanel';
 import { MapView } from '../render/MapView';
+import { GenerationControls } from '../panels/GenerationControls';
 
 type ThemeMode = 'dark' | 'light';
 
@@ -336,14 +337,17 @@ export function App() {
         style={{
           display: 'flex',
           alignItems: 'center',
+          // Wrap instead of scrolling sideways: buttons that don't fit go to a second line, and the
+          // transfer / player drawers (.top-drawer-row) drop below the bar instead of off-screen.
+          flexWrap: 'wrap',
           gap: 5,
-          height: 34,
-          padding: '0 8px',
+          rowGap: 4,
+          minHeight: 34,
+          padding: '4px 8px',
           background: 'var(--atlas-surface)',
           borderBottom: '1px solid var(--atlas-border)',
           fontSize: 12,
           flexShrink: 0,
-          overflowX: 'auto',
           whiteSpace: 'nowrap',
         }}
       >
@@ -382,7 +386,7 @@ export function App() {
         {activeMap && (
           <>
             <span style={{ opacity: 0.3 }}>|</span>
-            <span style={{ fontWeight: 600 }}>
+            <span data-testid="active-map-title" style={{ fontWeight: 600 }}>
               {activeMap.name} <span style={{ color: 'var(--atlas-text-muted)', fontWeight: 400 }}>({activeMap.kind})</span>
             </span>
             <button type="button" data-testid="fit-map" onClick={handleFitMainMap}>
@@ -441,7 +445,7 @@ export function App() {
         <span style={{ opacity: 0.3 }}>|</span>
         <PlayerControls />
         <ExportPanel />
-        <TransferPanel />
+        <TransferButton />
         <button
           type="button"
           data-testid="btn-toggle-theme"
@@ -503,6 +507,9 @@ export function App() {
           </button>
         </div>
       )}
+
+      {/* Generate for the current map/selection, always in view: it sits above the map, so floating panels can't cover it. */}
+      {activeMap && <GenerationControls map={activeMap} panelId="map-main" />}
 
       <div
         ref={stageRef}

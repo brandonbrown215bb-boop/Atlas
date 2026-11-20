@@ -135,6 +135,7 @@ export function LayersPanel({ panelId = 'layers' }: { panelId?: string }) {
                 data-testid={`layer-row-${layer.id}`}
                 style={{
                   display: 'flex',
+                  flexWrap: 'wrap', // buttons drop below the name in a narrow panel instead of hiding it
                   alignItems: 'center',
                   gap: 4,
                   padding: '4px 6px',
@@ -169,7 +170,7 @@ export function LayersPanel({ panelId = 'layers' }: { panelId?: string }) {
                     }}
                     style={{
                       flex: 1,
-                      minWidth: 0,
+                      minWidth: 80,
                       overflow: 'hidden',
                       textOverflow: 'ellipsis',
                       whiteSpace: 'nowrap',

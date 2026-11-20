@@ -2,6 +2,7 @@ import type { Entity } from '../model/schema';
 import { useEffect, useState } from 'react';
 import { useStore } from 'zustand';
 import { worldStore } from '../model/store';
+import { hudStore } from '../app/hudStore';
 import { copyMapToWorld,forkOpenWorld,previewLinkedSync,syncLinkedMap } from '../export/transferActions';
 import type { WorldDocument } from '../model/commands';
 
@@ -16,7 +17,7 @@ function describe(entity:Entity|null) {
 }
 export function TransferPanel() {
   const world=useStore(worldStore,s=>s.world),mapId=useStore(worldStore,s=>s.activeMapId);
-  const [open,setOpen]=useState(false),[busy,setBusy]=useState(false),[report,setReport]=useState('');
+  const open=true,[busy,setBusy]=useState(false),[report,setReport]=useState('');
   const [target,setTarget]=useState(''),[targetWorld,setTargetWorld]=useState<WorldDocument|null>(null);
   const [mode,setMode]=useState<'copy'|'move'|'linked'>('copy');
   const [parent,setParent]=useState(''),[x,setX]=useState(0),[y,setY]=useState(0),[rotation,setRotation]=useState(0),[scale,setScale]=useState(1),[margin,setMargin]=useState(0);
@@ -49,8 +50,7 @@ export function TransferPanel() {
     try {await syncLinkedMap(preview.mapId,preview.path,choices,preview);setReport('Linked map synced. One undo restores the previous version.');setPreview(null);}catch(e){setReport((e as Error).message);}finally{setBusy(false);}
   };
   return <>
-    <button type="button" disabled={!world} aria-expanded={open} onClick={()=>setOpen(!open)}>World transfers</button>
-    {(open || report) && <div className="top-drawer-row">
+    {!world ? <p style={{padding:10}}>Open a world first.</p> : <div style={{display:'flex',flexDirection:'column',gap:10,padding:10,fontSize:12}}>
       {open && <div style={{display:'flex',gap:8,alignItems:'center',flexWrap:'wrap',flex:1}}>
         <button type="button" disabled={busy} onClick={()=>void fork()}>Fork world</button>
         <select aria-label="Transfer mode" value={mode} onChange={e=>setMode(e.target.value as typeof mode)}><option value="copy">Copy map tree</option><option value="move">Move map tree</option><option value="linked">Linked copy</option></select>
@@ -74,7 +74,12 @@ export function TransferPanel() {
         </div>}
       </div>}
       {report&&<div role="status" aria-label="Transfer result">{report}</div>}
-      <button type="button" aria-label="Close transfer controls" onClick={() => { setOpen(false); setReport(''); }} style={{marginLeft:'auto'}}>×</button>
     </div>}
   </>;
+}
+
+/** Top-bar toggle; the controls live in the World transfers panel. */
+export function TransferButton() {
+  const world=useStore(worldStore,s=>s.world),open=useStore(hudStore,s=>Boolean(s.panels.transfers?.open));
+  return <button type="button" disabled={!world} aria-pressed={open} onClick={()=>hudStore.getState().togglePanel('transfers')}>World transfers</button>;
 }

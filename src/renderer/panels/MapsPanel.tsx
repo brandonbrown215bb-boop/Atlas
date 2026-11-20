@@ -10,6 +10,7 @@ import type { MapDoc, MapKind, WorldMapSummary } from '../model/schema';
 import { SvgImportDialog } from './SvgImportDialog';
 import { worldStore } from '../model/store';
 import { viewStore } from '../model/viewStore';
+import { hudStore } from '../app/hudStore';
 
 function buildMapTree(
   maps: readonly WorldMapSummary[],
@@ -26,7 +27,9 @@ function buildMapTree(
   return result;
 }
 
-export function MapsPanel({ panelId = 'maps' }: { panelId?: string }) {
+// 'tree' is the Maps panel; 'create' is the New map & import panel. They were one panel, and the
+// creation form squeezed the map list down to a single visible row.
+export function MapsPanel({ panelId = 'maps', section = 'tree' }: { panelId?: string; section?: 'tree' | 'create' }) {
   const world = useStore(worldStore, (s) => s.world);
   const worldPath = useStore(worldStore, (s) => s.worldPath);
   const activeMapId = useStore(worldStore, (s) => s.activeMapId);
@@ -115,15 +118,28 @@ export function MapsPanel({ panelId = 'maps' }: { panelId?: string }) {
         fontSize: 12,
       }}
     >
+      {section === 'tree' && <>
       <div
         style={{
           padding: '6px 10px',
           borderBottom: '1px solid var(--atlas-border)',
           background: 'var(--atlas-surface)',
           fontWeight: 600,
+          display: 'flex',
+          alignItems: 'center',
+          gap: 8,
         }}
       >
         Maps
+        <button
+          type="button"
+          data-testid="btn-open-new-map"
+          disabled={!world}
+          style={{ marginLeft: 'auto', fontWeight: 400 }}
+          onClick={() => hudStore.getState().openOrFocusPanel('newMap')}
+        >
+          New map / import…
+        </button>
       </div>
 
       <div
@@ -203,10 +219,14 @@ export function MapsPanel({ panelId = 'maps' }: { panelId?: string }) {
           })
         )}
       </div>
+      </>}
 
-      {world && (
+      {section === 'create' && !world && <p style={{ padding: 10 }}>Open a world first.</p>}
+      {section === 'create' && world && (
         <div
           style={{
+            flex: 1,
+            overflowY: 'auto',
             padding: 8,
             borderTop: '1px solid var(--atlas-border)',
             background: 'var(--atlas-surface)',

@@ -9,6 +9,9 @@ export type FloatingPanelKind =
   | 'assets'
   | 'places'
   | 'settings'
+  | 'transfers'
+  | 'player'
+  | 'newMap'
   | 'map';
 
 export interface PopoutBounds {
@@ -162,6 +165,46 @@ export function buildDefaultPanels(stageW = 1280, stageH = 760): Record<string, 
       collapsed: false,
       zIndex: 17,
     },
+    // These used to be drawers in the top bar or the bottom of Maps; as panels they stop crowding both.
+    transfers: {
+      id: 'transfers',
+      kind: 'transfers',
+      title: 'World transfers',
+      open: false,
+      mode: 'floating',
+      x: midCenter,
+      y: 24,
+      w: 420,
+      h: 300,
+      collapsed: false,
+      zIndex: 18,
+    },
+    player: {
+      id: 'player',
+      kind: 'player',
+      title: 'Player & fog',
+      open: false,
+      mode: 'floating',
+      x: Math.max(12, midCenter + 60),
+      y: 48,
+      w: 360,
+      h: 300,
+      collapsed: false,
+      zIndex: 19,
+    },
+    newMap: {
+      id: 'newMap',
+      kind: 'newMap',
+      title: 'New map & import',
+      open: false,
+      mode: 'floating',
+      x: 260,
+      y: Math.min(364, Math.max(120, Math.round(stageH * 0.45) + 24)),
+      w: 280,
+      h: Math.min(280, Math.max(180, stageH - Math.round(stageH * 0.45) - 48)),
+      collapsed: false,
+      zIndex: 20,
+    },
   };
 }
 
@@ -176,7 +219,7 @@ function clampPanel(p: FloatingPanelState, stageW: number, stageH: number): Floa
 
 export const hudStore = createStore<HudStoreState>((set, get) => ({
   panels: buildDefaultPanels(),
-  nextZ: 20,
+  nextZ: 30,
   dragOverMain: null,
 
   openOrFocusPanel(id, kind, title) {
@@ -390,7 +433,7 @@ export const hudStore = createStore<HudStoreState>((set, get) => ({
     }
     set({
       panels: buildDefaultPanels(stageW, stageH),
-      nextZ: 20,
+      nextZ: 30,
       dragOverMain: null,
     });
   },
@@ -401,7 +444,7 @@ export const hudStore = createStore<HudStoreState>((set, get) => ({
     if (!raw || typeof raw !== 'object') return;
     const defaults = buildDefaultPanels(stageW, stageH);
     const merged: Record<string, FloatingPanelState> = { ...defaults };
-    let maxZ = 20;
+    let maxZ = 30;
 
     for (const [id, entry] of Object.entries(raw)) {
       if (!entry || typeof entry !== 'object') continue;

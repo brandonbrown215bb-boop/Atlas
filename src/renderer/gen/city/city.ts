@@ -660,7 +660,8 @@ export function generateCity(input: GeneratorInput<CityParams>): Entity[] {
         const landmark = isKeep ? keepName : templeName;
         cityLabels.push({
           ...base, id: isKeep ? 'city-label-keep' : 'city-label-temple', type: 'label',
-          text: landmark, x: cx, y: cy, size: 16,
+          // Above the roof, not on it: a name on the roof takes the click meant for the building.
+          text: landmark, x: cx, y: bboxFromPoints(cand[0]!)!.minY - 8, size: 16,
         });
         cityPlaces.push({
           ...base, id: isKeep ? 'place-keep' : 'place-temple', type: 'place',

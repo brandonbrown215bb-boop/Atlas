@@ -926,7 +926,16 @@ export function MapView(props: MapViewProps) {
     let calibStart: Point | null = null;
     let toolCapture = false;
 
+    // Chromium reports pointerdown.detail as 0, so tools never saw a double-click
+    // (Edit parts, point editing, finishing a shape). Count clicks here instead.
+    let lastDown = { t: 0, x: 0, y: 0, count: 0 };
     const onPointerDown = (e: PointerEvent) => {
+      if (e.button === 0) {
+        const now = performance.now();
+        const again = now - lastDown.t < 450 && Math.hypot(e.clientX - lastDown.x, e.clientY - lastDown.y) < 6;
+        lastDown = { t: now, x: e.clientX, y: e.clientY, count: again ? lastDown.count + 1 : 1 };
+        Object.defineProperty(e, 'detail', { value: lastDown.count });
+      }
       activateMapPanel(props.panelId, mapRef.current?.id);
       canvas.focus({ preventScroll: true });
       if (e.button === 0 && calibratingIdRef.current && !spaceHeld) {
@@ -1472,7 +1481,8 @@ export function MapView(props: MapViewProps) {
             style={{
               position: 'absolute',
               bottom: 8,
-              right: 10,
+              left: '50%',
+              transform: 'translateX(-50%)',
               display: 'inline-flex',
               alignItems: 'center',
               gap: 4,
@@ -1552,9 +1562,11 @@ export function MapView(props: MapViewProps) {
           <div
             data-testid="calibration-bar"
             style={{
+              // Top centre: the floating Tools panel covers the top-left corner.
               position: 'absolute',
               top: 8,
-              left: 8,
+              left: '50%',
+              transform: 'translateX(-50%)',
               background: 'var(--atlas-surface)',
               border: '1px solid var(--atlas-border)',
               borderRadius: 4,

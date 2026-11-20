@@ -60,6 +60,8 @@ export function ToolsPanel() {
   const developAreaKind = useStore(viewStore, (s) => s.developAreaKind);
   const pendingDevelopRect = useStore(viewStore, (s) => s.pendingDevelopRect);
   const assetError = useStore(viewStore, (s) => s.assetError);
+  // Read here, not inside the Area-only JSX: a hook behind a condition crashes the panel (React #310).
+  const blueprintMode = useStore(viewStore, (s) => s.blueprintMode);
 
   const [developName, setDevelopName] = useState('Developed Area');
   const [autoPopulateRegion, setAutoPopulateRegion] = useState(true);
@@ -249,7 +251,7 @@ export function ToolsPanel() {
                   <input
                     type="checkbox"
                     data-testid="toggle-blueprint-mask"
-                    checked={useStore(viewStore, (s) => s.blueprintMode)}
+                    checked={blueprintMode}
                     onChange={(e) => viewStore.getState().setBlueprintMode(e.target.checked)}
                   />
                   <span>Blueprint mask brush</span>
